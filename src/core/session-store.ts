@@ -419,7 +419,7 @@ export class SessionStore {
   }
 
   private defaultSortValue(result: SessionSearchResult): number {
-    return result.lastResumedAt || result.timestamp || 0;
+    return Math.max(result.lastResumedAt || 0, result.fileMtimeMs || 0, result.timestamp || 0);
   }
 }
 

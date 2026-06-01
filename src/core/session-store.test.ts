@@ -70,6 +70,26 @@ describe("SessionStore", () => {
     expect(store.searchSessions({ query: "", tag: "backend" })).toHaveLength(1);
   });
 
+  it("sorts default results by latest session file activity", () => {
+    const store = createInMemoryStore();
+    const oldButActive = sampleSession({
+      sessionKey: "codex:active",
+      rawId: "active",
+      timestamp: new Date("2026-05-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T12:00:00Z").getTime(),
+    });
+    const newerButIdle = sampleSession({
+      sessionKey: "codex:idle",
+      rawId: "idle",
+      timestamp: new Date("2026-06-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T10:00:00Z").getTime(),
+    });
+    store.upsertIndexedSession(oldButActive, messages);
+    store.upsertIndexedSession(newerButIdle, messages);
+
+    expect(store.searchSessions({ query: "" }).map((session) => session.sessionKey)).toEqual(["codex:active", "codex:idle"]);
+  });
+
   it("deletes tags globally and removes unused tags after unlinking", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(sampleSession(), messages);
