@@ -6,6 +6,7 @@ import {
   Clipboard,
   Code2,
   Copy,
+  Edit3,
   Eye,
   EyeOff,
   Folder,
@@ -456,6 +457,7 @@ export function App(): ReactElement {
               selected={selected?.sessionKey === session.sessionKey}
               onSelect={() => setSelectedKey(session.sessionKey)}
               onOpen={() => void openDetail(session)}
+              onRename={() => beginRename(session)}
               onFavorite={() => void toggleFavorite(session)}
               onContextMenu={(event) => {
                 event.preventDefault();
@@ -480,6 +482,7 @@ export function App(): ReactElement {
           onRename={() => beginRename(detail)}
           onAddTag={() => beginAddTag(detail)}
           onRemoveTag={(tagName) => void removeTag(detail, tagName)}
+          onRenameTitle={() => beginRename(detail)}
           onFavorite={() => void toggleFavorite(detail)}
           onResume={() =>
             void runAction("Opening terminal", () => window.sessionSearch.resumeSession(detail.sessionKey), "Resume command sent to terminal.")
@@ -572,6 +575,7 @@ function SessionRow({
   selected,
   onSelect,
   onOpen,
+  onRename,
   onFavorite,
   onContextMenu,
 }: {
@@ -579,6 +583,7 @@ function SessionRow({
   selected: boolean;
   onSelect: () => void;
   onOpen: () => void;
+  onRename: () => void;
   onFavorite: () => void;
   onContextMenu: MouseEventHandler;
 }): ReactElement {
@@ -606,6 +611,17 @@ function SessionRow({
           {session.pinned ? <Pin size={14} /> : null}
           {session.hidden ? <EyeOff size={14} /> : null}
           <span className="session-name">{session.displayTitle}</span>
+          <button
+            className="title-edit-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRename();
+            }}
+            aria-label="Rename session"
+            title="Rename session"
+          >
+            <Edit3 size={13} />
+          </button>
         </div>
         <div className="session-meta">
           <span className={`source-badge ${session.source.startsWith("claude") ? "claude" : "codex"}`}>
@@ -638,6 +654,7 @@ function DetailPanel({
   onRename,
   onAddTag,
   onRemoveTag,
+  onRenameTitle,
   onFavorite,
   onResume,
   onResumeIterm,
@@ -656,6 +673,7 @@ function DetailPanel({
   onRename: () => void;
   onAddTag: () => void;
   onRemoveTag: (tagName: string) => void;
+  onRenameTitle: () => void;
   onFavorite: () => void;
   onResume: () => void;
   onResumeIterm: () => void;
@@ -716,7 +734,12 @@ function DetailPanel({
           <div className={`source-badge ${session.source.startsWith("claude") ? "claude" : "codex"}`}>
             {SOURCE_LABEL[session.source]}
           </div>
-          <h2>{session.displayTitle}</h2>
+          <div className="detail-title-row">
+            <h2>{session.displayTitle}</h2>
+            <button className="title-edit-button detail-title-edit" onClick={onRenameTitle} aria-label="Rename session" title="Rename session">
+              <Edit3 size={14} />
+            </button>
+          </div>
           <p>
             {session.projectPath || "No project"} · {new Date(session.timestamp).toLocaleString()} · {messages.length} messages
           </p>
