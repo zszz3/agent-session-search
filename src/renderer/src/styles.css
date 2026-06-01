@@ -467,6 +467,13 @@ button:disabled {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-dim);
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.searchbox:focus-within .kbd-hint {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-bright);
 }
 
 .result-count {
