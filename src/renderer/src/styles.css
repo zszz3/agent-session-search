@@ -1181,3 +1181,119 @@ button:disabled {
 .dialog-actions .danger-action:hover {
   background: #f58c74;
 }
+
+/* ============================================================ PROJECT FILTER (merged feature) */
+.project-list {
+  display: grid;
+  gap: 2px;
+}
+
+.project-list button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.project-list button:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.project-list button.active {
+  position: relative;
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+
+.project-list button.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.project-row {
+  min-width: 0;
+}
+
+.project-row svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.project-row.active svg {
+  color: var(--accent);
+}
+
+.project-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row em {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-row.active em {
+  color: var(--accent-bright);
+}
+
+/* ============================================================ SORT MENU (merged feature) */
+select {
+  font: inherit;
+}
+
+.sort-menu {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  height: 46px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: border-color 0.15s ease;
+}
+
+.sort-menu:focus-within {
+  border-color: var(--accent-line);
+}
+
+.sort-menu select {
+  min-width: 120px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sort-menu select option {
+  background: var(--bg-elevated-2);
+  color: var(--text);
+}

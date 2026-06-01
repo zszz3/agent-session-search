@@ -241,6 +241,7 @@ function registerIpc(): void {
     store.getMessages(sessionKey, offset ?? 0, limit ?? 120),
   );
   ipcMain.handle("tags:list", () => store.listTags());
+  ipcMain.handle("projects:list", () => store.listProjects());
   ipcMain.handle("title:set", (_event, sessionKey: string, title: string | null) => store.setCustomTitle(sessionKey, title));
   ipcMain.handle("tag:add", (_event, sessionKey: string, tagName: string) => store.addTag(sessionKey, tagName));
   ipcMain.handle("tag:remove", (_event, sessionKey: string, tagName: string) => store.removeTag(sessionKey, tagName));

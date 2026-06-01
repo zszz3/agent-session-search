@@ -11,7 +11,7 @@ It indexes existing local session files, lets you add your own titles and tags, 
 - Search Claude Code and Codex sessions from one desktop app.
 - Full-text search across custom titles, original titles, first user questions, conversation text, and project paths.
 - Add custom titles and tags without changing the upstream session files.
-- Filter by tag, source, pinned sessions, or hidden sessions.
+- Filter by project, tag, source, pinned sessions, or hidden sessions.
 - Resume a session in Terminal, iTerm, Ghostty, WezTerm, or Warp.
 - Copy resume commands or conversation exports.
 - Refresh the local index from the tray menu.

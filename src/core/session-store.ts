@@ -1,5 +1,13 @@
 import Database from "better-sqlite3";
-import type { IndexedSession, SearchOptions, SessionMessage, SessionSearchResult, SessionSource } from "./types";
+import type {
+  IndexedSession,
+  ProjectSummary,
+  SearchOptions,
+  SessionMessage,
+  SessionSearchResult,
+  SessionSortBy,
+  SessionSource,
+} from "./types";
 
 type Db = Database.Database;
 
@@ -141,6 +149,36 @@ export class SessionStore {
     );
   }
 
+  listProjects(): ProjectSummary[] {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT project_path, COUNT(*) AS session_count
+        FROM sessions
+        WHERE trim(project_path) != ''
+        GROUP BY project_path
+      `,
+      )
+      .all() as Array<{ project_path: string; session_count: number }>;
+    const summaries = rows.map((row) => ({
+      path: row.project_path,
+      label: projectLabel(row.project_path),
+      sessionCount: row.session_count,
+    }));
+    const basenameCounts = new Map<string, number>();
+    for (const summary of summaries) {
+      const basename = projectBasename(summary.path);
+      basenameCounts.set(basename, (basenameCounts.get(basename) || 0) + 1);
+    }
+
+    return summaries
+      .map((summary) => ({
+        ...summary,
+        label: (basenameCounts.get(projectBasename(summary.path)) || 0) > 1 ? projectParentLabel(summary.path) : summary.label,
+      }))
+      .sort((a, b) => b.sessionCount - a.sessionCount || a.label.localeCompare(b.label));
+  }
+
   getSession(sessionKey: string): SessionSearchResult | null {
     const row = this.db.prepare("SELECT * FROM sessions WHERE session_key = ?").get(sessionKey) as SessionRow | undefined;
     return row ? this.hydrateRow(row, null) : null;
@@ -187,7 +225,7 @@ export class SessionStore {
     }
 
     return [...merged.values()]
-      .sort((a, b) => this.score(b, query) - this.score(a, query) || this.defaultSortValue(b) - this.defaultSortValue(a))
+      .sort((a, b) => this.score(b, query) - this.score(a, query) || this.sortValue(b, options.sortBy) - this.sortValue(a, options.sortBy))
       .slice(0, limit);
   }
 
@@ -304,6 +342,7 @@ export class SessionStore {
 
   private matchesFilters(result: SessionSearchResult, options: SearchOptions): boolean {
     if (options.tag && !result.tags.includes(options.tag)) return false;
+    if (options.projectPath && result.projectPath !== options.projectPath) return false;
     if (options.source && options.source !== "all") {
       if (options.source === "claude" && !result.source.startsWith("claude-")) return false;
       else if (options.source === "codex" && !result.source.startsWith("codex-")) return false;
@@ -418,7 +457,9 @@ export class SessionStore {
     return score;
   }
 
-  private defaultSortValue(result: SessionSearchResult): number {
+  private sortValue(result: SessionSearchResult, sortBy: SessionSortBy = "activity"): number {
+    if (sortBy === "created") return result.timestamp || 0;
+    if (sortBy === "updated") return result.fileMtimeMs || result.timestamp || 0;
     return Math.max(result.lastResumedAt || 0, result.fileMtimeMs || 0, result.timestamp || 0);
   }
 }
@@ -434,4 +475,23 @@ function buildFtsQuery(query: string): string {
     .filter(Boolean)
     .map((token) => `${token}*`)
     .join(" ");
+}
+
+function projectParts(projectPath: string): string[] {
+  return projectPath.split(/[\\/]+/).filter(Boolean);
+}
+
+function projectBasename(projectPath: string): string {
+  const parts = projectParts(projectPath);
+  return parts.at(-1) || projectPath;
+}
+
+function projectLabel(projectPath: string): string {
+  return projectBasename(projectPath) || projectPath;
+}
+
+function projectParentLabel(projectPath: string): string {
+  const parts = projectParts(projectPath);
+  if (parts.length >= 2) return `${parts.at(-2)}/${parts.at(-1)}`;
+  return projectLabel(projectPath);
 }

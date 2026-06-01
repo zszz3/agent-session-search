@@ -1,5 +1,6 @@
 export type SessionSource = "claude-cli" | "claude-app" | "codex-cli" | "codex-app";
 export type SessionFormat = "claude" | "codex";
+export type SessionSortBy = "activity" | "created" | "updated";
 
 export interface SessionMessage {
   role: "user" | "assistant";
@@ -31,9 +32,17 @@ export interface LoadedSession {
 export interface SearchOptions {
   query?: string;
   tag?: string;
+  projectPath?: string;
   source?: SessionSource | "claude" | "codex" | "all";
   visibility?: "default" | "hidden" | "pinned";
+  sortBy?: SessionSortBy;
   limit?: number;
+}
+
+export interface ProjectSummary {
+  path: string;
+  label: string;
+  sessionCount: number;
 }
 
 export interface SessionSearchResult extends IndexedSession {

@@ -8,6 +8,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Folder,
   FolderOpen,
   Pin,
   PinOff,
@@ -21,7 +22,7 @@ import {
 } from "lucide-react";
 import type { IndexStatus } from "../../core/indexer";
 import { formatMessageTime, formatRelativeTime } from "../../core/format-session";
-import type { SearchOptions, SessionMessage, SessionSearchResult, SessionSource } from "../../core/types";
+import type { ProjectSummary, SearchOptions, SessionMessage, SessionSearchResult, SessionSortBy, SessionSource } from "../../core/types";
 
 const SOURCE_LABEL: Record<SessionSource, string> = {
   "claude-cli": "Claude Code",
@@ -38,6 +39,12 @@ const SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"] }> =
   { label: "Claude App", value: "claude-app" },
   { label: "Codex CLI", value: "codex-cli" },
   { label: "Codex App", value: "codex-app" },
+];
+
+const SORT_OPTIONS: Array<{ label: string; value: SessionSortBy }> = [
+  { label: "Latest activity", value: "activity" },
+  { label: "Created", value: "created" },
+  { label: "Updated", value: "updated" },
 ];
 
 type ViewMode = "default" | "pinned" | "hidden";
@@ -67,9 +74,12 @@ export function App(): ReactElement {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<SearchOptions["source"]>("all");
   const [tag, setTag] = useState<string | undefined>();
+  const [projectPath, setProjectPath] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<ViewMode>("default");
+  const [sortBy, setSortBy] = useState<SessionSortBy>("activity");
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState<IndexStatus | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionSearchResult | null>(null);
@@ -86,19 +96,23 @@ export function App(): ReactElement {
       query,
       source,
       tag,
+      projectPath,
       visibility,
+      sortBy,
       limit: 300,
     };
-    const [nextResults, nextTags, nextStatus] = await Promise.all([
+    const [nextResults, nextTags, nextProjects, nextStatus] = await Promise.all([
       window.sessionSearch.searchSessions(options),
       window.sessionSearch.listTags(),
+      window.sessionSearch.listProjects(),
       window.sessionSearch.getIndexStatus(),
     ]);
     setResults(nextResults);
     setTags(nextTags);
+    setProjects(nextProjects);
     setStatus(nextStatus);
     if (selectedKey && !nextResults.some((session) => session.sessionKey === selectedKey)) setSelectedKey(null);
-  }, [query, source, tag, visibility, selectedKey]);
+  }, [query, source, tag, projectPath, visibility, sortBy, selectedKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -121,6 +135,15 @@ export function App(): ReactElement {
     () => results.find((session) => session.sessionKey === selectedKey) || null,
     [results, selectedKey],
   );
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.path === projectPath) || null,
+    [projects, projectPath],
+  );
+  const searchPlaceholder = projectPath
+    ? `Search within ${selectedProject?.label || "project"}`
+    : tag
+      ? `Search within #${tag}`
+      : "Search titles, first questions, full text, paths, or ids";
 
   async function openDetail(session: SessionSearchResult): Promise<void> {
     setContextMenu(null);
@@ -261,6 +284,25 @@ export function App(): ReactElement {
           ))}
         </nav>
 
+        <div className="filter-title">Projects</div>
+        <nav className="project-list">
+          <button className={!projectPath ? "active" : ""} onClick={() => setProjectPath(undefined)}>
+            All Projects
+          </button>
+          {projects.map((project) => (
+            <button
+              key={project.path}
+              className={`project-row ${projectPath === project.path ? "active" : ""}`}
+              onClick={() => setProjectPath(project.path)}
+              title={project.path}
+            >
+              <Folder size={13} />
+              <span>{project.label}</span>
+              <em>{project.sessionCount}</em>
+            </button>
+          ))}
+        </nav>
+
         <div className="filter-title">Tags</div>
         <nav className="tag-list">
           <button className={!tag ? "active" : ""} onClick={() => setTag(undefined)}>
@@ -299,16 +341,31 @@ export function App(): ReactElement {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && selected) void openDetail(selected);
               }}
-              placeholder={tag ? `Search within #${tag}` : "Search titles, first questions, full text, paths, or ids"}
+              placeholder={searchPlaceholder}
               autoFocus
             />
             <span className="kbd-hint">⌘K</span>
           </div>
+          {selectedProject ? (
+            <button className="chip clear" onClick={() => setProjectPath(undefined)} title={selectedProject.path}>
+              {selectedProject.label} ×
+            </button>
+          ) : null}
           {tag ? (
             <button className="chip clear" onClick={() => setTag(undefined)}>
               #{tag} ×
             </button>
           ) : null}
+          <label className="sort-menu">
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SessionSortBy)}>
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </header>
 
         <div className="result-count">

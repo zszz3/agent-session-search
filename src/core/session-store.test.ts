@@ -70,6 +70,50 @@ describe("SessionStore", () => {
     expect(store.searchSessions({ query: "", tag: "backend" })).toHaveLength(1);
   });
 
+  it("lists projects with counts and disambiguates duplicate folder names", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:one", rawId: "one", projectPath: "/work/team-a/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "claude:two", rawId: "two", source: "claude-cli", projectPath: "/work/team-a/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:three", rawId: "three", projectPath: "/work/team-b/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:no-project", rawId: "no-project", projectPath: "" }), messages);
+
+    expect(store.listProjects()).toEqual([
+      { path: "/work/team-a/app", label: "team-a/app", sessionCount: 2 },
+      { path: "/work/team-b/app", label: "team-b/app", sessionCount: 1 },
+    ]);
+  });
+
+  it("filters sessions by exact project path and composes with other filters", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:app", rawId: "app", projectPath: "/work/app" }), messages);
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "claude:app", rawId: "claude-app", source: "claude-cli", projectPath: "/work/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:api", rawId: "api", projectPath: "/work/api" }), messages);
+    store.addTag("claude:app", "backend");
+
+    expect(store.searchSessions({ projectPath: "/work/app" }).map((session) => session.sessionKey).sort()).toEqual([
+      "claude:app",
+      "codex:app",
+    ]);
+    expect(store.searchSessions({ projectPath: "/work/app", source: "claude" }).map((session) => session.sessionKey)).toEqual([
+      "claude:app",
+    ]);
+    expect(store.searchSessions({ projectPath: "/work/app", tag: "backend" }).map((session) => session.sessionKey)).toEqual([
+      "claude:app",
+    ]);
+  });
+
   it("sorts default results by latest session file activity", () => {
     const store = createInMemoryStore();
     const oldButActive = sampleSession({
@@ -88,6 +132,33 @@ describe("SessionStore", () => {
     store.upsertIndexedSession(newerButIdle, messages);
 
     expect(store.searchSessions({ query: "" }).map((session) => session.sessionKey)).toEqual(["codex:active", "codex:idle"]);
+  });
+
+  it("sorts by explicit created and updated time modes", () => {
+    const store = createInMemoryStore();
+    const oldButUpdated = sampleSession({
+      sessionKey: "codex:updated",
+      rawId: "updated",
+      timestamp: new Date("2026-05-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T12:00:00Z").getTime(),
+    });
+    const newButIdle = sampleSession({
+      sessionKey: "codex:created",
+      rawId: "created",
+      timestamp: new Date("2026-06-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T10:00:00Z").getTime(),
+    });
+    store.upsertIndexedSession(oldButUpdated, messages);
+    store.upsertIndexedSession(newButIdle, messages);
+
+    expect(store.searchSessions({ query: "", sortBy: "created" }).map((session) => session.sessionKey)).toEqual([
+      "codex:created",
+      "codex:updated",
+    ]);
+    expect(store.searchSessions({ query: "", sortBy: "updated" }).map((session) => session.sessionKey)).toEqual([
+      "codex:updated",
+      "codex:created",
+    ]);
   });
 
   it("deletes tags globally and removes unused tags after unlinking", () => {
