@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEventHandler, ReactElement } from "react";
 import {
   AppWindow,
   Archive,
+  ChevronDown,
+  ChevronRight,
   Clipboard,
   Code2,
   Copy,
@@ -12,12 +14,14 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  Moon,
   Pin,
   PinOff,
   Play,
   RefreshCw,
   Search,
   Star,
+  Sun,
   Tag,
   Terminal,
   Trash2,
@@ -26,6 +30,14 @@ import {
 import type { IndexStatus } from "../../core/indexer";
 import { formatMessageTime, formatRelativeTime } from "../../core/format-session";
 import type { ProjectSummary, SearchOptions, SessionMessage, SessionSearchResult, SessionSortBy, SessionSource } from "../../core/types";
+import {
+  readSidebarSections,
+  serializeSidebarSections,
+  toggleSidebarSection,
+  type SidebarSectionId,
+  type SidebarSectionsState,
+} from "./sidebar-sections";
+import { readInitialTheme, THEME_STORAGE_KEY, type ThemeMode } from "./theme";
 
 const SOURCE_LABEL: Record<SessionSource, string> = {
   "claude-cli": "Claude Code",
@@ -77,7 +89,16 @@ type DialogState =
     }
   | null;
 
+const SIDEBAR_SECTIONS_STORAGE_KEY = "agent-session-search-sidebar-sections";
+
+function loadInitialSidebarSections(): SidebarSectionsState {
+  if (typeof window === "undefined") return readSidebarSections(null);
+  return readSidebarSections(window.localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY));
+}
+
 export function App(): ReactElement {
+  const [theme, setTheme] = useState<ThemeMode>(() => readInitialTheme());
+  const [sidebarSections, setSidebarSections] = useState<SidebarSectionsState>(() => loadInitialSidebarSections());
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<SearchOptions["source"]>("all");
   const [tag, setTag] = useState<string | undefined>();
@@ -125,6 +146,15 @@ export function App(): ReactElement {
     const timer = window.setTimeout(() => void load(), 120);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_SECTIONS_STORAGE_KEY, serializeSidebarSections(sidebarSections));
+  }, [sidebarSections]);
 
   useEffect(() => {
     const offIndex = window.sessionSearch.onIndexStatus((nextStatus) => {
@@ -214,6 +244,10 @@ export function App(): ReactElement {
     : tag
       ? `Search within #${tag}`
       : "Search titles, first questions, full text, paths, or ids";
+
+  function toggleSidebarSectionById(section: SidebarSectionId): void {
+    setSidebarSections((current) => toggleSidebarSection(current, section));
+  }
 
   async function openDetail(session: SessionSearchResult): Promise<void> {
     setContextMenu(null);
@@ -310,7 +344,7 @@ export function App(): ReactElement {
   }
 
   return (
-    <main className="app" onClick={() => setContextMenu(null)}>
+    <main className="app" data-theme={theme} onClick={() => setContextMenu(null)}>
       <div className="titlebar-drag" />
       <section className="sidebar">
         <div className="brand">
@@ -326,6 +360,15 @@ export function App(): ReactElement {
         <button className="primary" onClick={() => void window.sessionSearch.refreshIndex()}>
           <RefreshCw size={16} />
           Refresh Index
+        </button>
+
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        >
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          {theme === "dark" ? "Light" : "Dark"}
         </button>
 
         <div className="status">
@@ -356,62 +399,68 @@ export function App(): ReactElement {
           </button>
         </nav>
 
-        <div className="filter-title">Sources</div>
-        <nav className="nav-group">
-          {SOURCE_FILTERS.map((item) => (
-            <button key={item.label} className={source === item.value ? "active" : ""} onClick={() => setSource(item.value)}>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="filter-title">Projects</div>
-        <nav className="project-list">
-          <button className={!projectPath ? "active" : ""} onClick={() => setProjectPath(undefined)}>
-            All Projects
-          </button>
-          {projects.map((project) => (
-            <button
-              key={project.path}
-              className={`project-row ${projectPath === project.path ? "active" : ""}`}
-              onClick={() => setProjectPath(project.path)}
-              title={project.path}
-            >
-              <Folder size={13} />
-              <span>{project.label}</span>
-              <em>{project.sessionCount}</em>
-            </button>
-          ))}
-        </nav>
-
-        <div className="filter-title">Tags</div>
-        <nav className="tag-list">
-          <button className={!tag ? "active" : ""} onClick={() => setTag(undefined)}>
-            All Tags
-          </button>
-          {tags.map((tagName) => (
-            <div
-              key={tagName}
-              className={`tag-list-row ${tag === tagName ? "active" : ""} ${isBranchTag(tagName) ? "branch-tag" : ""}`}
-            >
-              <button className="tag-filter" onClick={() => setTag(tagName)} title={`Filter by ${tagName}`}>
-                {isBranchTag(tagName) ? <GitBranch size={13} /> : <Tag size={13} />}
-                <span>{tagName}</span>
+        <SidebarSectionHeader title="Sources" expanded={sidebarSections.sources} onToggle={() => toggleSidebarSectionById("sources")} />
+        {sidebarSections.sources ? (
+          <nav className="nav-group">
+            {SOURCE_FILTERS.map((item) => (
+              <button key={item.label} className={source === item.value ? "active" : ""} onClick={() => setSource(item.value)}>
+                {item.label}
               </button>
+            ))}
+          </nav>
+        ) : null}
+
+        <SidebarSectionHeader title="Projects" expanded={sidebarSections.projects} onToggle={() => toggleSidebarSectionById("projects")} />
+        {sidebarSections.projects ? (
+          <nav className="project-list">
+            <button className={!projectPath ? "active" : ""} onClick={() => setProjectPath(undefined)}>
+              All Projects
+            </button>
+            {projects.map((project) => (
               <button
-                className="tag-delete"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setDeleteTagName(tagName);
-                }}
-                title={`Delete tag ${tagName}`}
-                aria-label={`Delete tag ${tagName}`}
+                key={project.path}
+                className={`project-row ${projectPath === project.path ? "active" : ""}`}
+                onClick={() => setProjectPath(project.path)}
+                title={project.path}
               >
-                <Trash2 size={13} />
+                <Folder size={13} />
+                <span>{project.label}</span>
+                <em>{project.sessionCount}</em>
               </button>
-            </div>
-          ))}
-        </nav>
+            ))}
+          </nav>
+        ) : null}
+
+        <SidebarSectionHeader title="Tags" expanded={sidebarSections.tags} onToggle={() => toggleSidebarSectionById("tags")} />
+        {sidebarSections.tags ? (
+          <nav className="tag-list">
+            <button className={!tag ? "active" : ""} onClick={() => setTag(undefined)}>
+              All Tags
+            </button>
+            {tags.map((tagName) => (
+              <div
+                key={tagName}
+                className={`tag-list-row ${tag === tagName ? "active" : ""} ${isBranchTag(tagName) ? "branch-tag" : ""}`}
+              >
+                <button className="tag-filter" onClick={() => setTag(tagName)} title={`Filter by ${tagName}`}>
+                  {isBranchTag(tagName) ? <GitBranch size={13} /> : <Tag size={13} />}
+                  <span>{tagName}</span>
+                </button>
+                <button
+                  className="tag-delete"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setDeleteTagName(tagName);
+                  }}
+                  title={`Delete tag ${tagName}`}
+                  aria-label={`Delete tag ${tagName}`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </nav>
+        ) : null}
       </section>
 
       <section className="content">
@@ -575,6 +624,23 @@ export function App(): ReactElement {
         />
       ) : null}
     </main>
+  );
+}
+
+function SidebarSectionHeader({
+  title,
+  expanded,
+  onToggle,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+}): ReactElement {
+  return (
+    <button className="section-header" onClick={onToggle} aria-expanded={expanded}>
+      <span>{title}</span>
+      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+    </button>
   );
 }
 
