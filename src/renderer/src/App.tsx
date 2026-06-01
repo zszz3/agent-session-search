@@ -407,9 +407,6 @@ export function App(): ReactElement {
           onResume={() =>
             void runAction("Opening terminal", () => window.sessionSearch.resumeSession(detail.sessionKey), "Resume command sent to terminal.")
           }
-          onOpenApp={() =>
-            void runAction("Opening native app", () => window.sessionSearch.openNativeApp(detail.sessionKey), "Native app opened.")
-          }
           onCopyResume={() =>
             void runAction("Copying resume command", () => window.sessionSearch.copyResumeCommand(detail.sessionKey), "Resume command copied.")
           }
@@ -540,7 +537,6 @@ function DetailPanel({
   onAddTag,
   onRemoveTag,
   onResume,
-  onOpenApp,
   onCopyResume,
   onCopyMarkdown,
   onCopyPlain,
@@ -557,7 +553,6 @@ function DetailPanel({
   onAddTag: () => void;
   onRemoveTag: (tagName: string) => void;
   onResume: () => void;
-  onOpenApp: () => void;
   onCopyResume: () => void;
   onCopyMarkdown: () => void;
   onCopyPlain: () => void;
@@ -589,9 +584,6 @@ function DetailPanel({
       <div className="detail-actions">
         <button onClick={onResume} disabled={actionRunning}>
           <Play size={15} /> Resume
-        </button>
-        <button onClick={onOpenApp} disabled={actionRunning}>
-          <AppWindow size={15} /> Open App
         </button>
         <button onClick={onRename} disabled={actionRunning}>
           <Clipboard size={15} /> Rename
