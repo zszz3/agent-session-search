@@ -138,12 +138,14 @@ button:disabled {
 }
 
 .nav-group,
+.project-list,
 .tag-list {
   display: grid;
   gap: 2px;
 }
 
 .nav-group button,
+.project-list > button,
 .tag-list > button,
 .tag-filter {
   display: flex;
@@ -157,9 +159,33 @@ button:disabled {
 }
 
 .nav-group button.active,
+.project-list > button.active,
 .tag-list > button.active,
 .tag-list-row.active {
   background: #2a332d;
+  color: #7ee0ad;
+}
+
+.project-row {
+  min-width: 0;
+}
+
+.project-row span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row em {
+  flex: 0 0 auto;
+  color: #8f9a90;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.project-row.active em {
   color: #7ee0ad;
 }
 

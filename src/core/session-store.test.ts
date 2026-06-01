@@ -70,6 +70,50 @@ describe("SessionStore", () => {
     expect(store.searchSessions({ query: "", tag: "backend" })).toHaveLength(1);
   });
 
+  it("lists projects with counts and disambiguates duplicate folder names", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:one", rawId: "one", projectPath: "/work/team-a/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "claude:two", rawId: "two", source: "claude-cli", projectPath: "/work/team-a/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:three", rawId: "three", projectPath: "/work/team-b/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:no-project", rawId: "no-project", projectPath: "" }), messages);
+
+    expect(store.listProjects()).toEqual([
+      { path: "/work/team-a/app", label: "team-a/app", sessionCount: 2 },
+      { path: "/work/team-b/app", label: "team-b/app", sessionCount: 1 },
+    ]);
+  });
+
+  it("filters sessions by exact project path and composes with other filters", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:app", rawId: "app", projectPath: "/work/app" }), messages);
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "claude:app", rawId: "claude-app", source: "claude-cli", projectPath: "/work/app" }),
+      messages,
+    );
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:api", rawId: "api", projectPath: "/work/api" }), messages);
+    store.addTag("claude:app", "backend");
+
+    expect(store.searchSessions({ projectPath: "/work/app" }).map((session) => session.sessionKey).sort()).toEqual([
+      "claude:app",
+      "codex:app",
+    ]);
+    expect(store.searchSessions({ projectPath: "/work/app", source: "claude" }).map((session) => session.sessionKey)).toEqual([
+      "claude:app",
+    ]);
+    expect(store.searchSessions({ projectPath: "/work/app", tag: "backend" }).map((session) => session.sessionKey)).toEqual([
+      "claude:app",
+    ]);
+  });
+
   it("sorts default results by latest session file activity", () => {
     const store = createInMemoryStore();
     const oldButActive = sampleSession({
