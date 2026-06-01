@@ -1,0 +1,11 @@
+src/
+docs/
+*.log
+.DS_Store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+vitest.config.ts
+tsconfig.json
+electron.vite.config.ts
