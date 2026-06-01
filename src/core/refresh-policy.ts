@@ -1,0 +1,2 @@
+export const INITIAL_INDEX_DELAY_MS = 750;
+export const AUTO_INDEX_REFRESH_INTERVAL_MS = 10 * 60 * 1000;

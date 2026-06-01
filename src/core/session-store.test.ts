@@ -41,6 +41,201 @@ describe("SessionStore", () => {
     expect(results[0].matchSnippet).toContain("refresh token");
   });
 
+  it("stores token usage per session and aggregates selected stats periods by source", () => {
+    const store = createInMemoryStore();
+    const now = new Date("2026-06-01T12:00:00Z").getTime();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const sixDaysAgo = new Date(now - 6 * 24 * 60 * 60 * 1000).toISOString();
+    const twentyDaysAgo = new Date(now - 20 * 24 * 60 * 60 * 1000).toISOString();
+    const fortyDaysAgo = new Date(now - 40 * 24 * 60 * 60 * 1000).toISOString();
+    store.upsertIndexedSession(
+      sampleSession({
+        tokenUsage: {
+          inputTokens: 100,
+          outputTokens: 40,
+          cachedInputTokens: 20,
+          reasoningOutputTokens: 10,
+          totalTokens: 170,
+        },
+      }),
+      messages,
+      [
+        {
+          dedupeKey: "codex:today",
+          timestamp: now - 60 * 60 * 1000,
+          inputTokens: 100,
+          outputTokens: 40,
+          cachedInputTokens: 20,
+          reasoningOutputTokens: 10,
+          totalTokens: 170,
+        },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "claude:def",
+        rawId: "def",
+        source: "claude-cli",
+        tokenUsage: {
+          inputTokens: 400,
+          outputTokens: 115,
+          cachedInputTokens: 65,
+          reasoningOutputTokens: 0,
+          totalTokens: 580,
+        },
+      }),
+      [
+        { role: "user", content: "six days ago", timestamp: sixDaysAgo, index: 0 },
+        { role: "assistant", content: "twenty days ago", timestamp: twentyDaysAgo, index: 1 },
+        { role: "assistant", content: "forty days ago", timestamp: fortyDaysAgo, index: 2 },
+      ],
+      [
+        {
+          dedupeKey: "claude:seven-day",
+          timestamp: now - 6 * 24 * 60 * 60 * 1000,
+          inputTokens: 300,
+          outputTokens: 80,
+          cachedInputTokens: 50,
+          reasoningOutputTokens: 0,
+          totalTokens: 430,
+        },
+        {
+          dedupeKey: "claude:older",
+          timestamp: now - 8 * 24 * 60 * 60 * 1000,
+          inputTokens: 70,
+          outputTokens: 20,
+          cachedInputTokens: 10,
+          reasoningOutputTokens: 0,
+          totalTokens: 100,
+        },
+        {
+          dedupeKey: "claude:forty-day",
+          timestamp: now - 40 * 24 * 60 * 60 * 1000,
+          inputTokens: 30,
+          outputTokens: 15,
+          cachedInputTokens: 5,
+          reasoningOutputTokens: 0,
+          totalTokens: 50,
+        },
+      ],
+    );
+
+    expect(store.getSession("codex:abc")?.tokenUsage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedInputTokens: 20,
+      reasoningOutputTokens: 10,
+      totalTokens: 170,
+    });
+    expect(store.getStats({ period: "today" }, now)).toEqual({
+      total: {
+        sessionCount: 1,
+        messageCount: 2,
+        inputTokens: 100,
+        outputTokens: 40,
+        cachedInputTokens: 20,
+        reasoningOutputTokens: 10,
+        totalTokens: 170,
+      },
+      bySource: [
+        {
+          source: "codex-cli",
+          sessionCount: 1,
+          messageCount: 2,
+          inputTokens: 100,
+          outputTokens: 40,
+          cachedInputTokens: 20,
+          reasoningOutputTokens: 10,
+          totalTokens: 170,
+        },
+      ],
+      range: {
+        period: "today",
+        since: todayStart.getTime(),
+        until: now,
+      },
+    });
+    expect(store.getStats({ period: "sevenDay" }, now).total).toEqual({
+      sessionCount: 2,
+      messageCount: 3,
+      inputTokens: 400,
+      outputTokens: 120,
+      cachedInputTokens: 70,
+      reasoningOutputTokens: 10,
+      totalTokens: 600,
+    });
+    expect(store.getStats({ period: "thirtyDay" }, now)).toEqual({
+      total: {
+        sessionCount: 2,
+        messageCount: 4,
+        inputTokens: 470,
+        outputTokens: 140,
+        cachedInputTokens: 80,
+        reasoningOutputTokens: 10,
+        totalTokens: 700,
+      },
+      bySource: [
+        {
+          source: "claude-cli",
+          sessionCount: 1,
+          messageCount: 2,
+          inputTokens: 370,
+          outputTokens: 100,
+          cachedInputTokens: 60,
+          reasoningOutputTokens: 0,
+          totalTokens: 530,
+        },
+        {
+          source: "codex-cli",
+          sessionCount: 1,
+          messageCount: 2,
+          inputTokens: 100,
+          outputTokens: 40,
+          cachedInputTokens: 20,
+          reasoningOutputTokens: 10,
+          totalTokens: 170,
+        },
+      ],
+      range: {
+        period: "thirtyDay",
+        since: now - 30 * 24 * 60 * 60 * 1000,
+        until: now,
+      },
+    });
+    expect(store.getStats({ period: "allTime" }, now).total).toEqual({
+      sessionCount: 2,
+      messageCount: 5,
+      inputTokens: 500,
+      outputTokens: 155,
+      cachedInputTokens: 85,
+      reasoningOutputTokens: 10,
+      totalTokens: 750,
+    });
+  });
+
+  it("dedupes mirrored token events across sources", () => {
+    const store = createInMemoryStore();
+    const now = new Date("2026-06-01T12:00:00Z").getTime();
+    const mirroredEvent = {
+      dedupeKey: "codex:mirrored-turn",
+      timestamp: now - 60 * 60 * 1000,
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedInputTokens: 20,
+      reasoningOutputTokens: 10,
+      totalTokens: 170,
+    };
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:cli", rawId: "cli", source: "codex-cli" }), messages, [mirroredEvent]);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:app", rawId: "app", source: "codex-app" }), messages, [mirroredEvent]);
+
+    const stats = store.getStats({ period: "today" }, now);
+
+    expect(stats.total.totalTokens).toBe(170);
+    expect(stats.bySource.find((item) => item.source === "codex-cli")?.totalTokens).toBe(170);
+    expect(stats.bySource.find((item) => item.source === "codex-app")?.totalTokens).toBe(0);
+  });
+
   it("keeps custom title, tags, favorite, pinned, and hidden state separate from reindexing", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(sampleSession(), messages);

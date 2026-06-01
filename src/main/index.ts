@@ -24,8 +24,9 @@ import {
   revealInFileManager,
 } from "../core/platform";
 import { SessionStore } from "../core/session-store";
+import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import type { AppSettings } from "../core/platform";
-import type { SearchOptions } from "../core/types";
+import type { SearchOptions, SessionStatsOptions } from "../core/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
@@ -38,6 +39,7 @@ let tray: Tray | null = null;
 let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, total: 0, lastIndexedAt: null, error: null };
 let activeIndexRun: Promise<IndexStatus> | null = null;
+let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
 
 const settingsStore = new Store<AppSettings>({
   defaults: defaultSettings,
@@ -127,7 +129,7 @@ function createTray(): void {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${PRODUCT_NAME}`, click: toggleWindow },
-      { label: "Refresh Index", click: () => void runIndexSync() },
+      { label: "Refresh Now", click: () => void runIndexSync() },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
@@ -178,7 +180,7 @@ function createApplicationMenu(): void {
     {
       label: "View",
       submenu: [
-        { label: "Refresh Index", accelerator: "CmdOrCtrl+R", click: () => void runIndexSync() },
+        { label: "Refresh Now", accelerator: "CmdOrCtrl+R", click: () => void runIndexSync() },
         { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
@@ -238,6 +240,19 @@ async function runIndexSync(): Promise<IndexStatus> {
   return activeIndexRun;
 }
 
+function startAutoIndexRefresh(): void {
+  if (autoIndexTimer) return;
+  autoIndexTimer = setInterval(() => {
+    void runIndexSync();
+  }, AUTO_INDEX_REFRESH_INTERVAL_MS);
+}
+
+function stopAutoIndexRefresh(): void {
+  if (!autoIndexTimer) return;
+  clearInterval(autoIndexTimer);
+  autoIndexTimer = null;
+}
+
 function registerIpc(): void {
   ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(options));
   ipcMain.handle("session:get", (_event, sessionKey: string) => {
@@ -247,6 +262,7 @@ function registerIpc(): void {
   ipcMain.handle("session:messages", (_event, sessionKey: string, offset?: number, limit?: number) =>
     store.getMessages(sessionKey, offset ?? 0, limit ?? 120),
   );
+  ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
   ipcMain.handle("tags:list", () => store.listTags());
   ipcMain.handle("projects:list", () => store.listProjects());
   ipcMain.handle("title:set", (_event, sessionKey: string, title: string | null) => store.setCustomTitle(sessionKey, title));
@@ -308,7 +324,8 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   globalShortcut.register("Alt+Space", toggleWindow);
-  setTimeout(() => void runIndexSync(), 750);
+  setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
+  startAutoIndexRefresh();
 });
 
 app.on("window-all-closed", () => {
@@ -316,6 +333,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  stopAutoIndexRefresh();
   globalShortcut.unregisterAll();
   store?.close();
 });

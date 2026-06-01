@@ -9,6 +9,19 @@ export interface SessionMessage {
   index: number;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+export interface TokenUsageEvent extends TokenUsage {
+  timestamp: number;
+  dedupeKey: string;
+}
+
 export interface IndexedSession {
   sessionKey: string;
   rawId: string;
@@ -23,11 +36,13 @@ export interface IndexedSession {
   prUrl: string | null;
   prNumber: number | null;
   gitBranch?: string | null;
+  tokenUsage?: TokenUsage;
 }
 
 export interface LoadedSession {
   session: IndexedSession;
   messages: SessionMessage[];
+  tokenEvents?: TokenUsageEvent[];
 }
 
 export interface SearchOptions {
@@ -47,6 +62,7 @@ export interface ProjectSummary {
 }
 
 export interface SessionSearchResult extends IndexedSession {
+  tokenUsage: TokenUsage;
   customTitle: string | null;
   displayTitle: string;
   favorited: boolean;
@@ -57,6 +73,31 @@ export interface SessionSearchResult extends IndexedSession {
   lastOpenedAt: number | null;
   lastResumedAt: number | null;
   messageCount: number;
+}
+
+export interface SessionStatsSummary extends TokenUsage {
+  sessionCount: number;
+  messageCount: number;
+}
+
+export interface SessionSourceStats extends SessionStatsSummary {
+  source: SessionSource;
+}
+
+export type SessionStatsPeriod = "today" | "sevenDay" | "thirtyDay" | "allTime";
+
+export interface SessionStatsOptions {
+  period?: SessionStatsPeriod;
+}
+
+export interface SessionStats {
+  total: SessionStatsSummary;
+  bySource: SessionSourceStats[];
+  range: {
+    period: SessionStatsPeriod;
+    since: number | null;
+    until: number;
+  };
 }
 
 export interface ClaudeSessionIndexFile {

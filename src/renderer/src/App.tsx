@@ -29,7 +29,17 @@ import {
 } from "lucide-react";
 import type { IndexStatus } from "../../core/indexer";
 import { formatMessageTime, formatRelativeTime } from "../../core/format-session";
-import type { ProjectSummary, SearchOptions, SessionMessage, SessionSearchResult, SessionSortBy, SessionSource } from "../../core/types";
+import type {
+  ProjectSummary,
+  SearchOptions,
+  SessionMessage,
+  SessionSearchResult,
+  SessionSortBy,
+  SessionSource,
+  SessionStats,
+  SessionStatsPeriod,
+} from "../../core/types";
+import { formatCompactNumber, formatTokenCount } from "./format-count";
 import {
   readSidebarSections,
   serializeSidebarSections,
@@ -62,9 +72,34 @@ const SORT_OPTIONS: Array<{ label: string; value: SessionSortBy }> = [
   { label: "Updated", value: "updated" },
 ];
 
+const STATS_PERIOD_OPTIONS: Array<{ label: string; value: SessionStatsPeriod }> = [
+  { label: "Today", value: "today" },
+  { label: "7D", value: "sevenDay" },
+  { label: "30D", value: "thirtyDay" },
+  { label: "All", value: "allTime" },
+];
+
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
 const INITIAL_MESSAGE_LIMIT = 20;
 const MESSAGE_PAGE_SIZE = 80;
+
+const EMPTY_STATS: SessionStats = {
+  total: {
+    sessionCount: 0,
+    messageCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  },
+  bySource: [],
+  range: {
+    period: "today",
+    since: null,
+    until: 0,
+  },
+};
 
 function isBranchTag(tagName: string): boolean {
   return tagName.startsWith("branch:");
@@ -74,6 +109,8 @@ type ActionStatus = {
   kind: "running" | "success" | "error";
   message: string;
 };
+
+type RefreshFeedback = ActionStatus | null;
 
 interface ContextMenuState {
   x: number;
@@ -108,7 +145,9 @@ export function App(): ReactElement {
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [status, setStatus] = useState<IndexStatus | null>(null);
+  const [stats, setStats] = useState<SessionStats>(EMPTY_STATS);
+  const [statsPeriod, setStatsPeriod] = useState<SessionStatsPeriod>("today");
+  const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionSearchResult | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
@@ -117,6 +156,7 @@ export function App(): ReactElement {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [deleteTagName, setDeleteTagName] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
+  const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -129,18 +169,18 @@ export function App(): ReactElement {
       sortBy,
       limit: 300,
     };
-    const [nextResults, nextTags, nextProjects, nextStatus] = await Promise.all([
+    const [nextResults, nextTags, nextProjects, nextStats] = await Promise.all([
       window.sessionSearch.searchSessions(options),
       window.sessionSearch.listTags(),
       window.sessionSearch.listProjects(),
-      window.sessionSearch.getIndexStatus(),
+      window.sessionSearch.getStats({ period: statsPeriod }),
     ]);
     setResults(nextResults);
     setTags(nextTags);
     setProjects(nextProjects);
-    setStatus(nextStatus);
+    setStats(nextStats);
     if (selectedKey && !nextResults.some((session) => session.sessionKey === selectedKey)) setSelectedKey(null);
-  }, [query, source, tag, projectPath, visibility, sortBy, selectedKey]);
+  }, [query, source, tag, projectPath, visibility, sortBy, selectedKey, statsPeriod]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -158,7 +198,7 @@ export function App(): ReactElement {
 
   useEffect(() => {
     const offIndex = window.sessionSearch.onIndexStatus((nextStatus) => {
-      setStatus(nextStatus);
+      setIndexStatus(nextStatus);
       void load();
     });
     const offFocus = window.sessionSearch.onFocusSearch(() => searchRef.current?.focus());
@@ -343,6 +383,27 @@ export function App(): ReactElement {
     }
   }
 
+  async function refreshNow(): Promise<void> {
+    setContextMenu(null);
+    setRefreshFeedback({ kind: "running", message: "Refreshing index..." });
+    try {
+      const status = await window.sessionSearch.refreshIndex();
+      setIndexStatus(status);
+      await load();
+      if (status.error) {
+        setRefreshFeedback({ kind: "error", message: status.error });
+        return;
+      }
+      const successMessage = `Index refreshed: ${status.indexed}/${status.total} sessions.`;
+      setRefreshFeedback({ kind: "success", message: successMessage });
+      window.setTimeout(() => {
+        setRefreshFeedback((current) => (current?.kind === "success" && current.message === successMessage ? null : current));
+      }, 2200);
+    } catch (error) {
+      setRefreshFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   return (
     <main className="app" data-theme={theme} onClick={() => setContextMenu(null)}>
       <div className="titlebar-drag" />
@@ -357,10 +418,13 @@ export function App(): ReactElement {
           </div>
         </div>
 
-        <button className="primary" onClick={() => void window.sessionSearch.refreshIndex()}>
-          <RefreshCw size={16} />
-          Refresh Index
-        </button>
+        <div className="refresh-control">
+          <button className={`primary ${indexStatus?.running ? "is-running" : ""}`} onClick={() => void refreshNow()} disabled={indexStatus?.running}>
+            <RefreshCw size={16} />
+            {indexStatus?.running ? "Refreshing..." : "Refresh Now"}
+          </button>
+          {refreshFeedback ? <div className={`refresh-feedback ${refreshFeedback.kind}`}>{refreshFeedback.message}</div> : null}
+        </div>
 
         <button
           className="theme-toggle"
@@ -371,14 +435,41 @@ export function App(): ReactElement {
           {theme === "dark" ? "Light" : "Dark"}
         </button>
 
-        <div className="status">
-          <strong>{status?.running ? "Indexing" : "Index"}</strong>
-          <span>
-            {status?.lastIndexedAt
-              ? `${status.indexed}/${status.total} sessions · ${formatRelativeTime(status.lastIndexedAt)}`
-              : "Waiting for first scan"}
-          </span>
-          {status?.error ? <em>{status.error}</em> : null}
+        <div className="stats-panel">
+          <div className="stats-header">
+            <span>Usage</span>
+            <div className="stats-period-toggle" role="group" aria-label="Usage period">
+              {STATS_PERIOD_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className={statsPeriod === option.value ? "active" : ""}
+                  onClick={() => setStatsPeriod(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="stats-metrics">
+            <span>
+              <strong>{formatCompactNumber(stats.total.messageCount)}</strong>
+              Messages
+            </span>
+            <span>
+              <strong>{formatTokenCount(stats.total.totalTokens)}</strong>
+              Tokens
+            </span>
+          </div>
+          <div className="stats-breakdown">
+            {stats.bySource.map((item) => (
+              <div key={item.source}>
+                <span>{SOURCE_LABEL[item.source]}</span>
+                <em>
+                  {formatCompactNumber(item.messageCount)} msg · {formatTokenCount(item.totalTokens)}
+                </em>
+              </div>
+            ))}
+          </div>
         </div>
 
         <nav className="nav-group">
@@ -707,6 +798,7 @@ function SessionRow({
           <span>{session.projectPath || "No project path"}</span>
           <span>{formatRelativeTime(session.timestamp)}</span>
           <span>{session.messageCount} messages</span>
+          <span>{formatTokenCount(session.tokenUsage.totalTokens)} tokens</span>
         </div>
         {session.matchSnippet ? <div className="snippet">{session.matchSnippet}</div> : null}
       </div>
@@ -819,7 +911,8 @@ function DetailPanel({
             </button>
           </div>
           <p>
-            {session.projectPath || "No project"} · {new Date(session.timestamp).toLocaleString()} · {messages.length} messages
+            {session.projectPath || "No project"} · {new Date(session.timestamp).toLocaleString()} · {messages.length} messages ·{" "}
+            {formatTokenCount(session.tokenUsage.totalTokens)} tokens
           </p>
         </div>
         <div className="detail-header-actions">

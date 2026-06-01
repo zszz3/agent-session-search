@@ -12,9 +12,21 @@ import type {
   SessionFormat,
   SessionMessage,
   SessionSource,
+  TokenUsage,
+  TokenUsageEvent,
 } from "./types";
 
 const CODEX_APP_ORIGINATOR = "Codex Desktop";
+
+function emptyTokenUsage(): TokenUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+}
 
 export function parseCodexSessionMetaLine(parsed: CodexConversationLine): {
   id: string;
@@ -89,6 +101,141 @@ function firstQuestion(messages: SessionMessage[]): string {
   return messages.find((message) => message.role === "user" && isMeaningfulUserMessage(message.content))?.content || "";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function objectField(value: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const field = value[key];
+  return isRecord(field) ? field : null;
+}
+
+function stringField(value: unknown, key: string): string {
+  if (!isRecord(value)) return "";
+  const field = value[key];
+  return typeof field === "string" ? field : "";
+}
+
+function numberField(value: unknown, key: string): number {
+  if (!isRecord(value)) return 0;
+  const field = value[key];
+  return typeof field === "number" && Number.isFinite(field) ? field : 0;
+}
+
+function addTokenUsage(total: TokenUsage, next: TokenUsage): void {
+  total.inputTokens += next.inputTokens;
+  total.outputTokens += next.outputTokens;
+  total.cachedInputTokens += next.cachedInputTokens;
+  total.reasoningOutputTokens += next.reasoningOutputTokens;
+  total.totalTokens += next.totalTokens;
+}
+
+function createTokenUsage(inputTokens: number, outputTokens: number, cachedInputTokens: number, reasoningOutputTokens: number): TokenUsage {
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    reasoningOutputTokens,
+    totalTokens: inputTokens + outputTokens + cachedInputTokens + reasoningOutputTokens,
+  };
+}
+
+function parseTimestampMs(value: unknown): number {
+  if (typeof value !== "string") return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function tokenEvent(
+  timestamp: number,
+  dedupeKey: string,
+  inputTokens: number,
+  outputTokens: number,
+  cachedInputTokens: number,
+  reasoningOutputTokens: number,
+): TokenUsageEvent {
+  return {
+    timestamp,
+    dedupeKey,
+    ...createTokenUsage(inputTokens, outputTokens, cachedInputTokens, reasoningOutputTokens),
+  };
+}
+
+function putTokenEvent(entries: Map<string, TokenUsageEvent>, entry: TokenUsageEvent): void {
+  const existing = entries.get(entry.dedupeKey);
+  if (!existing || entry.totalTokens > existing.totalTokens) entries.set(entry.dedupeKey, entry);
+}
+
+function tokenUsageFromEvents(events: TokenUsageEvent[]): TokenUsage {
+  const total = emptyTokenUsage();
+  for (const entry of events) addTokenUsage(total, entry);
+  return total;
+}
+
+function extractCodexTokenEvents(rows: unknown[]): TokenUsageEvent[] {
+  const entries = new Map<string, TokenUsageEvent>();
+  let currentModel = "";
+
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    const payload = objectField(row, "payload");
+    if (row.type === "turn_context") {
+      currentModel = stringField(payload, "model") || currentModel;
+      continue;
+    }
+    if (row.type !== "event_msg" || stringField(payload, "type") !== "token_count") continue;
+    const info = objectField(payload, "info");
+    const usage = objectField(info, "last_token_usage") || objectField(info, "total_token_usage");
+    if (!usage) continue;
+    const totalUsage = objectField(info, "total_token_usage");
+
+    const rawInput = numberField(usage, "input_tokens");
+    const rawOutput = numberField(usage, "output_tokens");
+    const cached = numberField(usage, "cached_input_tokens") + numberField(usage, "cache_read_input_tokens");
+    const reasoning = numberField(usage, "reasoning_output_tokens");
+    const normalizedInput = Math.max(0, rawInput - cached);
+    const normalizedOutput = Math.max(0, rawOutput - reasoning);
+    const model = stringField(info, "model") || currentModel;
+    const totalInput = numberField(totalUsage, "input_tokens");
+    const totalOutput = numberField(totalUsage, "output_tokens");
+    const key = ["codex", model, normalizedInput, normalizedOutput, cached, reasoning, totalInput, totalOutput].join(":");
+    putTokenEvent(entries, tokenEvent(parseTimestampMs(row.timestamp), key, normalizedInput, normalizedOutput, cached, reasoning));
+  }
+
+  return [...entries.values()];
+}
+
+function extractClaudeTokenEvents(rows: unknown[]): TokenUsageEvent[] {
+  const entries = new Map<string, TokenUsageEvent>();
+
+  rows.forEach((row, index) => {
+    if (!isRecord(row) || row.type !== "assistant") return;
+    const message = objectField(row, "message");
+    const usage = objectField(message, "usage");
+    if (!usage) return;
+
+    const cached = numberField(usage, "cache_read_input_tokens") + numberField(usage, "cached_input_tokens");
+    const entry = createTokenUsage(
+      numberField(usage, "input_tokens"),
+      numberField(usage, "output_tokens"),
+      cached,
+      numberField(usage, "reasoning_output_tokens"),
+    );
+    const key = stringField(message, "id") || stringField(row, "uuid") || `${index}:${JSON.stringify(usage)}`;
+    putTokenEvent(
+      entries,
+      {
+        ...entry,
+        timestamp: parseTimestampMs(row.timestamp),
+        dedupeKey: key.startsWith("claude-code:") ? key : `claude-code:${key}`,
+      },
+    );
+  });
+
+  return [...entries.values()];
+}
+
 function firstClaudeGitBranch(rows: unknown[]): string | null {
   for (const row of rows) {
     if (!row || typeof row !== "object" || !("gitBranch" in row)) continue;
@@ -110,6 +257,7 @@ function createIndexedSession(input: {
   prUrl?: string | null;
   prNumber?: number | null;
   gitBranch?: string | null;
+  tokenUsage?: TokenUsage;
 }): IndexedSession {
   const stat = safeStat(input.filePath);
   return {
@@ -126,6 +274,7 @@ function createIndexedSession(input: {
     prUrl: input.prUrl ?? null,
     prNumber: input.prNumber ?? null,
     gitBranch: input.gitBranch ?? null,
+    tokenUsage: input.tokenUsage ?? emptyTokenUsage(),
   };
 }
 
@@ -137,6 +286,8 @@ export function loadCodexSessionFile(filePath: string, title?: string, updatedAt
   if (!meta) return null;
 
   const messages = extractMessages(rows, "codex");
+  const tokenEvents = extractCodexTokenEvents(rows);
+  const tokenUsage = tokenUsageFromEvents(tokenEvents);
   const question = firstQuestion(messages);
   const source: SessionSource = meta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli";
   const session = createIndexedSession({
@@ -149,9 +300,10 @@ export function loadCodexSessionFile(filePath: string, title?: string, updatedAt
     firstQuestion: question ? cleanTitle(question) : "",
     timestamp: updatedAt ? new Date(updatedAt).getTime() : meta.ts,
     gitBranch: meta.gitBranch,
+    tokenUsage,
   });
 
-  return { session, messages };
+  return { session, messages, tokenEvents };
 }
 
 function walkJsonlFiles(dir: string): string[] {
@@ -193,6 +345,8 @@ export function* loadCodexSessionsIterator(codexDir = path.join(os.homedir(), ".
     if (!meta) continue;
     const indexedTitle = titleMap.get(meta.id);
     const messages = extractMessages(rows, "codex");
+    const tokenEvents = extractCodexTokenEvents(rows);
+    const tokenUsage = tokenUsageFromEvents(tokenEvents);
     const question = firstQuestion(messages);
     const source: SessionSource = meta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli";
     yield {
@@ -206,8 +360,10 @@ export function* loadCodexSessionsIterator(codexDir = path.join(os.homedir(), ".
         firstQuestion: question ? cleanTitle(question) : "",
         timestamp: indexedTitle?.updatedAt ? new Date(indexedTitle.updatedAt).getTime() : meta.ts,
         gitBranch: meta.gitBranch,
+        tokenUsage,
       }),
       messages,
+      tokenEvents,
     };
   }
 }
@@ -251,6 +407,8 @@ export function* loadClaudeCliSessionsIterator(claudeDir = path.join(os.homedir(
       const filePath = path.join(projectPath, file);
       const rows = readJsonl(filePath);
       const messages = extractMessages(rows, "claude");
+      const tokenEvents = extractClaudeTokenEvents(rows);
+      const tokenUsage = tokenUsageFromEvents(tokenEvents);
       const question = firstQuestion(messages);
       const embeddedCwd = (rows.find((row) => row && typeof row === "object" && "cwd" in row) as
         | ClaudeConversationLine
@@ -267,8 +425,10 @@ export function* loadClaudeCliSessionsIterator(claudeDir = path.join(os.homedir(
           firstQuestion: cleanTitle(question),
           timestamp: index.get(rawId)?.startedAt || 0,
           gitBranch,
+          tokenUsage,
         }),
         messages,
+        tokenEvents,
       };
     }
   }
@@ -314,6 +474,8 @@ export function* loadClaudeAppSessionsIterator(
       rawId && cwd ? path.join(projectsDir, encodeClaudeProjectDir(cwd), `${rawId}.jsonl`) : metaPath;
     const rows = fs.existsSync(convoPath) ? readJsonl(convoPath) : [];
     const messages = extractMessages(rows, "claude");
+    const tokenEvents = extractClaudeTokenEvents(rows);
+    const tokenUsage = tokenUsageFromEvents(tokenEvents);
     const question = firstQuestion(messages);
     const title = appMeta.title && !/^Session\s+\d+$/i.test(appMeta.title) ? appMeta.title : cleanTitle(question);
     const gitBranch = firstClaudeGitBranch(rows);
@@ -330,8 +492,10 @@ export function* loadClaudeAppSessionsIterator(
         prUrl: appMeta.prUrl || null,
         prNumber: appMeta.prNumber || null,
         gitBranch,
+        tokenUsage,
       }),
       messages,
+      tokenEvents,
     };
   }
 }

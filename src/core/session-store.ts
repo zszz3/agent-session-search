@@ -5,11 +5,23 @@ import type {
   SearchOptions,
   SessionMessage,
   SessionSearchResult,
+  SessionStats,
+  SessionStatsOptions,
+  SessionStatsPeriod,
+  SessionStatsSummary,
   SessionSortBy,
   SessionSource,
+  TokenUsage,
+  TokenUsageEvent,
 } from "./types";
 
 type Db = Database.Database;
+
+interface StatsRange {
+  period: SessionStatsPeriod;
+  since: number | null;
+  until: number;
+}
 
 interface SessionRow {
   session_key: string;
@@ -31,6 +43,11 @@ interface SessionRow {
   last_opened_at: number | null;
   last_resumed_at: number | null;
   message_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
 }
 
 export class SessionStore {
@@ -45,17 +62,21 @@ export class SessionStore {
     this.db.close();
   }
 
-  upsertIndexedSession(session: IndexedSession, messages: SessionMessage[]): void {
+  upsertIndexedSession(session: IndexedSession, messages: SessionMessage[], tokenEvents: TokenUsageEvent[] = []): void {
+    const normalizedTokenEvents = tokenEvents.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
+    const tokenUsage = normalizedTokenEvents.length > 0 ? tokenUsageFromEvents(normalizedTokenEvents) : normalizeTokenUsage(session.tokenUsage);
     const write = this.db.transaction(() => {
       this.db
         .prepare(
           `
           INSERT INTO sessions (
             session_key, raw_id, source, project_path, file_path, original_title, first_question,
-            timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count
+            timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
+            input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens
           )
           VALUES (@sessionKey, @rawId, @source, @projectPath, @filePath, @originalTitle, @firstQuestion,
-            @timestamp, @fileMtimeMs, @fileSize, @prUrl, @prNumber, @messageCount)
+            @timestamp, @fileMtimeMs, @fileSize, @prUrl, @prNumber, @messageCount,
+            @inputTokens, @outputTokens, @cachedInputTokens, @reasoningOutputTokens, @totalTokens)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
@@ -68,12 +89,18 @@ export class SessionStore {
             file_size = excluded.file_size,
             pr_url = excluded.pr_url,
             pr_number = excluded.pr_number,
-            message_count = excluded.message_count
+            message_count = excluded.message_count,
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cached_input_tokens = excluded.cached_input_tokens,
+            reasoning_output_tokens = excluded.reasoning_output_tokens,
+            total_tokens = excluded.total_tokens
         `,
         )
-        .run({ ...session, messageCount: messages.length });
+        .run({ ...session, messageCount: messages.length, ...tokenUsage });
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
+      this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(session.sessionKey);
 
       const insertMessage = this.db.prepare(
@@ -81,6 +108,28 @@ export class SessionStore {
       );
       for (const message of messages) {
         insertMessage.run(session.sessionKey, message.index, message.role, message.content, message.timestamp);
+      }
+
+      const insertTokenEvent = this.db.prepare(
+        `
+        INSERT INTO token_events (
+          session_key, dedupe_key, timestamp, input_tokens, output_tokens,
+          cached_input_tokens, reasoning_output_tokens, total_tokens
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      );
+      for (const event of normalizedTokenEvents) {
+        insertTokenEvent.run(
+          session.sessionKey,
+          event.dedupeKey,
+          event.timestamp,
+          event.inputTokens,
+          event.outputTokens,
+          event.cachedInputTokens,
+          event.reasoningOutputTokens,
+          event.totalTokens,
+        );
       }
 
       this.refreshFtsForSession(session.sessionKey);
@@ -212,6 +261,52 @@ export class SessionStore {
     return this.getMessages(sessionKey, 0, 100_000);
   }
 
+  getStats(options: SessionStatsOptions = {}, now = Date.now()): SessionStats {
+    const range = resolveStatsRange(options, now);
+    const summariesBySource = new Map<SessionSource, SessionStatsSummary>();
+
+    for (const row of this.aggregateActiveSessionsBySource(range)) {
+      summaryForSource(summariesBySource, row.source).sessionCount = row.session_count;
+    }
+    for (const row of this.aggregateMessagesBySource(range)) {
+      summaryForSource(summariesBySource, row.source).messageCount = row.message_count;
+    }
+
+    const tokenRows = this.aggregateTokenEventsBySource(range);
+    const tokenSourceRows = range.since === null && tokenRows.length === 0 ? this.aggregateSessionTokensBySource() : tokenRows;
+    for (const row of tokenSourceRows) {
+      const summary = summaryForSource(summariesBySource, row.source);
+      summary.inputTokens = row.input_tokens;
+      summary.outputTokens = row.output_tokens;
+      summary.cachedInputTokens = row.cached_input_tokens;
+      summary.reasoningOutputTokens = row.reasoning_output_tokens;
+      summary.totalTokens = row.total_tokens;
+    }
+
+    const bySource = [...summariesBySource.entries()]
+      .map(([source, summary]) => ({ source, ...summary }))
+      .filter((summary) => summary.sessionCount > 0 || summary.messageCount > 0 || summary.totalTokens > 0)
+      .sort((a, b) => a.source.localeCompare(b.source));
+    const total = bySource.reduce<SessionStatsSummary>(
+      (acc, row) => ({
+        sessionCount: acc.sessionCount + row.sessionCount,
+        messageCount: acc.messageCount + row.messageCount,
+        inputTokens: acc.inputTokens + row.inputTokens,
+        outputTokens: acc.outputTokens + row.outputTokens,
+        cachedInputTokens: acc.cachedInputTokens + row.cachedInputTokens,
+        reasoningOutputTokens: acc.reasoningOutputTokens + row.reasoningOutputTokens,
+        totalTokens: acc.totalTokens + row.totalTokens,
+      }),
+      emptyStatsSummary(),
+    );
+
+    return {
+      total,
+      bySource,
+      range,
+    };
+  }
+
   searchSessions(options: SearchOptions = {}): SessionSearchResult[] {
     const limit = options.limit ?? 200;
     const query = options.query?.trim() || "";
@@ -235,10 +330,23 @@ export class SessionStore {
   clearSearchIndex(): void {
     const clear = this.db.transaction(() => {
       this.db.prepare("DELETE FROM messages").run();
+      this.db.prepare("DELETE FROM token_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
       this.db
         .prepare(
-          "UPDATE sessions SET file_mtime_ms = 0, file_size = 0, message_count = 0, original_title = '', first_question = ''",
+          `
+          UPDATE sessions
+          SET file_mtime_ms = 0,
+            file_size = 0,
+            message_count = 0,
+            input_tokens = 0,
+            output_tokens = 0,
+            cached_input_tokens = 0,
+            reasoning_output_tokens = 0,
+            total_tokens = 0,
+            original_title = '',
+            first_question = ''
+        `,
         )
         .run();
     });
@@ -267,7 +375,12 @@ export class SessionStore {
         hidden INTEGER NOT NULL DEFAULT 0,
         last_opened_at INTEGER,
         last_resumed_at INTEGER,
-        message_count INTEGER NOT NULL DEFAULT 0
+        message_count INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -277,6 +390,19 @@ export class SessionStore {
         content TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         PRIMARY KEY (session_key, message_index),
+        FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS token_events (
+        session_key TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (session_key, dedupe_key),
         FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
       );
 
@@ -303,6 +429,11 @@ export class SessionStore {
       );
     `);
     this.addColumnIfMissing("sessions", "favorited", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "output_tokens", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "reasoning_output_tokens", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "total_tokens", "INTEGER NOT NULL DEFAULT 0");
   }
 
   private addColumnIfMissing(tableName: string, columnName: string, definition: string): void {
@@ -353,6 +484,181 @@ export class SessionStore {
     this.db
       .prepare("INSERT INTO session_tags (session_key, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
       .run(sessionKey, tag.id);
+  }
+
+  private aggregateActiveSessionsBySource(range: StatsRange): Array<{ source: SessionSource; session_count: number }> {
+    if (range.since === null) {
+      return this.db
+        .prepare(
+          `
+          SELECT source, COUNT(*) AS session_count
+          FROM sessions
+          GROUP BY source
+          ORDER BY source
+        `,
+        )
+        .all() as Array<{ source: SessionSource; session_count: number }>;
+    }
+
+    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
+    return this.db
+      .prepare(
+        `
+        WITH active AS (
+          SELECT sessions.source AS source, sessions.session_key AS session_key
+          FROM sessions
+          JOIN messages ON messages.session_key = sessions.session_key
+          WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ?
+          UNION
+          SELECT sessions.source AS source, sessions.session_key AS session_key
+          FROM sessions
+          JOIN token_events ON token_events.session_key = sessions.session_key
+          WHERE token_events.timestamp >= ? AND token_events.timestamp <= ?
+        )
+        SELECT source, COUNT(DISTINCT session_key) AS session_count
+        FROM active
+        GROUP BY source
+        ORDER BY source
+      `,
+      )
+      .all(range.since, range.until, range.since, range.until) as Array<{ source: SessionSource; session_count: number }>;
+  }
+
+  private aggregateMessagesBySource(range: StatsRange): Array<{ source: SessionSource; message_count: number }> {
+    if (range.since === null) {
+      return this.db
+        .prepare(
+          `
+          SELECT source, COALESCE(SUM(message_count), 0) AS message_count
+          FROM sessions
+          GROUP BY source
+          ORDER BY source
+        `,
+        )
+        .all() as Array<{ source: SessionSource; message_count: number }>;
+    }
+
+    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
+    return this.db
+      .prepare(
+        `
+        SELECT sessions.source AS source, COUNT(*) AS message_count
+        FROM messages
+        JOIN sessions ON sessions.session_key = messages.session_key
+        WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ?
+        GROUP BY sessions.source
+        ORDER BY sessions.source
+      `,
+      )
+      .all(range.since, range.until) as Array<{ source: SessionSource; message_count: number }>;
+  }
+
+  private aggregateTokenEventsBySource(range: StatsRange): Array<{
+    source: SessionSource;
+    input_tokens: number;
+    output_tokens: number;
+    cached_input_tokens: number;
+    reasoning_output_tokens: number;
+    total_tokens: number;
+  }> {
+    const whereClause = range.since === null ? "" : "WHERE timestamp >= ? AND timestamp <= ?";
+    const args = range.since === null ? [] : [range.since, range.until];
+    return this.db
+      .prepare(
+        `
+        WITH ranked AS (
+          SELECT
+            sessions.source AS source,
+            token_events.dedupe_key AS dedupe_key,
+            token_events.timestamp AS timestamp,
+            token_events.input_tokens AS input_tokens,
+            token_events.output_tokens AS output_tokens,
+            token_events.cached_input_tokens AS cached_input_tokens,
+            token_events.reasoning_output_tokens AS reasoning_output_tokens,
+            token_events.total_tokens AS total_tokens,
+            ROW_NUMBER() OVER (
+              PARTITION BY token_events.dedupe_key
+              ORDER BY
+                token_events.total_tokens DESC,
+                CASE sessions.source
+                  WHEN 'codex-cli' THEN 1
+                  WHEN 'claude-cli' THEN 1
+                  WHEN 'codex-app' THEN 2
+                  WHEN 'claude-app' THEN 2
+                  ELSE 9
+                END,
+                token_events.timestamp ASC
+            ) AS row_rank
+          FROM token_events
+          JOIN sessions ON sessions.session_key = token_events.session_key
+        ),
+        deduped AS (
+          SELECT
+            source,
+            dedupe_key,
+            timestamp,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            reasoning_output_tokens,
+            total_tokens
+          FROM ranked
+          WHERE row_rank = 1
+        )
+        SELECT
+          source,
+          COALESCE(SUM(input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+          COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+          COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM deduped
+        ${whereClause}
+        GROUP BY source
+        ORDER BY source
+      `,
+      )
+      .all(...args) as Array<{
+      source: SessionSource;
+      input_tokens: number;
+      output_tokens: number;
+      cached_input_tokens: number;
+      reasoning_output_tokens: number;
+      total_tokens: number;
+    }>;
+  }
+
+  private aggregateSessionTokensBySource(): Array<{
+    source: SessionSource;
+    input_tokens: number;
+    output_tokens: number;
+    cached_input_tokens: number;
+    reasoning_output_tokens: number;
+    total_tokens: number;
+  }> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          source,
+          COALESCE(SUM(input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+          COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+          COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM sessions
+        GROUP BY source
+        ORDER BY source
+      `,
+      )
+      .all() as Array<{
+      source: SessionSource;
+      input_tokens: number;
+      output_tokens: number;
+      cached_input_tokens: number;
+      reasoning_output_tokens: number;
+      total_tokens: number;
+    }>;
   }
 
   private getCandidateRows(options: SearchOptions): SessionRow[] {
@@ -453,6 +759,13 @@ export class SessionStore {
       fileSize: row.file_size,
       prUrl: row.pr_url,
       prNumber: row.pr_number,
+      tokenUsage: {
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        cachedInputTokens: row.cached_input_tokens,
+        reasoningOutputTokens: row.reasoning_output_tokens,
+        totalTokens: row.total_tokens,
+      },
       customTitle: row.custom_title,
       displayTitle,
       favorited: row.favorited === 1,
@@ -490,6 +803,90 @@ export class SessionStore {
 
 export function createInMemoryStore(): SessionStore {
   return new SessionStore(new Database(":memory:"));
+}
+
+function emptyStatsSummary(): SessionStatsSummary {
+  return {
+    sessionCount: 0,
+    messageCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+}
+
+function summaryForSource(summariesBySource: Map<SessionSource, SessionStatsSummary>, source: SessionSource): SessionStatsSummary {
+  const existing = summariesBySource.get(source);
+  if (existing) return existing;
+  const summary = emptyStatsSummary();
+  summariesBySource.set(source, summary);
+  return summary;
+}
+
+function emptyTokenUsage(): TokenUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+}
+
+function normalizeTokenUsage(tokenUsage: TokenUsage | undefined): TokenUsage {
+  const inputTokens = nonNegativeNumber(tokenUsage?.inputTokens);
+  const outputTokens = nonNegativeNumber(tokenUsage?.outputTokens);
+  const cachedInputTokens = nonNegativeNumber(tokenUsage?.cachedInputTokens);
+  const reasoningOutputTokens = nonNegativeNumber(tokenUsage?.reasoningOutputTokens);
+  const derivedTotal = inputTokens + outputTokens + cachedInputTokens + reasoningOutputTokens;
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    reasoningOutputTokens,
+    totalTokens: nonNegativeNumber(tokenUsage?.totalTokens) || derivedTotal,
+  };
+}
+
+function normalizeTokenEvent(event: TokenUsageEvent): TokenUsageEvent {
+  return {
+    ...normalizeTokenUsage(event),
+    timestamp: nonNegativeNumber(event.timestamp),
+    dedupeKey: event.dedupeKey.trim(),
+  };
+}
+
+function tokenUsageFromEvents(events: TokenUsageEvent[]): TokenUsage {
+  return events.reduce<TokenUsage>(
+    (acc, event) => ({
+      inputTokens: acc.inputTokens + event.inputTokens,
+      outputTokens: acc.outputTokens + event.outputTokens,
+      cachedInputTokens: acc.cachedInputTokens + event.cachedInputTokens,
+      reasoningOutputTokens: acc.reasoningOutputTokens + event.reasoningOutputTokens,
+      totalTokens: acc.totalTokens + event.totalTokens,
+    }),
+    emptyTokenUsage(),
+  );
+}
+
+function nonNegativeNumber(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function resolveStatsRange(options: SessionStatsOptions, now: number): StatsRange {
+  const period = options.period ?? "today";
+  if (period === "allTime") return { period, since: null, until: now };
+  if (period === "today") return { period, since: startOfLocalDay(now), until: now };
+  if (period === "thirtyDay") return { period, since: now - 30 * 24 * 60 * 60 * 1000, until: now };
+  return { period: "sevenDay", since: now - 7 * 24 * 60 * 60 * 1000, until: now };
+}
+
+function startOfLocalDay(timestamp: number): number {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
 }
 
 function buildFtsQuery(query: string): string {

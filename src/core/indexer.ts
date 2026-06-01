@@ -14,7 +14,7 @@ export function syncDefaultSessions(store: SessionStore): IndexStatus {
   const loaded = loadDefaultSessions();
   let indexed = 0;
   for (const item of loaded) {
-    store.upsertIndexedSession(item.session, item.messages);
+    store.upsertIndexedSession(item.session, item.messages, item.tokenEvents);
     indexed++;
   }
   return {
@@ -44,7 +44,7 @@ export async function syncLoadedSessionsInBatches(
   let pendingInBatch = 0;
 
   for (const item of loaded) {
-    store.upsertIndexedSession(item.session, item.messages);
+    store.upsertIndexedSession(item.session, item.messages, item.tokenEvents);
     indexed++;
     total++;
     pendingInBatch++;

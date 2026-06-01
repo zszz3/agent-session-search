@@ -1,13 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppSettings } from "../core/platform";
 import type { IndexStatus } from "../core/indexer";
-import type { ProjectSummary, SearchOptions, SessionMessage, SessionSearchResult } from "../core/types";
+import type { ProjectSummary, SearchOptions, SessionMessage, SessionSearchResult, SessionStats, SessionStatsOptions } from "../core/types";
 
 const api = {
   searchSessions: (options: SearchOptions): Promise<SessionSearchResult[]> => ipcRenderer.invoke("search:sessions", options),
   getSession: (sessionKey: string): Promise<SessionSearchResult | null> => ipcRenderer.invoke("session:get", sessionKey),
   getMessages: (sessionKey: string, offset?: number, limit?: number): Promise<SessionMessage[]> =>
     ipcRenderer.invoke("session:messages", sessionKey, offset, limit),
+  getStats: (options?: SessionStatsOptions): Promise<SessionStats> => ipcRenderer.invoke("stats:get", options),
   listTags: (): Promise<string[]> => ipcRenderer.invoke("tags:list"),
   listProjects: (): Promise<ProjectSummary[]> => ipcRenderer.invoke("projects:list"),
   setCustomTitle: (sessionKey: string, title: string | null): Promise<void> => ipcRenderer.invoke("title:set", sessionKey, title),

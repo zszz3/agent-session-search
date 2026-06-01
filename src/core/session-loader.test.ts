@@ -50,6 +50,76 @@ describe("Codex session loading", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("extracts Codex token usage from token_count events without double counting duplicates", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-"));
+    const filePath = path.join(dir, "rollout.jsonl");
+    fs.writeFileSync(
+      filePath,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-06-01T10:00:00Z",
+          payload: { id: "codex-token-1", cwd: "/repo" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-01T10:01:00Z",
+          payload: {
+            type: "token_count",
+            info: {
+              model: "gpt-5-codex",
+              last_token_usage: {
+                input_tokens: 1200,
+                cached_input_tokens: 200,
+                output_tokens: 350,
+                reasoning_output_tokens: 50,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-01T10:02:00Z",
+          payload: {
+            type: "token_count",
+            info: {
+              model: "gpt-5-codex",
+              last_token_usage: {
+                input_tokens: 1200,
+                cached_input_tokens: 200,
+                output_tokens: 350,
+                reasoning_output_tokens: 50,
+              },
+            },
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadCodexSessionFile(filePath);
+
+    expect(loaded?.session.tokenUsage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 300,
+      cachedInputTokens: 200,
+      reasoningOutputTokens: 50,
+      totalTokens: 1550,
+    });
+    expect(loaded?.tokenEvents).toEqual([
+      {
+        dedupeKey: "codex:gpt-5-codex:1000:300:200:50:0:0",
+        timestamp: new Date("2026-06-01T10:01:00Z").getTime(),
+        inputTokens: 1000,
+        outputTokens: 300,
+        cachedInputTokens: 200,
+        reasoningOutputTokens: 50,
+        totalTokens: 1550,
+      },
+    ]);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("parses old and new Codex metadata lines", () => {
     expect(
       parseCodexSessionMetaLine({
@@ -107,6 +177,66 @@ describe("Claude session loading", () => {
       projectPath: "/repo",
       gitBranch: "feat/claude-tags",
     });
+
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+  });
+
+  it("extracts Claude token usage from assistant message usage without double counting duplicate message ids", () => {
+    const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-"));
+    const projectDir = path.join(claudeDir, "projects", "-repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const assistant = {
+      type: "assistant",
+      timestamp: "2026-06-01T10:01:00Z",
+      cwd: "/repo",
+      sessionId: "claude-token-1",
+      message: {
+        id: "msg_1",
+        role: "assistant",
+        content: "我来处理",
+        usage: {
+          input_tokens: 900,
+          output_tokens: 120,
+          cache_read_input_tokens: 300,
+          reasoning_output_tokens: 40,
+        },
+      },
+    };
+    fs.writeFileSync(
+      path.join(projectDir, "claude-token-1.jsonl"),
+      [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-06-01T10:00:00Z",
+          cwd: "/repo",
+          sessionId: "claude-token-1",
+          message: { role: "user", content: "统计 tokens" },
+        }),
+        JSON.stringify(assistant),
+        JSON.stringify(assistant),
+      ].join("\n"),
+    );
+
+    const loaded = loadClaudeCliSessions(claudeDir);
+
+    expect(loaded[0].session.tokenUsage).toEqual({
+      inputTokens: 900,
+      outputTokens: 120,
+      cachedInputTokens: 300,
+      reasoningOutputTokens: 40,
+      totalTokens: 1360,
+    });
+    expect(loaded[0].tokenEvents).toEqual([
+      {
+        dedupeKey: "claude-code:msg_1",
+        timestamp: new Date("2026-06-01T10:01:00Z").getTime(),
+        inputTokens: 900,
+        outputTokens: 120,
+        cachedInputTokens: 300,
+        reasoningOutputTokens: 40,
+        totalTokens: 1360,
+      },
+    ]);
 
     fs.rmSync(claudeDir, { recursive: true, force: true });
   });
