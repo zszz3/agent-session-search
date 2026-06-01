@@ -2,10 +2,10 @@
 
 ## 安装并使用（给使用者）
 
-只要本机有 **Node.js 22.13+**，复制下面这一行到终端回车即可安装（会自动下载、构建并注册命令）：
+只要本机有 **Node.js 22.13+**，复制下面这一行到终端回车即可安装（会下载预构建产物并注册命令）：
 
 ```bash
-npm install -g git+https://github.com/zszz3/agent-session-search.git
+npm install -g https://github.com/zszz3/agent-session-search/archive/refs/heads/main.tar.gz
 ```
 
 装好后，在任意终端运行即可启动：
@@ -28,7 +28,7 @@ agent-session-search
 重新跑一次安装命令即可拉取并安装最新版：
 
 ```bash
-npm install -g git+https://github.com/zszz3/agent-session-search.git
+npm install -g https://github.com/zszz3/agent-session-search/archive/refs/heads/main.tar.gz
 ```
 
 ### 卸载
@@ -42,7 +42,7 @@ npm uninstall -g agent-session-search
 如果你想改代码或离线安装，也可以克隆后本地安装：
 
 ```bash
-git clone https://github.com/zszz3/agent-session-search.git && cd agent-session-search && npm install && npm install -g .
+git clone https://github.com/zszz3/agent-session-search.git && cd agent-session-search && npm install && npm run build && npm install -g .
 ```
 
 ---
