@@ -1198,56 +1198,72 @@ function SettingsDialog({
         <div className="settings-shell">
           <nav className="settings-sidebar" aria-label="Settings sections">
             <button className={activeSection === "terminal" ? "active" : ""} onClick={() => setActiveSection("terminal")}>
-              Default terminal
+              <Terminal size={15} />
+              <span>Default terminal</span>
             </button>
             <button className={activeSection === "sources" ? "active" : ""} onClick={() => setActiveSection("sources")}>
-              Personal sources
+              <Folder size={15} />
+              <span>Personal sources</span>
             </button>
           </nav>
           <div className="settings-content">
             {activeSection === "terminal" ? (
-              <section className="settings-row">
-                <div>
+              <section className="settings-pane">
+                <header className="settings-pane-head">
                   <h3>Default terminal</h3>
-                  <p>Choose which terminal app is used by Resume and the main list shortcut.</p>
+                  <p>Choose which terminal app Resume and the list shortcut use to reopen a session.</p>
+                </header>
+                <div className="settings-field">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Terminal app</span>
+                    <span className="settings-field-sub">Applies to Resume and the keyboard shortcut.</span>
+                  </div>
+                  <select
+                    id="default-terminal"
+                    value={defaultTerminal}
+                    disabled={!settings || saving}
+                    onChange={(event) => onDefaultTerminalChange(event.target.value as AppSettings["defaultTerminal"])}
+                  >
+                    {DEFAULT_TERMINAL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <select
-                  id="default-terminal"
-                  value={defaultTerminal}
-                  disabled={!settings || saving}
-                  onChange={(event) => onDefaultTerminalChange(event.target.value as AppSettings["defaultTerminal"])}
-                >
-                  {DEFAULT_TERMINAL_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
               </section>
             ) : null}
             {activeSection === "sources" ? (
-              <section className="settings-row">
-                <div>
+              <section className="settings-pane">
+                <header className="settings-pane-head">
                   <h3>Personal sources</h3>
                   <p>Internal sessions stay separate from the normal Claude and Codex filters.</p>
-                </div>
-                <label className="settings-check">
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include ~/.claude-internal</span>
+                    <span className="settings-field-sub">Adds a separate Claude Internal source filter.</span>
+                  </div>
                   <input
                     type="checkbox"
+                    className="switch"
                     checked={Boolean(settings?.includeClaudeInternal)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ includeClaudeInternal: event.currentTarget.checked })}
                   />
-                  <span>Include ~/.claude-internal</span>
                 </label>
-                <label className="settings-check">
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include ~/.codex-internal</span>
+                    <span className="settings-field-sub">Adds a separate Codex Internal source filter.</span>
+                  </div>
                   <input
                     type="checkbox"
+                    className="switch"
                     checked={Boolean(settings?.includeCodexInternal)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ includeCodexInternal: event.currentTarget.checked })}
                   />
-                  <span>Include ~/.codex-internal</span>
                 </label>
               </section>
             ) : null}
