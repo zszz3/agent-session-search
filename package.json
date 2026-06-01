@@ -1,5 +1,6 @@
 {
   "name": "agent-session-search",
+  "productName": "Agent-Session-Search",
   "version": "0.1.0",
   "private": true,
   "description": "Desktop console for searching, tagging, and resuming AI agent coding sessions.",

@@ -1,4 +1,15 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  Tray,
+  type MenuItemConstructorOptions,
+} from "electron";
 import Store from "electron-store";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
 
 app.setName(PRODUCT_NAME);
+app.setAppUserModelId("dev.zszz3.agent-session-search");
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -110,6 +122,74 @@ function createTray(): void {
   );
 }
 
+function createApplicationMenu(): void {
+  app.setAboutPanelOptions({ applicationName: PRODUCT_NAME });
+
+  const appMenu: MenuItemConstructorOptions[] =
+    process.platform === "darwin"
+      ? [
+          {
+            label: PRODUCT_NAME,
+            submenu: [
+              { label: `About ${PRODUCT_NAME}`, role: "about" },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { label: `Hide ${PRODUCT_NAME}`, accelerator: "Command+H", role: "hide" },
+              { label: "Hide Others", accelerator: "Command+Alt+H", role: "hideOthers" },
+              { label: "Show All", role: "unhide" },
+              { type: "separator" },
+              { label: `Quit ${PRODUCT_NAME}`, accelerator: "Command+Q", click: () => app.quit() },
+            ],
+          },
+        ]
+      : [];
+
+  const template: MenuItemConstructorOptions[] = [
+    ...appMenu,
+    {
+      label: "File",
+      submenu: [process.platform === "darwin" ? { role: "close" } : { label: "Quit", role: "quit" }],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { label: "Refresh Index", accelerator: "CmdOrCtrl+R", click: () => void runIndexSync() },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu:
+        process.platform === "darwin"
+          ? [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }]
+          : [{ role: "minimize" }, { role: "close" }],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 async function runIndexSync(): Promise<IndexStatus> {
   indexStatus = { ...indexStatus, running: true, error: null };
   mainWindow?.webContents.send("index-status", indexStatus);
@@ -186,6 +266,7 @@ app.whenReady().then(() => {
   const dbPath = path.join(app.getPath("userData"), "session-search.sqlite");
   store = new SessionStore(dbPath);
   registerIpc();
+  createApplicationMenu();
   createWindow();
   createTray();
   globalShortcut.register("Alt+Space", toggleWindow);
