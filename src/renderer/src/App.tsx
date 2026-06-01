@@ -182,9 +182,12 @@ export function App(): ReactElement {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [settingsFeedback, setSettingsFeedback] = useState<SettingsFeedback>(null);
   const [pendingInternal, setPendingInternal] = useState<{ claude: boolean; codex: boolean }>({ claude: false, codex: false });
+  const loadSeqRef = useRef(0);
+  const detailLoadSeqRef = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
+    const requestId = ++loadSeqRef.current;
     const options: SearchOptions = {
       query,
       source,
@@ -200,12 +203,15 @@ export function App(): ReactElement {
       window.sessionSearch.listProjects(),
       window.sessionSearch.getStats({ period: statsPeriod }),
     ]);
+    if (requestId !== loadSeqRef.current) return;
     setResults(nextResults);
     setTags(nextTags);
     setProjects(nextProjects);
     setStats(nextStats);
-    if (selectedKey && !nextResults.some((session) => session.sessionKey === selectedKey)) setSelectedKey(null);
-  }, [query, source, tag, projectPath, visibility, sortBy, selectedKey, statsPeriod]);
+    setSelectedKey((current) =>
+      current && !nextResults.some((session) => session.sessionKey === current) ? null : current,
+    );
+  }, [query, source, tag, projectPath, visibility, sortBy, statsPeriod]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -233,7 +239,7 @@ export function App(): ReactElement {
   useEffect(() => {
     const offIndex = window.sessionSearch.onIndexStatus((nextStatus) => {
       setIndexStatus(nextStatus);
-      void load();
+      if (!nextStatus.running) void load();
     });
     const offFocus = window.sessionSearch.onFocusSearch(() => searchRef.current?.focus());
     return () => {
@@ -257,7 +263,7 @@ export function App(): ReactElement {
         else if (deleteTagName) setDeleteTagName(null);
         else if (contextMenu) setContextMenu(null);
         else if (settingsOpen) setSettingsOpen(false);
-        else if (detail) setDetail(null);
+        else if (detail) closeDetail();
         else return;
         event.preventDefault();
         return;
@@ -344,6 +350,7 @@ export function App(): ReactElement {
   }
 
   async function openDetail(session: SessionSearchResult): Promise<void> {
+    const requestId = ++detailLoadSeqRef.current;
     setContextMenu(null);
     setDetail(session);
     setMessages([]);
@@ -354,12 +361,20 @@ export function App(): ReactElement {
       window.sessionSearch.getSession(sessionKey),
       window.sessionSearch.getMessages(sessionKey, 0, INITIAL_MESSAGE_LIMIT),
     ]);
+    if (requestId !== detailLoadSeqRef.current) return;
     if (!fresh) {
       setMessagesLoading(false);
       return;
     }
     setDetail(fresh);
     setMessages(loadedMessages);
+    setMessagesLoading(false);
+  }
+
+  function closeDetail(): void {
+    detailLoadSeqRef.current++;
+    setDetail(null);
+    setMessages([]);
     setMessagesLoading(false);
   }
 
@@ -740,7 +755,7 @@ export function App(): ReactElement {
           loading={messagesLoading}
           actionStatus={actionStatus}
           query={query}
-          onClose={() => setDetail(null)}
+          onClose={closeDetail}
           onShowMore={() => void loadMoreMessages()}
           onRename={() => beginRename(detail)}
           onAddTag={() => beginAddTag(detail)}
