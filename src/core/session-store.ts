@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type {
   IndexedSession,
   ProjectSummary,
@@ -15,7 +15,7 @@ import type {
   TokenUsageEvent,
 } from "./types";
 
-type Db = Database.Database;
+type Db = DatabaseSync;
 
 interface StatsRange {
   period: SessionStatsPeriod;
@@ -54,7 +54,7 @@ export class SessionStore {
   private readonly db: Db;
 
   constructor(dbPathOrInstance: string | Db) {
-    this.db = typeof dbPathOrInstance === "string" ? new Database(dbPathOrInstance) : dbPathOrInstance;
+    this.db = typeof dbPathOrInstance === "string" ? new DatabaseSync(dbPathOrInstance) : dbPathOrInstance;
     this.migrate();
   }
 
@@ -62,10 +62,21 @@ export class SessionStore {
     this.db.close();
   }
 
+  private transaction(run: () => void): void {
+    this.db.exec("BEGIN");
+    try {
+      run();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   upsertIndexedSession(session: IndexedSession, messages: SessionMessage[], tokenEvents: TokenUsageEvent[] = []): void {
     const normalizedTokenEvents = tokenEvents.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
     const tokenUsage = normalizedTokenEvents.length > 0 ? tokenUsageFromEvents(normalizedTokenEvents) : normalizeTokenUsage(session.tokenUsage);
-    const write = this.db.transaction(() => {
+    this.transaction(() => {
       this.db
         .prepare(
           `
@@ -74,9 +85,7 @@ export class SessionStore {
             timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
             input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens
           )
-          VALUES (@sessionKey, @rawId, @source, @projectPath, @filePath, @originalTitle, @firstQuestion,
-            @timestamp, @fileMtimeMs, @fileSize, @prUrl, @prNumber, @messageCount,
-            @inputTokens, @outputTokens, @cachedInputTokens, @reasoningOutputTokens, @totalTokens)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
@@ -97,7 +106,26 @@ export class SessionStore {
             total_tokens = excluded.total_tokens
         `,
         )
-        .run({ ...session, messageCount: messages.length, ...tokenUsage });
+        .run(
+          session.sessionKey,
+          session.rawId,
+          session.source,
+          session.projectPath,
+          session.filePath,
+          session.originalTitle,
+          session.firstQuestion,
+          session.timestamp,
+          session.fileMtimeMs,
+          session.fileSize,
+          session.prUrl,
+          session.prNumber,
+          messages.length,
+          tokenUsage.inputTokens,
+          tokenUsage.outputTokens,
+          tokenUsage.cachedInputTokens,
+          tokenUsage.reasoningOutputTokens,
+          tokenUsage.totalTokens,
+        );
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
@@ -136,8 +164,6 @@ export class SessionStore {
       const branchTag = branchTagName(session.gitBranch);
       if (branchTag) this.addTagToSession(session.sessionKey, branchTag);
     });
-
-    write();
   }
 
   setCustomTitle(sessionKey: string, title: string | null): void {
@@ -169,14 +195,13 @@ export class SessionStore {
   addTag(sessionKey: string, tagName: string): void {
     const name = tagName.trim();
     if (!name) return;
-    const write = this.db.transaction(() => {
+    this.transaction(() => {
       this.addTagToSession(sessionKey, name);
     });
-    write();
   }
 
   removeTag(sessionKey: string, tagName: string): void {
-    const write = this.db.transaction(() => {
+    this.transaction(() => {
       this.db
         .prepare(
           `
@@ -188,7 +213,6 @@ export class SessionStore {
         .run(sessionKey, tagName);
       this.deleteUnusedTag(tagName);
     });
-    write();
   }
 
   deleteTag(tagName: string): void {
@@ -333,7 +357,7 @@ export class SessionStore {
   }
 
   clearSearchIndex(): void {
-    const clear = this.db.transaction(() => {
+    this.transaction(() => {
       this.db.prepare("DELETE FROM messages").run();
       this.db.prepare("DELETE FROM token_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
@@ -355,22 +379,20 @@ export class SessionStore {
         )
         .run();
     });
-    clear();
   }
 
   deleteSessionsBySource(sources: SessionSource[]): void {
     if (sources.length === 0) return;
     const placeholders = sources.map(() => "?").join(", ");
-    const remove = this.db.transaction(() => {
+    this.transaction(() => {
       this.db.prepare(`DELETE FROM session_fts WHERE session_key IN (SELECT session_key FROM sessions WHERE source IN (${placeholders}))`).run(...sources);
       this.db.prepare(`DELETE FROM sessions WHERE source IN (${placeholders})`).run(...sources);
       this.deleteUnusedTags();
     });
-    remove();
   }
 
   private migrate(): void {
-    this.db.pragma("foreign_keys = ON");
+    this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_key TEXT PRIMARY KEY,
@@ -707,7 +729,7 @@ export class SessionStore {
 
   private getCandidateRows(options: SearchOptions): SessionRow[] {
     const where: string[] = [];
-    const args: unknown[] = [];
+    const args: SQLInputValue[] = [];
 
     if (options.visibility === "hidden") where.push("hidden = 1");
     else if (options.visibility === "favorites") where.push("hidden = 0 AND favorited = 1");
@@ -745,7 +767,7 @@ export class SessionStore {
       args.push(options.tag);
     }
 
-    return this.db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")}`).all(...args) as SessionRow[];
+    return this.db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")}`).all(...args) as unknown as SessionRow[];
   }
 
   private matchesTextFields(result: SessionSearchResult, query: string): boolean {
@@ -901,7 +923,7 @@ export class SessionStore {
 }
 
 export function createInMemoryStore(): SessionStore {
-  return new SessionStore(new Database(":memory:"));
+  return new SessionStore(new DatabaseSync(":memory:"));
 }
 
 function emptyStatsSummary(): SessionStatsSummary {
