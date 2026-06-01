@@ -467,6 +467,13 @@ button:disabled {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-dim);
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.searchbox:focus-within .kbd-hint {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-bright);
 }
 
 .result-count {
@@ -903,11 +910,14 @@ button:disabled {
   color: var(--accent);
 }
 
-.conversation {
+.detail-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.conversation {
   padding-bottom: 22px;
 }
 
@@ -1296,4 +1306,12 @@ select {
 .sort-menu select option {
   background: var(--bg-elevated-2);
   color: var(--text);
+}
+
+/* ============================================================ OVERLAY SCROLL LOCK */
+/* While the detail overlay is open, freeze the background scrollers so the
+   wheel only ever moves the conversation inside the panel. */
+body.overlay-open .results,
+body.overlay-open .sidebar {
+  overflow: hidden;
 }

@@ -131,6 +131,69 @@ export function App(): ReactElement {
     };
   }, [load]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+        return;
+      }
+
+      // Esc backs out of the frontmost layer, one at a time.
+      if (event.key === "Escape") {
+        if (dialog) setDialog(null);
+        else if (deleteTagName) setDeleteTagName(null);
+        else if (contextMenu) setContextMenu(null);
+        else if (detail) setDetail(null);
+        else return;
+        event.preventDefault();
+        return;
+      }
+
+      // Leave list navigation alone while an overlay or menu is in front.
+      if (detail || dialog || deleteTagName || contextMenu) return;
+
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (results.length === 0) return;
+        event.preventDefault();
+        const currentIndex = results.findIndex((session) => session.sessionKey === selectedKey);
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex =
+          currentIndex < 0
+            ? delta === 1
+              ? 0
+              : results.length - 1
+            : Math.min(results.length - 1, Math.max(0, currentIndex + delta));
+        setSelectedKey(results[nextIndex].sessionKey);
+        return;
+      }
+
+      if (event.key === " " && selectedKey) {
+        const target = event.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        const session = results.find((item) => item.sessionKey === selectedKey);
+        if (session) {
+          event.preventDefault();
+          void openDetail(session);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [results, selectedKey, detail, dialog, deleteTagName, contextMenu]);
+
+  useEffect(() => {
+    if (!selectedKey) return;
+    document.querySelector(".session-row.selected")?.scrollIntoView({ block: "nearest" });
+  }, [selectedKey]);
+
+  useEffect(() => {
+    document.body.classList.toggle("overlay-open", Boolean(detail));
+    return () => document.body.classList.remove("overlay-open");
+  }, [detail]);
+
   const selected = useMemo(
     () => results.find((session) => session.sessionKey === selectedKey) || null,
     [results, selectedKey],
@@ -562,6 +625,44 @@ function DetailPanel({
     : -1;
   const context = matchIndex >= 0 ? messages.slice(Math.max(0, matchIndex - 1), Math.min(messages.length, matchIndex + 2)) : [];
   const actionRunning = actionStatus?.kind === "running";
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const el = bodyRef.current;
+      if (!el) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const page = el.clientHeight * 0.9;
+      switch (event.key) {
+        case "ArrowDown":
+          el.scrollBy({ top: 64 });
+          break;
+        case "ArrowUp":
+          el.scrollBy({ top: -64 });
+          break;
+        case "PageDown":
+        case " ":
+          el.scrollBy({ top: page });
+          break;
+        case "PageUp":
+          el.scrollBy({ top: -page });
+          break;
+        case "Home":
+          el.scrollTo({ top: 0 });
+          break;
+        case "End":
+          el.scrollTo({ top: el.scrollHeight });
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="detail-backdrop" onClick={onClose}>
@@ -607,27 +708,29 @@ function DetailPanel({
           </button>
         ))}
       </div>
-      {context.length > 0 ? (
-        <section className="matched">
-          <h3>Matched Context</h3>
-          {context.map((message) => (
+      <div className="detail-body" ref={bodyRef}>
+        {context.length > 0 ? (
+          <section className="matched">
+            <h3>Matched Context</h3>
+            {context.map((message) => (
+              <MessageBlock key={message.index} message={message} query={query} />
+            ))}
+          </section>
+        ) : null}
+        <section className="conversation">
+          <h3>Full Conversation</h3>
+          {loading ? <div className="loading-state">Loading conversation...</div> : null}
+          {!loading && messages.length === 0 ? <div className="loading-state">No visible messages indexed for this session.</div> : null}
+          {messages.map((message) => (
             <MessageBlock key={message.index} message={message} query={query} />
           ))}
+          {!loading && messages.length < session.messageCount ? (
+            <button className="show-more" onClick={onShowMore}>
+              Show {Math.min(MESSAGE_PAGE_SIZE, session.messageCount - messages.length)} more messages
+            </button>
+          ) : null}
         </section>
-      ) : null}
-      <section className="conversation">
-        <h3>Full Conversation</h3>
-        {loading ? <div className="loading-state">Loading conversation...</div> : null}
-        {!loading && messages.length === 0 ? <div className="loading-state">No visible messages indexed for this session.</div> : null}
-        {messages.map((message) => (
-          <MessageBlock key={message.index} message={message} query={query} />
-        ))}
-        {!loading && messages.length < session.messageCount ? (
-          <button className="show-more" onClick={onShowMore}>
-            Show {Math.min(MESSAGE_PAGE_SIZE, session.messageCount - messages.length)} more messages
-          </button>
-        ) : null}
-      </section>
+      </div>
     </aside>
     </div>
   );
