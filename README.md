@@ -1,101 +1,102 @@
 # Agent-Session-Search
 
-[中文文档](./README.zh-CN.md)
+[English](./docs/README.en.md)
 
-Agent-Session-Search is a local desktop console for finding, organizing, and resuming Claude Code and Codex sessions.
+Agent-Session-Search 是一个本地桌面工具，用来搜索、整理和恢复 Claude Code 与 Codex 的历史会话。
 
-It indexes existing local session files, lets you add your own titles and tags, and keeps that metadata in a separate local SQLite database. It does not modify the original Claude or Codex session files.
+它会读取本机已有的 Claude / Codex session 文件，建立本地搜索索引，并允许你给每个 session 添加自定义标题、标签、置顶和隐藏状态。这些额外信息都存放在独立的本地 SQLite 数据库里，不会修改原始 session 文件。
 
-## Features
+## 功能
 
-- Search Claude Code and Codex sessions from one desktop app.
-- Full-text search across custom titles, original titles, first user questions, conversation text, and project paths.
-- Add custom titles and tags without changing the upstream session files.
-- Filter by tag, source, pinned sessions, or hidden sessions.
-- Resume a session in Terminal, iTerm, Ghostty, WezTerm, or Warp.
-- Copy resume commands or conversation exports.
-- Refresh the local index from the tray menu.
-- Toggle the app with `Option+Space` on macOS.
+- 在一个桌面应用里统一搜索 Claude Code 和 Codex 会话。
+- 支持全文搜索：自定义标题、原始标题、首个用户问题、会话正文和项目路径。
+- 支持给 session 添加自定义标题和标签。
+- 支持按标签、来源、置顶状态、隐藏状态过滤。
+- 支持从 Terminal、iTerm、Ghostty、WezTerm 或 Warp 恢复会话。
+- 支持复制 resume 命令，或导出会话内容。
+- 支持从菜单栏刷新本地索引。
+- macOS 下默认使用 `Option+Space` 唤起窗口。
 
-## Supported Sources
+## 支持的数据源
 
-| Source | Local files |
+| 来源 | 本地文件 |
 | --- | --- |
 | Codex CLI | `~/.codex/sessions/**/*.jsonl` |
-| Codex Desktop | `~/.codex/sessions/**/*.jsonl`, detected by session metadata |
-| Claude Code CLI | `~/.claude/projects/*/*.jsonl` plus optional `~/.claude/sessions/*.json` metadata |
-| Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` plus Claude Code project logs |
+| Codex Desktop | `~/.codex/sessions/**/*.jsonl`，通过 session metadata 识别 |
+| Claude Code CLI | `~/.claude/projects/*/*.jsonl`，以及可选的 `~/.claude/sessions/*.json` 元数据 |
+| Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json`，以及 Claude Code 项目日志 |
 
-Codex title metadata is read from `~/.codex/session_index.jsonl` when that file exists. If no upstream title is available, the app uses the first meaningful user question as the default title.
+当 `~/.codex/session_index.jsonl` 存在时，应用会读取 Codex 的标题元数据。没有上游标题时，会使用第一个有效用户问题作为默认标题。
 
-## Data Model
+## 数据边界
 
-Agent-Session-Search keeps two kinds of data separate:
+Agent-Session-Search 会把两类数据分开处理：
 
-- Upstream session data stays in the original Claude and Codex files and is treated as read-only input.
-- App metadata, including custom titles, tags, pinned state, hidden state, and the search index, is stored in a local SQLite database under Electron's `userData` directory.
+- Claude / Codex 的原始 session 文件只作为只读输入。
+- 自定义标题、标签、置顶、隐藏状态和搜索索引存放在 Electron `userData` 目录下的本地 SQLite 数据库中。
 
-The SQLite database is runtime state and is intentionally ignored by git.
+SQLite 数据库属于运行时状态，不应该提交到 git。
 
-## Development Setup
+## 开发环境
 
-Requirements:
+要求：
 
 - macOS
-- Node.js 20 or newer
+- Node.js 20 或更高版本
 - npm
-- Xcode Command Line Tools, required by native dependencies such as `better-sqlite3`
+- Xcode Command Line Tools，用于编译 `better-sqlite3` 等原生依赖
 
-Install dependencies:
+安装依赖：
 
 ```bash
 npm install
 ```
 
-Run tests:
+运行测试：
 
 ```bash
 npm test
 ```
 
-Start the desktop app in development mode:
+启动开发版桌面应用：
 
 ```bash
 npm run dev
 ```
 
-Build the app bundle output:
+构建应用：
 
 ```bash
 npm run build
 ```
 
-## Native Module Notes
+## 原生模块说明
 
-This project uses `better-sqlite3`, which must be rebuilt for the runtime that loads it.
+项目使用 `better-sqlite3`，它需要针对加载它的运行时重新编译。
 
-The package scripts handle the common cases:
+脚本里已经处理了常见场景：
 
-- `npm test` runs `npm run rebuild:node` before Vitest.
-- `npm run dev` runs `npm run rebuild:electron` before Electron starts.
+- `npm test` 会先执行 `npm run rebuild:node`，再运行 Vitest。
+- `npm run dev` 会先执行 `npm run rebuild:electron`，再启动 Electron。
 
-If you see a native module ABI error, run the matching rebuild command manually:
+如果遇到 native module ABI 相关错误，可以手动执行：
 
 ```bash
 npm run rebuild:node
 npm run rebuild:electron
 ```
 
-## Useful Scripts
+## 常用命令
 
-| Command | Purpose |
+| 命令 | 作用 |
 | --- | --- |
-| `npm run dev` | Rebuild SQLite for Electron and start the app |
-| `npm test` | Rebuild SQLite for Node and run tests |
-| `npm run typecheck` | Run TypeScript checks |
-| `npm run build` | Typecheck and build the Electron app |
+| `npm run dev` | 重新编译 Electron 运行时的 SQLite 模块并启动应用 |
+| `npm test` | 重新编译 Node 运行时的 SQLite 模块并运行测试 |
+| `npm run typecheck` | 执行 TypeScript 类型检查 |
+| `npm run build` | 类型检查并构建 Electron 应用 |
 
-## Repository Notes
+## 仓库文档
 
-- `README.md` is for people who want to understand or develop the project.
-- `Install.md` is for Coding Agents that need to set up the repository safely on a user's machine.
+- `README.md`：中文项目说明，面向普通读者和开发者。
+- `docs/README.en.md`：英文项目说明。
+- `Install.md`：面向 Coding Agent 的安装执行文档，用于让 agent 安全地初始化项目环境。
