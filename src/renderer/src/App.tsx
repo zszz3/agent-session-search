@@ -137,11 +137,46 @@ export function App(): ReactElement {
         event.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
+        return;
+      }
+
+      // Leave list navigation alone while an overlay or menu is in front.
+      if (detail || dialog || deleteTagName || contextMenu) return;
+
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (results.length === 0) return;
+        event.preventDefault();
+        const currentIndex = results.findIndex((session) => session.sessionKey === selectedKey);
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex =
+          currentIndex < 0
+            ? delta === 1
+              ? 0
+              : results.length - 1
+            : Math.min(results.length - 1, Math.max(0, currentIndex + delta));
+        setSelectedKey(results[nextIndex].sessionKey);
+        return;
+      }
+
+      if (event.key === " " && selectedKey) {
+        const target = event.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        const session = results.find((item) => item.sessionKey === selectedKey);
+        if (session) {
+          event.preventDefault();
+          void openDetail(session);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [results, selectedKey, detail, dialog, deleteTagName, contextMenu]);
+
+  useEffect(() => {
+    if (!selectedKey) return;
+    document.querySelector(".session-row.selected")?.scrollIntoView({ block: "nearest" });
+  }, [selectedKey]);
 
   const selected = useMemo(
     () => results.find((session) => session.sessionKey === selectedKey) || null,
