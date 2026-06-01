@@ -457,7 +457,7 @@ export class SessionStore {
     return score;
   }
 
-  private sortValue(result: SessionSearchResult, sortBy: SessionSortBy = "activity"): number {
+  private sortValue(result: SessionSearchResult, sortBy: SessionSortBy = "created"): number {
     if (sortBy === "created") return result.timestamp || 0;
     if (sortBy === "updated") return result.fileMtimeMs || result.timestamp || 0;
     return Math.max(result.lastResumedAt || 0, result.fileMtimeMs || 0, result.timestamp || 0);

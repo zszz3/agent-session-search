@@ -76,7 +76,7 @@ export function App(): ReactElement {
   const [tag, setTag] = useState<string | undefined>();
   const [projectPath, setProjectPath] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<ViewMode>("default");
-  const [sortBy, setSortBy] = useState<SessionSortBy>("activity");
+  const [sortBy, setSortBy] = useState<SessionSortBy>("created");
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);

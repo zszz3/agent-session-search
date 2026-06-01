@@ -114,7 +114,7 @@ describe("SessionStore", () => {
     ]);
   });
 
-  it("sorts default results by latest session file activity", () => {
+  it("sorts default results by created time", () => {
     const store = createInMemoryStore();
     const oldButActive = sampleSession({
       sessionKey: "codex:active",
@@ -131,10 +131,10 @@ describe("SessionStore", () => {
     store.upsertIndexedSession(oldButActive, messages);
     store.upsertIndexedSession(newerButIdle, messages);
 
-    expect(store.searchSessions({ query: "" }).map((session) => session.sessionKey)).toEqual(["codex:active", "codex:idle"]);
+    expect(store.searchSessions({ query: "" }).map((session) => session.sessionKey)).toEqual(["codex:idle", "codex:active"]);
   });
 
-  it("sorts by explicit created and updated time modes", () => {
+  it("sorts by explicit activity, created, and updated time modes", () => {
     const store = createInMemoryStore();
     const oldButUpdated = sampleSession({
       sessionKey: "codex:updated",
@@ -151,6 +151,10 @@ describe("SessionStore", () => {
     store.upsertIndexedSession(oldButUpdated, messages);
     store.upsertIndexedSession(newButIdle, messages);
 
+    expect(store.searchSessions({ query: "", sortBy: "activity" }).map((session) => session.sessionKey)).toEqual([
+      "codex:updated",
+      "codex:created",
+    ]);
     expect(store.searchSessions({ query: "", sortBy: "created" }).map((session) => session.sessionKey)).toEqual([
       "codex:created",
       "codex:updated",
