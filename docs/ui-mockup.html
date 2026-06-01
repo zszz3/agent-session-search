@@ -447,13 +447,13 @@ button { border: 0; background: none; cursor: pointer; }
     <div class="results" id="results">
       <article class="row selected" data-i="0">
         <div>
-          <div class="row-title"><span class="src-dot claude"></span><svg class="pin" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 4v6l3 3v2h-6v6l-1 1-1-1v-6H5v-2l3-3V4z"/></svg><span>Fix the SQLite ABI mismatch on rebuild</span></div>
+          <div class="row-title"><span class="src-dot claude"></span><svg class="pin" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 4v6l3 3v2h-6v6l-1 1-1-1v-6H5v-2l3-3V4z"/></svg><span>Fix the SQLite runtime version mismatch</span></div>
           <div class="row-meta">
             <span class="badge claude">Claude Code</span>
             <span class="mono">~/agent-session-search</span><span class="sep">·</span>
             <span>42 messages</span><span class="sep">·</span><span>2h ago</span>
           </div>
-          <div class="snippet">…the native <mark>sqlite</mark> module fails because better-sqlite3 was built against the wrong NODE_MODULE_VERSION…</div>
+          <div class="snippet">…the built-in <mark>sqlite</mark> module requires Node 22.13+ or an Electron runtime that exposes node:sqlite…</div>
         </div>
         <div class="row-tags"><span>#infra</span><span>#bugfix</span></div>
       </article>
@@ -560,12 +560,11 @@ button { border: 0; background: none; cursor: pointer; }
       <div class="section-label matched">Matched context</div>
       <div class="msg user">
         <div class="msg-head"><span class="who">● User</span><time>2:14:09 PM</time></div>
-        <pre>npm run dev keeps crashing with a NODE_MODULE_VERSION error from <mark>sqlite</mark>. how do I rebuild it for electron?</pre>
+        <pre>npm test fails because the <mark>sqlite</mark> builtin cannot be loaded. which Node version should I use?</pre>
       </div>
       <div class="msg assistant">
         <div class="msg-head"><span class="who">● Assistant</span><time>2:14:31 PM</time></div>
-        <pre>better-sqlite3 is a native addon, so it must be compiled against the exact runtime that loads it.
-Run `npm run rebuild:electron` (electron-rebuild -f -w better-sqlite3) before electron-vite dev — the script already does this for you.</pre>
+        <pre>The app uses Node/Electron's built-in node:sqlite. Use Node 22.13+ for tests, or run `nvm use` from the repo root.</pre>
       </div>
 
       <div class="section-label">Full conversation</div>

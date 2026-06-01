@@ -42,9 +42,8 @@ The SQLite database is runtime state and is intentionally ignored by git.
 Requirements:
 
 - macOS
-- Node.js 20 or newer
+- Node.js 22.13 or newer
 - npm
-- Xcode Command Line Tools, required by native dependencies such as `better-sqlite3`
 
 Install dependencies:
 
@@ -70,28 +69,22 @@ Build the app bundle output:
 npm run build
 ```
 
-## Native Module Notes
+## SQLite Notes
 
-This project uses `better-sqlite3`, which must be rebuilt for the runtime that loads it.
+This project uses Node/Electron's built-in `node:sqlite`, so it does not need a native SQLite npm module or runtime-specific rebuild scripts.
 
-The package scripts handle the common cases:
-
-- `npm test` runs `npm run rebuild:node` before Vitest.
-- `npm run dev` runs `npm run rebuild:electron` before Electron starts.
-
-If you see a native module ABI error, run the matching rebuild command manually:
+If you use nvm, run this from the repository root:
 
 ```bash
-npm run rebuild:node
-npm run rebuild:electron
+nvm use
 ```
 
 ## Useful Scripts
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Rebuild SQLite for Electron and start the app |
-| `npm test` | Rebuild SQLite for Node and run tests |
+| `npm run dev` | Start the Electron development app |
+| `npm test` | Run tests |
 | `npm run typecheck` | Run TypeScript checks |
 | `npm run build` | Typecheck and build the Electron app |
 

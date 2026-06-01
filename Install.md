@@ -2,7 +2,7 @@
 
 ## 安装并使用（给使用者）
 
-只要本机有 **Node.js 20+**，复制下面这一行到终端回车即可安装（会自动下载、构建并注册命令）：
+只要本机有 **Node.js 22.13+**，复制下面这一行到终端回车即可安装（会自动下载、构建并注册命令）：
 
 ```bash
 npm install -g git+https://github.com/zszz3/agent-session-search.git
@@ -19,12 +19,7 @@ agent-session-search
 ### 要求
 
 - macOS
-- Node.js 20 或更高版本（含 npm）
-- 首次安装会编译原生模块 `better-sqlite3`，需要 **Xcode Command Line Tools**。若提示缺少编译工具，先执行一次再重装：
-
-  ```bash
-  xcode-select --install
-  ```
+- Node.js 22.13 或更高版本（含 npm）
 
 > 说明：这种方式通过命令行启动，不打包成 `.app`，因此**不需要 Apple 签名或公证**，也不会被 Gatekeeper 拦截。
 
@@ -93,11 +88,10 @@ Default preference:
 
 Expected tools:
 
-- Node.js 20 or newer
+- Node.js 22.13 or newer
 - npm
 - Git
 - macOS for the current desktop workflow
-- Xcode Command Line Tools for native Node module builds
 
 Check versions:
 
@@ -107,13 +101,13 @@ npm --version
 git --version
 ```
 
-If `npm install` fails while compiling `better-sqlite3`, ask the user to install or repair Xcode Command Line Tools:
+If nvm is available, use the repository version before installing dependencies:
 
 ```bash
-xcode-select --install
+nvm use
 ```
 
-Do not run this automatically without user approval.
+The project uses built-in `node:sqlite`, so it does not need native SQLite npm rebuilds.
 
 ## Install Steps
 
@@ -135,8 +129,6 @@ Do not run this automatically without user approval.
    npm test
    ```
 
-   This script rebuilds `better-sqlite3` for Node before running Vitest.
-
 4. Run TypeScript checks:
 
    ```bash
@@ -154,8 +146,6 @@ Do not run this automatically without user approval.
    ```bash
    npm run dev
    ```
-
-   This script rebuilds `better-sqlite3` for Electron before starting `electron-vite`.
 
 ## Runtime Data Boundary
 
@@ -187,17 +177,6 @@ The app should read upstream sessions from these locations when they exist:
 ```
 
 Do not edit, rewrite, or delete those source files during installation.
-
-## Native Module Recovery
-
-Use the runtime-specific rebuild scripts when `better-sqlite3` reports an ABI or native module loading error:
-
-```bash
-npm run rebuild:node
-npm run rebuild:electron
-```
-
-Use `npm run rebuild:node` before tests. Use `npm run rebuild:electron` before the Electron development app.
 
 ## TODO
 

@@ -42,9 +42,8 @@ SQLite 数据库属于运行时状态，不应该提交到 git。
 要求：
 
 - macOS
-- Node.js 20 或更高版本
+- Node.js 22.13 或更高版本
 - npm
-- Xcode Command Line Tools，用于编译 `better-sqlite3` 等原生依赖
 
 安装依赖：
 
@@ -70,28 +69,22 @@ npm run dev
 npm run build
 ```
 
-## 原生模块说明
+## SQLite 说明
 
-项目使用 `better-sqlite3`，它需要针对加载它的运行时重新编译。
+项目使用 Node/Electron 内置的 `node:sqlite`，不需要安装或 rebuild 原生 SQLite npm 模块。
 
-脚本里已经处理了常见场景：
-
-- `npm test` 会先执行 `npm run rebuild:node`，再运行 Vitest。
-- `npm run dev` 会先执行 `npm run rebuild:electron`，再启动 Electron。
-
-如果遇到 native module ABI 相关错误，可以手动执行：
+如果使用 nvm，可以在仓库根目录执行：
 
 ```bash
-npm run rebuild:node
-npm run rebuild:electron
+nvm use
 ```
 
 ## 常用命令
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run dev` | 重新编译 Electron 运行时的 SQLite 模块并启动应用 |
-| `npm test` | 重新编译 Node 运行时的 SQLite 模块并运行测试 |
+| `npm run dev` | 启动 Electron 开发版应用 |
+| `npm test` | 运行测试 |
 | `npm run typecheck` | 执行 TypeScript 类型检查 |
 | `npm run build` | 类型检查并构建 Electron 应用 |
 
