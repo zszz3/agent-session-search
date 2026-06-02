@@ -12,14 +12,19 @@ import {
   type MenuItemConstructorOptions,
 } from "electron";
 import Store from "electron-store";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
 import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-session";
 import {
+  buildExpectResumePtyScript,
   defaultSettings,
+  getExpectResumeProcessSpec,
   getResumeCommand,
+  getResumeProcessSpec,
+  normalizeResumePtySize,
   openNativeApp,
   openResumeInSpecificTerminal,
   openResumeInTerminal,
@@ -31,8 +36,8 @@ import { loadLiveSessionSnapshot } from "../core/session-activity";
 import { SessionStore } from "../core/session-store";
 import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
-import type { AppSettings } from "../core/platform";
-import type { SearchOptions, SessionStatsOptions } from "../core/types";
+import type { AppSettings, ResumePtySize } from "../core/platform";
+import type { ResumeConsoleEvent, ResumeConsoleSnapshot, SearchOptions, SessionStatsOptions } from "../core/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
@@ -203,6 +208,15 @@ function createApplicationMenu(): void {
             submenu: [
               { label: `About ${PRODUCT_NAME}`, role: "about" },
               { type: "separator" },
+              {
+                label: "Settings...",
+                accelerator: "Command+,",
+                click: () => {
+                  showWindow();
+                  mainWindow?.webContents.send("open-settings");
+                },
+              },
+              { type: "separator" },
               { role: "services" },
               { type: "separator" },
               { label: `Hide ${PRODUCT_NAME}`, accelerator: "Command+H", role: "hide" },
@@ -301,6 +315,191 @@ async function runIndexSync(): Promise<IndexStatus> {
   return activeIndexRun;
 }
 
+const RESUME_CONSOLE_BUFFER_LIMIT = 200_000;
+
+interface ManagedResumeConsole {
+  sessionKey: string;
+  child: ChildProcessWithoutNullStreams;
+  snapshot: ResumeConsoleSnapshot;
+  ptyScriptPath?: string;
+}
+
+const resumeConsoles = new Map<string, ManagedResumeConsole>();
+
+function emptyResumeConsoleSnapshot(sessionKey: string): ResumeConsoleSnapshot {
+  return {
+    sessionKey,
+    status: "idle",
+    command: null,
+    output: "",
+    startedAt: null,
+    endedAt: null,
+    exitCode: null,
+    signal: null,
+    error: null,
+  };
+}
+
+function trimResumeConsoleOutput(output: string): string {
+  if (output.length <= RESUME_CONSOLE_BUFFER_LIMIT) return output;
+  return output.slice(output.length - RESUME_CONSOLE_BUFFER_LIMIT);
+}
+
+function emitResumeConsoleEvent(event: ResumeConsoleEvent): void {
+  mainWindow?.webContents.send("resume-console:event", event);
+}
+
+function appendResumeConsoleOutput(runtime: ManagedResumeConsole, stream: "stdout" | "stderr" | "system", data: string): void {
+  runtime.snapshot.output = trimResumeConsoleOutput(runtime.snapshot.output + data);
+  emitResumeConsoleEvent({
+    sessionKey: runtime.sessionKey,
+    type: "output",
+    stream,
+    data,
+    snapshot: { ...runtime.snapshot },
+  });
+}
+
+function getResumeConsoleSnapshot(sessionKey: string): ResumeConsoleSnapshot {
+  return resumeConsoles.get(sessionKey)?.snapshot ?? emptyResumeConsoleSnapshot(sessionKey);
+}
+
+async function writeResumePtyScript(terminalSize?: Partial<ResumePtySize> | null): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(app.getPath("temp"), "agent-session-search-resume-"));
+  const scriptPath = path.join(dir, "resume.expect");
+  await fs.writeFile(scriptPath, buildExpectResumePtyScript(terminalSize ?? undefined), { encoding: "utf-8", mode: 0o700 });
+  return scriptPath;
+}
+
+async function removeResumePtyScript(scriptPath: string | undefined): Promise<void> {
+  if (!scriptPath) return;
+  await fs.rm(path.dirname(scriptPath), { recursive: true, force: true });
+}
+
+async function assertNoExternalLiveSession(sessionKey: string): Promise<void> {
+  const session = store.getSession(sessionKey);
+  if (!session) return;
+  try {
+    const snapshot = await loadLiveSessionSnapshot();
+    if (snapshot.error) return;
+    const pid = liveSessionPidForSession(session, snapshot.sessions);
+    if (pid) throw new Error("This session is already open in a detected terminal. Use Bring to Front instead.");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("already open")) throw error;
+  }
+}
+
+async function startResumeConsole(
+  sessionKey: string,
+  terminalSize?: Partial<ResumePtySize> | null,
+): Promise<ResumeConsoleSnapshot> {
+  const existing = resumeConsoles.get(sessionKey);
+  if (existing && (existing.snapshot.status === "starting" || existing.snapshot.status === "running")) {
+    return { ...existing.snapshot };
+  }
+
+  const session = store.getSession(sessionKey);
+  if (!session) throw new Error("Session not found.");
+  await assertNoExternalLiveSession(sessionKey);
+
+  const baseSpec = getResumeProcessSpec(session, getSettings());
+  const normalizedTerminalSize = normalizeResumePtySize(terminalSize);
+  const ptyScriptPath = await writeResumePtyScript(normalizedTerminalSize);
+  const spec = getExpectResumeProcessSpec(baseSpec, ptyScriptPath);
+  const child = spawn(spec.command, spec.args, {
+    cwd: spec.cwd,
+    env: {
+      ...process.env,
+      TERM: process.env.TERM || "xterm-256color",
+      COLORTERM: process.env.COLORTERM || "truecolor",
+      COLUMNS: String(normalizedTerminalSize.cols),
+      LINES: String(normalizedTerminalSize.rows),
+    },
+    stdio: "pipe",
+  });
+  const runtime: ManagedResumeConsole = {
+    sessionKey,
+    child,
+    ptyScriptPath,
+    snapshot: {
+      sessionKey,
+      status: "starting",
+      command: spec.displayCommand,
+      output: "",
+      startedAt: Date.now(),
+      endedAt: null,
+      exitCode: null,
+      signal: null,
+      error: null,
+    },
+  };
+  resumeConsoles.set(sessionKey, runtime);
+  store.markResumed(sessionKey);
+  appendResumeConsoleOutput(runtime, "system", `$ ${spec.displayCommand}\n`);
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    runtime.snapshot.status = "running";
+    appendResumeConsoleOutput(runtime, "stdout", chunk.toString());
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    runtime.snapshot.status = "running";
+    appendResumeConsoleOutput(runtime, "stderr", chunk.toString());
+  });
+  child.on("spawn", () => {
+    runtime.snapshot.status = "running";
+    emitResumeConsoleEvent({ sessionKey, type: "snapshot", snapshot: { ...runtime.snapshot } });
+  });
+  child.on("error", (error) => {
+    runtime.snapshot.status = "error";
+    runtime.snapshot.error = error.message;
+    runtime.snapshot.endedAt = Date.now();
+    appendResumeConsoleOutput(runtime, "system", `\n[error] ${error.message}\n`);
+    emitResumeConsoleEvent({ sessionKey, type: "error", data: error.message, snapshot: { ...runtime.snapshot } });
+    void removeResumePtyScript(runtime.ptyScriptPath);
+  });
+  child.on("close", (code, signal) => {
+    runtime.snapshot.status = runtime.snapshot.status === "error" ? "error" : "exited";
+    runtime.snapshot.exitCode = code;
+    runtime.snapshot.signal = signal;
+    runtime.snapshot.endedAt = Date.now();
+    appendResumeConsoleOutput(
+      runtime,
+      "system",
+      `\n[process exited${code === null ? "" : ` with code ${code}`}${signal ? `, signal ${signal}` : ""}]\n`,
+    );
+    emitResumeConsoleEvent({ sessionKey, type: "exit", snapshot: { ...runtime.snapshot } });
+    void removeResumePtyScript(runtime.ptyScriptPath);
+    setTimeout(() => void runIndexSync(), 500);
+  });
+
+  return { ...runtime.snapshot };
+}
+
+function writeResumeConsole(sessionKey: string, data: string): ResumeConsoleSnapshot {
+  const runtime = resumeConsoles.get(sessionKey);
+  if (!runtime || (runtime.snapshot.status !== "starting" && runtime.snapshot.status !== "running")) {
+    throw new Error("No running resume console for this session.");
+  }
+  runtime.child.stdin.write(data);
+  return { ...runtime.snapshot };
+}
+
+function stopResumeConsole(sessionKey: string): ResumeConsoleSnapshot {
+  const runtime = resumeConsoles.get(sessionKey);
+  if (!runtime) return emptyResumeConsoleSnapshot(sessionKey);
+  if (runtime.snapshot.status === "starting" || runtime.snapshot.status === "running") {
+    runtime.child.kill();
+    appendResumeConsoleOutput(runtime, "system", "\n[stop requested]\n");
+  }
+  return { ...runtime.snapshot };
+}
+
+function stopAllResumeConsoles(): void {
+  for (const runtime of resumeConsoles.values()) {
+    if (runtime.snapshot.status === "starting" || runtime.snapshot.status === "running") runtime.child.kill();
+  }
+}
+
 function startAutoIndexRefresh(): void {
   if (autoIndexTimer) return;
   autoIndexTimer = setInterval(() => {
@@ -369,6 +568,12 @@ function registerIpc(): void {
     store.markResumed(sessionKey);
     await openResumeInSpecificTerminal(session, getSettings(), "iTerm");
   });
+  ipcMain.handle("resume-console:get", (_event, sessionKey: string) => getResumeConsoleSnapshot(sessionKey));
+  ipcMain.handle("resume-console:start", (_event, sessionKey: string, terminalSize?: Partial<ResumePtySize> | null) =>
+    startResumeConsole(sessionKey, terminalSize),
+  );
+  ipcMain.handle("resume-console:write", (_event, sessionKey: string, data: string) => writeResumeConsole(sessionKey, data));
+  ipcMain.handle("resume-console:stop", (_event, sessionKey: string) => stopResumeConsole(sessionKey));
   ipcMain.handle("command:focus-live-terminal", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return;
@@ -430,6 +635,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  stopAllResumeConsoles();
   stopAutoIndexRefresh();
   globalShortcut.unregisterAll();
   store?.close();

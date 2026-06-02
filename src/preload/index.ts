@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings } from "../core/platform";
+import type { AppSettings, ResumePtySize } from "../core/platform";
 import type { IndexStatus } from "../core/indexer";
 import type {
   LiveSessionSnapshot,
@@ -9,6 +9,8 @@ import type {
   SessionSearchResult,
   SessionStats,
   SessionStatsOptions,
+  ResumeConsoleEvent,
+  ResumeConsoleSnapshot,
   UsageQuotaSnapshot,
 } from "../core/types";
 
@@ -36,6 +38,12 @@ const api = {
   copyResumeCommand: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-resume", sessionKey),
   resumeSession: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:resume", sessionKey),
   resumeSessionInIterm: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:resume-iterm", sessionKey),
+  resumeConsoleGet: (sessionKey: string): Promise<ResumeConsoleSnapshot> => ipcRenderer.invoke("resume-console:get", sessionKey),
+  resumeConsoleStart: (sessionKey: string, terminalSize?: Partial<ResumePtySize>): Promise<ResumeConsoleSnapshot> =>
+    ipcRenderer.invoke("resume-console:start", sessionKey, terminalSize),
+  resumeConsoleWrite: (sessionKey: string, data: string): Promise<ResumeConsoleSnapshot> =>
+    ipcRenderer.invoke("resume-console:write", sessionKey, data),
+  resumeConsoleStop: (sessionKey: string): Promise<ResumeConsoleSnapshot> => ipcRenderer.invoke("resume-console:stop", sessionKey),
   focusLiveTerminal: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:focus-live-terminal", sessionKey),
   openNativeApp: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:open-app", sessionKey),
   revealSession: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:reveal", sessionKey),
@@ -51,6 +59,16 @@ const api = {
     const listener = () => callback();
     ipcRenderer.on("focus-search", listener);
     return () => ipcRenderer.removeListener("focus-search", listener);
+  },
+  onOpenSettings: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("open-settings", listener);
+    return () => ipcRenderer.removeListener("open-settings", listener);
+  },
+  onResumeConsoleEvent: (callback: (event: ResumeConsoleEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, resumeEvent: ResumeConsoleEvent) => callback(resumeEvent);
+    ipcRenderer.on("resume-console:event", listener);
+    return () => ipcRenderer.removeListener("resume-console:event", listener);
   },
 };
 

@@ -1541,6 +1541,155 @@ select:focus-visible {
   color: var(--accent-contrast);
 }
 
+.detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--panel-bg);
+}
+
+.detail-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.detail-tabs button:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.detail-tabs button.active {
+  border-color: var(--border-subtle);
+  background: var(--panel-subtle);
+  color: var(--text);
+}
+
+.console-status-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.console-status-pill.running,
+.console-status-pill.starting {
+  background: var(--running-bg);
+  color: var(--running-text);
+}
+
+.console-status-pill.exited {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.console-status-pill.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.resume-console {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 100%;
+  padding: 14px 18px 18px;
+  gap: 10px;
+}
+
+.resume-console-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resume-console-head h3 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.resume-console-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.resume-console-actions {
+  display: inline-flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.resume-console-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.resume-console-actions button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.resume-console-error {
+  padding: 8px 10px;
+  border: 1px solid var(--danger-soft);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.resume-console-terminal {
+  min-height: 280px;
+  height: 100%;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b0f14;
+}
+
+.resume-console-terminal:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.resume-console-terminal .xterm {
+  height: 100%;
+}
+
+.resume-console-terminal .xterm-viewport {
+  background: transparent !important;
+}
+
 .action-status {
   padding: 9px 18px;
   border-bottom: 1px solid var(--border-subtle);
@@ -1952,7 +2101,8 @@ select:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-.theme-setting-toggle {
+.theme-setting-toggle,
+.language-setting-toggle {
   display: inline-flex;
   flex: 0 0 auto;
   gap: 2px;
@@ -1962,7 +2112,8 @@ select:focus-visible {
   background: var(--panel-bg);
 }
 
-.theme-setting-toggle button {
+.theme-setting-toggle button,
+.language-setting-toggle button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1977,17 +2128,20 @@ select:focus-visible {
   font-weight: 650;
 }
 
-.theme-setting-toggle button:hover {
+.theme-setting-toggle button:hover,
+.language-setting-toggle button:hover {
   color: var(--text);
 }
 
-.theme-setting-toggle button.active {
+.theme-setting-toggle button.active,
+.language-setting-toggle button.active {
   background: var(--accent-soft);
   color: var(--accent-bright);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
-.theme-setting-toggle button.active svg {
+.theme-setting-toggle button.active svg,
+.language-setting-toggle button.active svg {
   color: var(--accent);
 }
 

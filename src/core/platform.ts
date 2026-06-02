@@ -4,6 +4,42 @@ import type { SessionSearchResult, SessionSource } from "./types";
 
 type ProcessRunner = (command: string, args: string[]) => Promise<void>;
 
+export interface ResumeProcessSpec {
+  command: string;
+  args: string[];
+  cwd?: string;
+  displayCommand: string;
+}
+
+export interface ResumePtySize {
+  cols: number;
+  rows: number;
+}
+
+export const DEFAULT_RESUME_PTY_SIZE: ResumePtySize = { cols: 100, rows: 30 };
+
+export function normalizeResumePtySize(size?: Partial<ResumePtySize> | null): ResumePtySize {
+  return {
+    cols: Math.max(40, Math.min(240, Math.floor(size?.cols ?? DEFAULT_RESUME_PTY_SIZE.cols))),
+    rows: Math.max(12, Math.min(80, Math.floor(size?.rows ?? DEFAULT_RESUME_PTY_SIZE.rows))),
+  };
+}
+
+export function buildExpectResumePtyScript(size: Partial<ResumePtySize> = DEFAULT_RESUME_PTY_SIZE): string {
+  const normalized = normalizeResumePtySize(size);
+  return `log_user 0
+set stty_init "rows ${normalized.rows} columns ${normalized.cols}"
+spawn -noecho {*}$argv
+log_user 1
+interact
+set status [wait]
+if {[llength $status] >= 4} {
+  exit [lindex $status 3]
+}
+exit 0
+`;
+}
+
 export interface AppSettings {
   defaultTerminal: "Terminal" | "iTerm" | "Ghostty" | "WezTerm" | "Warp";
   globalShortcut: GlobalShortcut;
@@ -52,6 +88,46 @@ export function getResumeCommand(
   }
   if (withCwd && session.projectPath) cmd = `cd ${shellQuote(session.projectPath)} && ${cmd}`;
   return cmd;
+}
+
+export function getResumeProcessSpec(
+  session: SessionSearchResult,
+  settings: AppSettings = defaultSettings,
+  opts: { skipPermissions?: boolean } = {},
+): ResumeProcessSpec {
+  const { skipPermissions = false } = opts;
+  const family = sourceFamily(session.source);
+  let command: string;
+  let args: string[];
+
+  if (family === "claude") {
+    command = settings.claudeBinary;
+    args = ["--resume", session.rawId];
+    if (skipPermissions) args.push("--dangerously-skip-permissions");
+  } else if (family === "codebuddy") {
+    command = settings.codeBuddyBinary;
+    args = ["--resume", session.rawId];
+  } else {
+    command = settings.codexBinary;
+    args = ["resume", session.rawId];
+    if (skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
+  }
+
+  return {
+    command,
+    args,
+    cwd: session.projectPath || undefined,
+    displayCommand: getResumeCommand(session, settings, { withCwd: true, skipPermissions }),
+  };
+}
+
+export function getExpectResumeProcessSpec(spec: ResumeProcessSpec, scriptPath: string): ResumeProcessSpec {
+  return {
+    command: "expect",
+    args: [scriptPath, spec.command, ...spec.args],
+    cwd: spec.cwd,
+    displayCommand: spec.displayCommand,
+  };
 }
 
 export async function openResumeInTerminal(session: SessionSearchResult, settings: AppSettings): Promise<void> {

@@ -150,6 +150,28 @@ export interface LiveSessionSnapshot {
   error?: string;
 }
 
+export type ResumeConsoleStatus = "idle" | "starting" | "running" | "exited" | "error";
+
+export interface ResumeConsoleSnapshot {
+  sessionKey: string;
+  status: ResumeConsoleStatus;
+  command: string | null;
+  output: string;
+  startedAt: number | null;
+  endedAt: number | null;
+  exitCode: number | null;
+  signal: string | null;
+  error: string | null;
+}
+
+export interface ResumeConsoleEvent {
+  sessionKey: string;
+  type: "snapshot" | "output" | "exit" | "error";
+  stream?: "stdout" | "stderr" | "system";
+  data?: string;
+  snapshot: ResumeConsoleSnapshot;
+}
+
 export interface ClaudeSessionIndexFile {
   sessionId: string;
   cwd: string;
