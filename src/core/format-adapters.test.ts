@@ -63,6 +63,35 @@ describe("format adapters", () => {
     });
   });
 
+  it("skips the CodeBuddy CLI bootstrap 'code' root message", () => {
+    // The CLI injects a root user message whose text is the literal launch
+    // keyword "code"; it must not become the session title.
+    expect(
+      codebuddyAdapter.parseLine({
+        type: "message",
+        role: "user",
+        timestamp: 1_780_321_278_404,
+        content: [{ type: "input_text", text: "code" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a real later message that happens to say 'code'", () => {
+    expect(
+      codebuddyAdapter.parseLine({
+        type: "message",
+        role: "user",
+        parentId: "root-1",
+        timestamp: 1_780_321_303_135,
+        content: [{ type: "input_text", text: "code" }],
+      }),
+    ).toEqual({
+      role: "user",
+      content: "code",
+      timestamp: new Date(1_780_321_303_135).toISOString(),
+    });
+  });
+
   it("filters injected user-role noise while keeping short real replies", () => {
     expect(isMeaningfulUserMessage("<environment_context>cwd=/tmp</environment_context>")).toBe(false);
     expect(isMeaningfulUserMessage("# AGENTS.md instructions")).toBe(false);

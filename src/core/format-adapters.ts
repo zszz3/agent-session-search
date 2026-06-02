@@ -89,6 +89,12 @@ export const codebuddyAdapter: FormatAdapter = {
     const content = extractTextBlocks(line.content);
     if (!content) return null;
 
+    // The CodeBuddy CLI injects a root user message whose text is the literal
+    // launch keyword "code". It is not a real prompt, so drop it (otherwise it
+    // becomes every session's title). Only the root message (no parentId) is
+    // filtered, so a genuine later "code" reply is preserved.
+    if (line.role === "user" && line.parentId == null && content.trim() === "code") return null;
+
     return {
       role: line.role,
       content,
