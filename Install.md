@@ -23,15 +23,11 @@ agent-session-search
 - macOS
 - Node.js 22.13 或更高版本（含 npm）
 
-> 说明：这种方式通过命令行启动，不打包成 `.app`，因此**不需要 Apple 签名或公证**，也不会被 Gatekeeper 拦截。
->
-> SQLite 说明：项目使用 Electron 42 自带的 `node:sqlite`。安装时会下载 Electron binary（约 100MB+），但**不需要 Xcode、node-gyp、better-sqlite3 或 electron-rebuild**。
+温馨提示：Electron binary 默认从 GitHub release 下载。如果下载很慢或失败，可在安装前设置镜像后再执行安装命令：
 
-> 国内网络提示：Electron binary 默认从 GitHub release 下载。如果下载很慢或失败，可在安装前设置镜像后再执行安装命令：
->
-> ```bash
-> export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-> ```
+```bash
+export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+```
 
 ### 更新到新版本
 
