@@ -37,6 +37,18 @@ Agent-Session-Search keeps two kinds of data separate:
 
 The SQLite database is runtime state and is intentionally ignored by git.
 
+## Installation
+
+Requires macOS and Node.js 22.13+ (with npm). From the repository root, run this single line to install dependencies, build, and register the global command:
+
+```bash
+nvm use 22 && rm -rf node_modules && npm ci && npm run build && npm install -g .
+```
+
+Once installed, run `agent-session-search` from any terminal to launch it. The app stays in the background (with a menu bar icon); press **⌥ Option + Space** anytime to open the search window.
+
+See [Install.md](../Install.md) for updating, uninstalling, installing from a fresh clone, and network mirror tips.
+
 ## Development Setup
 
 Requirements:
