@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { getResumeCommand, getResumeProcessSpec, resolveMacApplicationName } from "./platform";
+import {
+  buildWindowsLaunchPlan,
+  defaultSettings,
+  defaultTerminalFor,
+  getResumeCommand,
+  getResumeProcessSpec,
+  normalizeTerminal,
+  resolveMacApplicationName,
+  terminalOptionsFor,
+} from "./platform";
 import type { SessionSearchResult } from "./types";
 
 describe("platform application resolution", () => {
@@ -31,7 +40,86 @@ describe("resume commands", () => {
       projectPath: "/repo",
     } as SessionSearchResult;
 
-    expect(getResumeCommand(session)).toBe("cd /repo && codebuddy --resume codebuddy-1");
+    expect(getResumeCommand(session, defaultSettings, { platform: "darwin" })).toBe(
+      "cd /repo && codebuddy --resume codebuddy-1",
+    );
+  });
+
+  it("builds a cmd-compatible cd prefix on Windows", () => {
+    const session = {
+      source: "claude-cli",
+      rawId: "abc",
+      projectPath: "C:\\my repo",
+    } as SessionSearchResult;
+
+    expect(getResumeCommand(session, defaultSettings, { platform: "win32" })).toBe(
+      'cd /d "C:\\my repo" && claude --resume abc',
+    );
+  });
+
+  it("omits the cd prefix when withCwd is false", () => {
+    const session = {
+      source: "claude-cli",
+      rawId: "abc",
+      projectPath: "C:\\my repo",
+    } as SessionSearchResult;
+
+    expect(getResumeCommand(session, defaultSettings, { platform: "win32", withCwd: false })).toBe(
+      "claude --resume abc",
+    );
+  });
+});
+
+describe("terminal options per platform", () => {
+  it("returns Windows terminals on win32", () => {
+    expect(terminalOptionsFor("win32")).toEqual(["WindowsTerminal", "PowerShell", "Cmd"]);
+  });
+  it("returns macOS terminals elsewhere", () => {
+    expect(terminalOptionsFor("darwin")).toEqual(["Terminal", "iTerm", "Ghostty", "WezTerm", "Warp"]);
+  });
+  it("defaults to WindowsTerminal on win32 and Terminal on macOS", () => {
+    expect(defaultTerminalFor("win32")).toBe("WindowsTerminal");
+    expect(defaultTerminalFor("darwin")).toBe("Terminal");
+  });
+  it("normalizes a cross-platform value to the platform default", () => {
+    expect(normalizeTerminal("Terminal", "win32")).toBe("WindowsTerminal");
+    expect(normalizeTerminal("Cmd", "darwin")).toBe("Terminal");
+    expect(normalizeTerminal("PowerShell", "win32")).toBe("PowerShell");
+  });
+});
+
+describe("buildWindowsLaunchPlan", () => {
+  const cmd = "claude --resume abc";
+  const cwd = "C:\\my repo";
+
+  it("Windows Terminal first, then powershell shells, then cmd", () => {
+    const plan = buildWindowsLaunchPlan("WindowsTerminal", cmd, cwd);
+    expect(plan.map((p) => p.file)).toEqual(["wt.exe", "pwsh.exe", "powershell.exe", "cmd.exe"]);
+    expect(plan[0].args).toEqual(["-d", cwd, "cmd.exe", "/d", "/k", cmd]);
+  });
+
+  it("PowerShell prefers pwsh then powershell then cmd", () => {
+    const plan = buildWindowsLaunchPlan("PowerShell", cmd, cwd);
+    expect(plan.map((p) => p.file)).toEqual(["pwsh.exe", "powershell.exe", "cmd.exe"]);
+    expect(plan[0].args).toEqual(["-NoLogo", "-NoProfile", "-NoExit", "-Command", cmd]);
+    expect(plan[0].cwd).toBe(cwd);
+  });
+
+  it("Cmd uses cmd.exe /K", () => {
+    const plan = buildWindowsLaunchPlan("Cmd", cmd, cwd);
+    expect(plan.map((p) => p.file)).toEqual(["cmd.exe"]);
+    expect(plan[0].args).toEqual(["/d", "/k", cmd]);
+    expect(plan[0].cwd).toBe(cwd);
+  });
+
+  it("omits wt start-dir flag when cwd is empty", () => {
+    const plan = buildWindowsLaunchPlan("WindowsTerminal", cmd, "");
+    expect(plan[0].args).toEqual(["cmd.exe", "/d", "/k", cmd]);
+  });
+
+  it("does not set shell cwd when cwd is empty", () => {
+    const plan = buildWindowsLaunchPlan("WindowsTerminal", cmd, "");
+    expect(plan.map((p) => p.cwd)).toEqual([undefined, undefined, undefined, undefined]);
   });
 });
 
@@ -43,7 +131,7 @@ describe("resume process specs", () => {
       projectPath: "/repo with spaces",
     } as SessionSearchResult;
 
-    expect(getResumeProcessSpec(session)).toMatchObject({
+    expect(getResumeProcessSpec(session, defaultSettings, { platform: "darwin" })).toMatchObject({
       command: "codex",
       args: ["resume", "codex-1"],
       cwd: "/repo with spaces",

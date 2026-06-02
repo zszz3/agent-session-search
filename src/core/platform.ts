@@ -1,6 +1,15 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { DEFAULT_GLOBAL_SHORTCUT, type GlobalShortcut } from "./shortcuts";
+import {
+  type TerminalChoice,
+  defaultTerminalFor,
+  normalizeTerminal,
+  terminalOptionsFor,
+} from "./terminal-options";
 import type { SessionSearchResult, SessionSource } from "./types";
+
+export { type TerminalChoice, defaultTerminalFor, normalizeTerminal, terminalOptionsFor } from "./terminal-options";
 
 type ProcessRunner = (command: string, args: string[]) => Promise<void>;
 
@@ -12,7 +21,7 @@ export interface ResumeProcessSpec {
 }
 
 export interface AppSettings {
-  defaultTerminal: "Terminal" | "iTerm" | "Ghostty" | "WezTerm" | "Warp";
+  defaultTerminal: TerminalChoice;
   globalShortcut: GlobalShortcut;
   claudeBinary: string;
   codexBinary: string;
@@ -23,7 +32,7 @@ export interface AppSettings {
 }
 
 export const defaultSettings: AppSettings = {
-  defaultTerminal: "Terminal",
+  defaultTerminal: defaultTerminalFor(),
   globalShortcut: DEFAULT_GLOBAL_SHORTCUT,
   claudeBinary: "claude",
   codexBinary: "codex",
@@ -43,9 +52,9 @@ export function sourceFamily(source: SessionSource): "claude" | "codex" | "codeb
 export function getResumeCommand(
   session: SessionSearchResult,
   settings: AppSettings = defaultSettings,
-  opts: { withCwd?: boolean; skipPermissions?: boolean } = {},
+  opts: { withCwd?: boolean; skipPermissions?: boolean; platform?: NodeJS.Platform } = {},
 ): string {
-  const { withCwd = true, skipPermissions = false } = opts;
+  const { withCwd = true, skipPermissions = false, platform = process.platform } = opts;
   let cmd: string;
   const family = sourceFamily(session.source);
   if (family === "claude") {
@@ -57,16 +66,88 @@ export function getResumeCommand(
     cmd = `${settings.codexBinary} resume ${session.rawId}`;
     if (skipPermissions) cmd += " --dangerously-bypass-approvals-and-sandbox";
   }
-  if (withCwd && session.projectPath) cmd = `cd ${shellQuote(session.projectPath)} && ${cmd}`;
+  if (withCwd && session.projectPath) {
+    cmd =
+      platform === "win32"
+        ? `cd /d ${winQuote(session.projectPath)} && ${cmd}`
+        : `cd ${shellQuote(session.projectPath)} && ${cmd}`;
+  }
   return cmd;
+}
+
+interface WindowsLaunch {
+  file: string;
+  args: string[];
+  cwd?: string;
+}
+
+// Ordered candidate launches. The caller tries each until one spawns (ENOENT -> next).
+export function buildWindowsLaunchPlan(terminal: TerminalChoice, command: string, cwd: string): WindowsLaunch[] {
+  const wt = (): WindowsLaunch => {
+    const inner = ["cmd.exe", "/d", "/k", command];
+    return { file: "wt.exe", args: cwd ? ["-d", cwd, ...inner] : inner };
+  };
+  const pwsh = (): WindowsLaunch => ({ file: "pwsh.exe", args: ["-NoLogo", "-NoProfile", "-NoExit", "-Command", command], cwd: cwd || undefined });
+  const powershell = (): WindowsLaunch => ({
+    file: "powershell.exe",
+    args: ["-NoLogo", "-NoProfile", "-NoExit", "-Command", command],
+    cwd: cwd || undefined,
+  });
+  const cmd = (): WindowsLaunch => ({ file: "cmd.exe", args: ["/d", "/k", command], cwd: cwd || undefined });
+
+  if (terminal === "Cmd") return [cmd()];
+  if (terminal === "PowerShell") return [pwsh(), powershell(), cmd()];
+  // WindowsTerminal (default): wt first, then fall back through shells.
+  return [wt(), pwsh(), powershell(), cmd()];
+}
+
+async function openResumeInWindowsTerminal(session: SessionSearchResult, settings: AppSettings): Promise<void> {
+  const command = getResumeCommand(session, settings, { withCwd: false, platform: "win32" });
+  const terminal = normalizeTerminal(settings.defaultTerminal, "win32");
+  const cwd = existingDirectory(session.projectPath);
+  const plan = buildWindowsLaunchPlan(terminal, command, cwd);
+
+  let lastError: Error | null = null;
+  for (const launch of plan) {
+    try {
+      await spawnDetached(launch.file, launch.args, launch.cwd);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (code === "ENOENT") continue; // terminal not installed; try the next candidate
+      throw lastError;
+    }
+  }
+  throw new Error(`No Windows terminal could be launched. ${lastError?.message ?? ""}`.trim());
+}
+
+function existingDirectory(value: string | null | undefined): string {
+  if (!value) return "";
+  try {
+    return existsSync(value) ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+function spawnDetached(command: string, args: string[], cwd?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, detached: true, stdio: "ignore", windowsHide: false });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 export function getResumeProcessSpec(
   session: SessionSearchResult,
   settings: AppSettings = defaultSettings,
-  opts: { skipPermissions?: boolean } = {},
+  opts: { skipPermissions?: boolean; platform?: NodeJS.Platform } = {},
 ): ResumeProcessSpec {
-  const { skipPermissions = false } = opts;
+  const { skipPermissions = false, platform = process.platform } = opts;
   const family = sourceFamily(session.source);
   let command: string;
   let args: string[];
@@ -88,14 +169,19 @@ export function getResumeProcessSpec(
     command,
     args,
     cwd: session.projectPath || undefined,
-    displayCommand: getResumeCommand(session, settings, { withCwd: true, skipPermissions }),
+    displayCommand: getResumeCommand(session, settings, { withCwd: true, skipPermissions, platform }),
   };
 }
 
 export async function openResumeInTerminal(session: SessionSearchResult, settings: AppSettings): Promise<void> {
   const command = getResumeCommand(session, settings, { withCwd: true });
+  if (process.platform === "win32") {
+    await openResumeInWindowsTerminal(session, settings);
+    return;
+  }
   if (process.platform !== "darwin") {
-    await runProcess(settings.defaultTerminal === "WezTerm" ? "wezterm" : "sh", ["-lc", command]);
+    // Linux / other: best-effort POSIX shell.
+    await runProcess("sh", ["-lc", command]);
     return;
   }
 
@@ -188,6 +274,11 @@ export async function revealInFileManager(targetPath: string): Promise<void> {
 function shellQuote(s: string): string {
   if (/^[A-Za-z0-9_\-./]+$/.test(s)) return s;
   return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function winQuote(s: string): string {
+  // cmd.exe quoting: wrap in double quotes, double any embedded quotes.
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function escapeAppleScript(s: string): string {

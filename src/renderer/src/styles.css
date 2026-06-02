@@ -250,6 +250,25 @@ select:focus-visible {
   -webkit-app-region: drag;
 }
 
+.app:not([data-platform="darwin"])::before {
+  height: 0;
+}
+
+.app:not([data-platform="darwin"]) .titlebar-drag {
+  display: none;
+}
+
+.app:not([data-platform="darwin"]) .sidebar {
+  height: 100vh;
+  min-height: 100vh;
+  margin-top: 0;
+  padding-top: 14px;
+}
+
+.app:not([data-platform="darwin"]) .content {
+  padding-top: 14px;
+}
+
 /* ============================================================ SIDEBAR */
 .sidebar {
   position: relative;

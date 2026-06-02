@@ -20,6 +20,7 @@ import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-se
 import {
   defaultSettings,
   getResumeCommand,
+  normalizeTerminal,
   openNativeApp,
   openResumeInSpecificTerminal,
   openResumeInTerminal,
@@ -54,7 +55,11 @@ const settingsStore = new Store<AppSettings>({
 
 function getSettings(): AppSettings {
   const settings = { ...defaultSettings, ...settingsStore.store };
-  return { ...settings, globalShortcut: normalizeGlobalShortcut(settings.globalShortcut) };
+  return {
+    ...settings,
+    globalShortcut: normalizeGlobalShortcut(settings.globalShortcut),
+    defaultTerminal: normalizeTerminal(settings.defaultTerminal),
+  };
 }
 
 function markdownExportFileName(title: string): string {
@@ -193,42 +198,40 @@ function createTray(): void {
 }
 
 function createApplicationMenu(): void {
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
   app.setAboutPanelOptions({ applicationName: PRODUCT_NAME });
 
-  const appMenu: MenuItemConstructorOptions[] =
-    process.platform === "darwin"
-      ? [
-          {
-            label: PRODUCT_NAME,
-            submenu: [
-              { label: `About ${PRODUCT_NAME}`, role: "about" },
-              { type: "separator" },
-              {
-                label: "Settings...",
-                accelerator: "Command+,",
-                click: () => {
-                  showWindow();
-                  mainWindow?.webContents.send("open-settings");
-                },
-              },
-              { type: "separator" },
-              { role: "services" },
-              { type: "separator" },
-              { label: `Hide ${PRODUCT_NAME}`, accelerator: "Command+H", role: "hide" },
-              { label: "Hide Others", accelerator: "Command+Alt+H", role: "hideOthers" },
-              { label: "Show All", role: "unhide" },
-              { type: "separator" },
-              { label: `Quit ${PRODUCT_NAME}`, accelerator: "Command+Q", click: () => app.quit() },
-            ],
-          },
-        ]
-      : [];
-
   const template: MenuItemConstructorOptions[] = [
-    ...appMenu,
+    {
+      label: PRODUCT_NAME,
+      submenu: [
+        { label: `About ${PRODUCT_NAME}`, role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings...",
+          accelerator: "Command+,",
+          click: () => {
+            showWindow();
+            mainWindow?.webContents.send("open-settings");
+          },
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { label: `Hide ${PRODUCT_NAME}`, accelerator: "Command+H", role: "hide" },
+        { label: "Hide Others", accelerator: "Command+Alt+H", role: "hideOthers" },
+        { label: "Show All", role: "unhide" },
+        { type: "separator" },
+        { label: `Quit ${PRODUCT_NAME}`, accelerator: "Command+Q", click: () => app.quit() },
+      ],
+    },
     {
       label: "File",
-      submenu: [process.platform === "darwin" ? { role: "close" } : { label: "Quit", role: "quit" }],
+      submenu: [{ role: "close" }],
     },
     {
       label: "Edit",
@@ -259,10 +262,7 @@ function createApplicationMenu(): void {
     },
     {
       label: "Window",
-      submenu:
-        process.platform === "darwin"
-          ? [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }]
-          : [{ role: "minimize" }, { role: "close" }],
+      submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }],
     },
   ];
 

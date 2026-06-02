@@ -8,7 +8,8 @@
   "type": "module",
   "bin": {
     "agent-session-search": "bin/agent-session-search.cjs",
-    "agent-session-search-claude-statusline": "bin/claude-statusline-snapshot.cjs"
+    "agent-session-search-claude-statusline": "bin/claude-statusline-snapshot.cjs",
+    "agent-session-search-setup-claude-statusline": "bin/setup-claude-statusline.cjs"
   },
   "engines": {
     "node": ">=22.13.0"

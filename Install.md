@@ -47,9 +47,31 @@ nvm alias default 22
 
 > ⚠️ **请勿删除或移动这个仓库目录。** `npm install -g .` 注册的全局命令是一个指向本仓库的符号链接（npm 对本地目录安装的默认行为），它在运行时会从仓库内的 `node_modules` 加载 Electron 与构建产物 `out/`。如果之后删除、改名或移动了仓库，全局 `agent-session-search` 命令会因为链接失效而无法启动。需要换位置时，请在新位置重新执行一次安装命令。
 
+### Windows
+
+先安装 Node.js 22.13+（从 <https://nodejs.org> 下载 LTS 安装包，或使用 nvm-windows）。确认 `node --version` ≥ 22.13 后，在仓库目录里用 PowerShell 执行：
+
+```powershell
+npm ci
+npm run build
+npm install -g .
+```
+
+装好后在任意终端运行 `agent-session-search` 即可启动。应用常驻后台（系统托盘有图标），默认按 **Ctrl + Alt + Space** 唤起搜索窗口（Windows 下 `Alt+Space` 被系统窗口菜单占用，故默认用 `Ctrl+Alt+Space`）；可在 Settings 里修改或关闭。
+
+Resume 会在所选终端里打开恢复命令；设置中可选 **Windows Terminal / PowerShell / Command Prompt**，默认优先 Windows Terminal，未安装时自动回退到 PowerShell 或 cmd。
+
+下载 Electron 慢时，可在安装前设置镜像（PowerShell）：
+
+```powershell
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+```
+
+> ⚠️ 同样**请勿删除或移动仓库目录**：`npm install -g .` 在 Windows 上注册的全局命令是指向本仓库的 junction，移动或删除后命令会失效。
+
 ### 要求
 
-- macOS
+- macOS 或 Windows
 - Node.js 22.13 或更高版本（含 npm）
 
 温馨提示：Electron binary 默认从 GitHub release 下载。如果下载很慢或失败，可在安装前设置镜像后再执行安装命令：

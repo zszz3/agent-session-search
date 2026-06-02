@@ -13,6 +13,7 @@ import type {
 } from "../core/types";
 
 const api = {
+  platform: process.platform as NodeJS.Platform,
   searchSessions: (options: SearchOptions): Promise<SessionSearchResult[]> => ipcRenderer.invoke("search:sessions", options),
   getSession: (sessionKey: string): Promise<SessionSearchResult | null> => ipcRenderer.invoke("session:get", sessionKey),
   getMessages: (sessionKey: string, offset?: number, limit?: number): Promise<SessionMessage[]> =>

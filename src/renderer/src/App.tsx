@@ -35,7 +35,8 @@ import {
 import type { IndexStatus } from "../../core/indexer";
 import { formatMessageTime, formatRelativeTime } from "../../core/format-session";
 import type { AppSettings } from "../../core/platform";
-import { GLOBAL_SHORTCUT_OPTIONS } from "../../core/shortcuts";
+import { globalShortcutOptions } from "../../core/shortcuts";
+import { terminalSelectOptions } from "../../core/terminal-options";
 import type {
   LiveSessionSnapshot,
   ProjectSummary,
@@ -109,13 +110,11 @@ const STATS_PERIOD_OPTIONS: Array<{ label: string; value: SessionStatsPeriod }> 
   { label: "All", value: "allTime" },
 ];
 
-const DEFAULT_TERMINAL_OPTIONS: Array<{ label: string; value: AppSettings["defaultTerminal"] }> = [
-  { label: "Terminal", value: "Terminal" },
-  { label: "iTerm", value: "iTerm" },
-  { label: "Ghostty", value: "Ghostty" },
-  { label: "WezTerm", value: "WezTerm" },
-  { label: "Warp", value: "Warp" },
-];
+const RUNTIME_PLATFORM: NodeJS.Platform = window.sessionSearch.platform;
+const IS_MAC = RUNTIME_PLATFORM === "darwin";
+const FILE_MANAGER_LABEL = IS_MAC ? "Finder" : RUNTIME_PLATFORM === "win32" ? "Explorer" : "File Manager";
+
+const DEFAULT_TERMINAL_OPTIONS = terminalSelectOptions(RUNTIME_PLATFORM);
 
 const LIVE_STATUS_FILTERS: Array<{ label: string; value: LiveStatusFilter }> = [
   { label: "All", value: "all" },
@@ -459,9 +458,9 @@ export function App(): ReactElement {
         const delta = event.key === "ArrowDown" ? 1 : -1;
         const nextIndex =
           currentIndex < 0
-            ? delta === 1
-              ? 0
-              : displayedResults.length - 1
+            ? RUNTIME_PLATFORM === "darwin" && delta === -1
+              ? displayedResults.length - 1
+              : 0
             : Math.min(displayedResults.length - 1, Math.max(0, currentIndex + delta));
         setSelectedKey(displayedResults[nextIndex].sessionKey);
         return;
@@ -725,7 +724,7 @@ export function App(): ReactElement {
   }
 
   return (
-    <main className="app" data-theme={theme} onClick={() => setContextMenu(null)}>
+    <main className="app" data-theme={theme} data-platform={RUNTIME_PLATFORM} onClick={() => setContextMenu(null)}>
       <div className="titlebar-drag" />
       <section className="sidebar">
         <div className="brand">
@@ -904,9 +903,9 @@ export function App(): ReactElement {
               placeholder={searchPlaceholder}
               autoFocus
             />
-            <span className="kbd-hint">⌘K</span>
+            <span className="kbd-hint">{RUNTIME_PLATFORM === "darwin" ? "⌘K" : "Ctrl+K"}</span>
             <span className="kbd-hint" title="Resume selected session in the default terminal">
-              ⌘↵
+              {RUNTIME_PLATFORM === "darwin" ? "⌘↵" : "Ctrl+Enter"}
             </span>
           </div>
           {selectedProject ? (
@@ -993,6 +992,8 @@ export function App(): ReactElement {
           query={query}
           liveState={getLiveSessionState(detail, liveSessionKeys, liveDetectionFailed)}
           language={language}
+          revealLabel={FILE_MANAGER_LABEL}
+          showItermAction={IS_MAC}
           onClose={closeDetail}
           onShowMore={() => void loadMoreMessages()}
           onRename={() => beginRename(detail)}
@@ -1019,7 +1020,13 @@ export function App(): ReactElement {
           onCopyPlain={() =>
             void runAction(t("Copying plain text", "正在复制纯文本"), () => window.sessionSearch.copyPlainText(detail.sessionKey), t("Plain text copied.", "纯文本已复制。"))
           }
-          onReveal={() => void runAction(t("Opening Finder", "正在打开 Finder"), () => window.sessionSearch.revealSession(detail.sessionKey), t("Finder opened.", "Finder 已打开。"))}
+          onReveal={() =>
+            void runAction(
+              `Opening ${FILE_MANAGER_LABEL}`,
+              () => window.sessionSearch.revealSession(detail.sessionKey),
+              `${FILE_MANAGER_LABEL} opened.`,
+            )
+          }
         />
       ) : null}
 
@@ -1028,6 +1035,8 @@ export function App(): ReactElement {
           state={contextMenu}
           liveState={getLiveSessionState(contextMenu.session, liveSessionKeys, liveDetectionFailed)}
           language={language}
+          revealLabel={FILE_MANAGER_LABEL}
+          showMacActions={IS_MAC}
           onRename={() => beginRename(contextMenu.session)}
           onAddTag={() => beginAddTag(contextMenu.session)}
           onFavorite={() =>
@@ -1071,7 +1080,11 @@ export function App(): ReactElement {
           }
           onExportMarkdown={() => void exportMarkdown(contextMenu.session.sessionKey)}
           onReveal={() =>
-            void runAction(t("Opening Finder", "正在打开 Finder"), () => window.sessionSearch.revealSession(contextMenu.session.sessionKey), t("Finder opened.", "Finder 已打开。"))
+            void runAction(
+              `Opening ${FILE_MANAGER_LABEL}`,
+              () => window.sessionSearch.revealSession(contextMenu.session.sessionKey),
+              `${FILE_MANAGER_LABEL} opened.`,
+            )
           }
         />
       ) : null}
@@ -1304,6 +1317,8 @@ function DetailPanel({
   query,
   liveState,
   language,
+  revealLabel,
+  showItermAction,
   onClose,
   onShowMore,
   onRename,
@@ -1327,6 +1342,8 @@ function DetailPanel({
   query: string;
   liveState: LiveSessionState;
   language: LanguageMode;
+  revealLabel: string;
+  showItermAction: boolean;
   onClose: () => void;
   onShowMore: () => void;
   onRename: () => void;
@@ -1431,9 +1448,11 @@ function DetailPanel({
         <button onClick={onResume} disabled={actionRunning}>
           <Play size={15} /> Resume
         </button>
-        <button onClick={onResumeIterm} disabled={actionRunning}>
-          <TerminalIcon size={15} /> iTerm
-        </button>
+        {showItermAction ? (
+          <button onClick={onResumeIterm} disabled={actionRunning}>
+            <TerminalIcon size={15} /> iTerm
+          </button>
+        ) : null}
         <button onClick={onFocusTerminal} disabled={actionRunning || liveState !== "open"}>
           <BringToFront size={15} /> {l("Bring to Front", "前置终端")}
         </button>
@@ -1452,7 +1471,7 @@ function DetailPanel({
         </button>
         <button onClick={onCopyPlain} disabled={actionRunning}>{l("Plain Text", "纯文本")}</button>
         <button onClick={onReveal} disabled={actionRunning}>
-          <FolderOpen size={15} /> Finder
+          <FolderOpen size={15} /> {revealLabel}
         </button>
       </div>
       <div className="detail-tags">
@@ -1523,6 +1542,8 @@ function ContextMenu({
   state,
   liveState,
   language,
+  revealLabel,
+  showMacActions,
   onRename,
   onAddTag,
   onFavorite,
@@ -1540,6 +1561,8 @@ function ContextMenu({
   state: ContextMenuState;
   liveState: LiveSessionState;
   language: LanguageMode;
+  revealLabel: string;
+  showMacActions: boolean;
   onRename: () => void;
   onAddTag: () => void;
   onFavorite: () => void;
@@ -1575,15 +1598,21 @@ function ContextMenu({
       <button onClick={onResume}>
         <Play size={14} /> {l("Resume in Terminal", "在终端恢复")}
       </button>
-      <button onClick={onResumeIterm}>
-        <TerminalIcon size={14} /> {l("Resume in iTerm", "在 iTerm 恢复")}
-      </button>
-      <button onClick={onFocusTerminal} disabled={liveState !== "open"}>
-        <BringToFront size={14} /> {l("Bring to Front", "前置终端")}
-      </button>
-      <button onClick={onOpenApp}>
-        <AppWindow size={14} /> {l("Open App", "打开应用")}
-      </button>
+      {showMacActions ? (
+        <button onClick={onResumeIterm}>
+          <TerminalIcon size={14} /> Resume in iTerm
+        </button>
+      ) : null}
+      {showMacActions ? (
+        <button onClick={onFocusTerminal} disabled={liveState !== "open"}>
+          <BringToFront size={14} /> Bring to Front
+        </button>
+      ) : null}
+      {showMacActions ? (
+        <button onClick={onOpenApp}>
+          <AppWindow size={14} /> Open App
+        </button>
+      ) : null}
       <button onClick={onCopyResume}>
         <Copy size={14} /> {l("Copy Resume Cmd", "复制 Resume 命令")}
       </button>
@@ -1592,7 +1621,7 @@ function ContextMenu({
         <Download size={14} /> {l("Export Markdown", "导出 Markdown")}
       </button>
       <button onClick={onReveal}>
-        <FolderOpen size={14} /> {l("Show in Finder", "在 Finder 中显示")}
+        <FolderOpen size={14} /> Show in {revealLabel}
       </button>
     </div>
   );
@@ -1621,8 +1650,8 @@ function SettingsDialog({
   onGlobalShortcutChange: (shortcut: AppSettings["globalShortcut"]) => void;
   onClose: () => void;
 }): ReactElement {
-  const defaultTerminal = settings?.defaultTerminal ?? "Terminal";
-  const globalShortcut = settings?.globalShortcut ?? "Alt+Space";
+  const defaultTerminal = settings?.defaultTerminal ?? (RUNTIME_PLATFORM === "win32" ? "WindowsTerminal" : "Terminal");
+  const globalShortcut = settings?.globalShortcut ?? (RUNTIME_PLATFORM === "win32" ? "Ctrl+Alt+Space" : "Alt+Space");
   const saving = feedback?.kind === "running";
   const l = (en: string, zh: string) => localize(language, en, zh);
   const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "sources" | "appearance">("terminal");
@@ -1699,7 +1728,7 @@ function SettingsDialog({
                     disabled={!settings || saving}
                     onChange={(event) => onGlobalShortcutChange(event.target.value as AppSettings["globalShortcut"])}
                   >
-                    {GLOBAL_SHORTCUT_OPTIONS.map((option) => (
+                    {globalShortcutOptions(RUNTIME_PLATFORM).map((option) => (
                       <option key={option.label} value={option.value}>
                         {option.label}
                       </option>
