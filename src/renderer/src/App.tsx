@@ -1167,7 +1167,6 @@ function SessionRow({
     >
       <div className="session-main">
         <div className="session-title">
-          <span className={`source-dot ${sourceUiFamily(session.source)}`} />
           <button
             className={`favorite-button ${session.favorited ? "active" : ""}`}
             onClick={(event) => {

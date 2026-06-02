@@ -1239,25 +1239,6 @@ select:focus-visible {
   color: var(--accent-bright);
 }
 
-.source-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-}
-
-.source-dot.claude {
-  background: var(--claude);
-}
-
-.source-dot.codex {
-  background: var(--codex);
-}
-
-.source-dot.codebuddy {
-  background: var(--codebuddy);
-}
-
 .session-meta {
   display: flex;
   align-items: center;
