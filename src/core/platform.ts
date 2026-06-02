@@ -5,7 +5,7 @@ import type { SessionSearchResult, SessionSource } from "./types";
 type ProcessRunner = (command: string, args: string[]) => Promise<void>;
 
 export interface AppSettings {
-  defaultTerminal: "Terminal" | "iTerm" | "Ghostty" | "WezTerm" | "Warp";
+  defaultTerminal: "Terminal" | "iTerm" | "Ghostty" | "WezTerm" | "Warp" | "WindowsTerminal" | "PowerShell" | "Cmd";
   globalShortcut: GlobalShortcut;
   claudeBinary: string;
   codexBinary: string;
@@ -16,7 +16,7 @@ export interface AppSettings {
 }
 
 export const defaultSettings: AppSettings = {
-  defaultTerminal: "Terminal",
+  defaultTerminal: defaultTerminalFor(),
   globalShortcut: DEFAULT_GLOBAL_SHORTCUT,
   claudeBinary: "claude",
   codexBinary: "codex",
@@ -25,6 +25,24 @@ export const defaultSettings: AppSettings = {
   includeCodexInternal: false,
   includeCodeBuddyCli: false,
 };
+
+export type TerminalChoice = AppSettings["defaultTerminal"];
+
+const MAC_TERMINALS: TerminalChoice[] = ["Terminal", "iTerm", "Ghostty", "WezTerm", "Warp"];
+const WINDOWS_TERMINALS: TerminalChoice[] = ["WindowsTerminal", "PowerShell", "Cmd"];
+
+export function terminalOptionsFor(platform: NodeJS.Platform = process.platform): TerminalChoice[] {
+  return platform === "win32" ? [...WINDOWS_TERMINALS] : [...MAC_TERMINALS];
+}
+
+export function defaultTerminalFor(platform: NodeJS.Platform = process.platform): TerminalChoice {
+  return platform === "win32" ? "WindowsTerminal" : "Terminal";
+}
+
+export function normalizeTerminal(value: unknown, platform: NodeJS.Platform = process.platform): TerminalChoice {
+  const options = terminalOptionsFor(platform);
+  return options.includes(value as TerminalChoice) ? (value as TerminalChoice) : defaultTerminalFor(platform);
+}
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
 
