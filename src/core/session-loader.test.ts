@@ -340,11 +340,16 @@ describe("CodeBuddy session loading", () => {
           content: [{ type: "output_text", text: "我来处理" }],
           providerData: {
             messageId: "provider-message-1",
+            // Real CodeBuddy shape: camelCase totals where inputTokens already
+            // includes cached, outputTokens already includes reasoning, and the
+            // detail breakdowns are arrays.
             usage: {
-              input_tokens: 120,
-              output_tokens: 30,
-              cached_input_tokens: 10,
-              reasoning_output_tokens: 5,
+              requests: 1,
+              inputTokens: 120,
+              outputTokens: 30,
+              totalTokens: 150,
+              inputTokensDetails: [{ cached_tokens: 10 }],
+              outputTokensDetails: [{ reasoning_tokens: 5 }],
             },
           },
           sessionId: "codebuddy-1",
@@ -364,12 +369,14 @@ describe("CodeBuddy session loading", () => {
       firstQuestion: "接入 CodeBuddy CLI",
       originalTitle: "接入 CodeBuddy CLI",
       timestamp: 1_780_321_278_404,
+      // input split into non-cached (110) + cached (10); output into
+      // non-reasoning (25) + reasoning (5); total matches CodeBuddy's 150.
       tokenUsage: {
-        inputTokens: 120,
-        outputTokens: 30,
+        inputTokens: 110,
+        outputTokens: 25,
         cachedInputTokens: 10,
         reasoningOutputTokens: 5,
-        totalTokens: 165,
+        totalTokens: 150,
       },
     });
     expect(loaded[0].messages.map((message) => message.content)).toEqual(["接入 CodeBuddy CLI", "我来处理"]);
@@ -377,13 +384,64 @@ describe("CodeBuddy session loading", () => {
       {
         dedupeKey: "codebuddy:provider-message-1",
         timestamp: 1_780_321_303_135,
-        inputTokens: 120,
-        outputTokens: 30,
+        inputTokens: 110,
+        outputTokens: 25,
         cachedInputTokens: 10,
         reasoningOutputTokens: 5,
-        totalTokens: 165,
+        totalTokens: 150,
       },
     ]);
+
+    fs.rmSync(codeBuddyDir, { recursive: true, force: true });
+  });
+
+  it("reads token usage from the OpenAI-style rawUsage fallback", () => {
+    const codeBuddyDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codebuddy-raw-"));
+    const projectDir = path.join(codeBuddyDir, "projects", "Users-xjx");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, "codebuddy-raw.jsonl"),
+      [
+        JSON.stringify({
+          id: "u",
+          timestamp: 1_780_321_278_404,
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hello" }],
+          sessionId: "codebuddy-raw",
+          cwd: "/repo",
+        }),
+        JSON.stringify({
+          id: "a",
+          timestamp: 1_780_321_303_135,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "hi" }],
+          providerData: {
+            messageId: "pm-2",
+            rawUsage: {
+              prompt_tokens: 200,
+              completion_tokens: 50,
+              total_tokens: 250,
+              prompt_tokens_details: { cached_tokens: 40 },
+              completion_tokens_details: { reasoning_tokens: 8 },
+            },
+          },
+          sessionId: "codebuddy-raw",
+          cwd: "/repo",
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadCodeBuddyCliSessions(codeBuddyDir);
+
+    expect(loaded[0].session.tokenUsage).toEqual({
+      inputTokens: 160,
+      outputTokens: 42,
+      cachedInputTokens: 40,
+      reasoningOutputTokens: 8,
+      totalTokens: 250,
+    });
 
     fs.rmSync(codeBuddyDir, { recursive: true, force: true });
   });

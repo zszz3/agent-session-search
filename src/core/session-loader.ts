@@ -253,17 +253,13 @@ function extractCodeBuddyTokenEvents(rows: unknown[]): TokenUsageEvent[] {
   rows.forEach((row, index) => {
     if (!isRecord(row) || row.type !== "message" || row.role !== "assistant") return;
     const providerData = objectField(row, "providerData");
-    const usage = objectField(providerData, "usage") || objectField(providerData, "rawUsage");
+    if (!providerData) return;
+
+    const usage = readCodeBuddyUsage(providerData);
     if (!usage) return;
 
-    const cached = numberField(usage, "cache_read_input_tokens") + numberField(usage, "cached_input_tokens");
-    const entry = createTokenUsage(
-      numberField(usage, "input_tokens"),
-      numberField(usage, "output_tokens"),
-      cached,
-      numberField(usage, "reasoning_output_tokens"),
-    );
-    const key = stringField(providerData, "messageId") || stringField(row, "id") || `${index}:${JSON.stringify(usage)}`;
+    const entry = createTokenUsage(usage.inputTokens, usage.outputTokens, usage.cachedInputTokens, usage.reasoningOutputTokens);
+    const key = stringField(providerData, "messageId") || stringField(row, "id") || `${index}:${usage.inputTokens}:${usage.outputTokens}`;
     putTokenEvent(entries, {
       ...entry,
       timestamp: parseTimestampMs(row.timestamp),
@@ -272,6 +268,47 @@ function extractCodeBuddyTokenEvents(rows: unknown[]): TokenUsageEvent[] {
   });
 
   return [...entries.values()];
+}
+
+// CodeBuddy reports OpenAI-style usage: the input/prompt total already includes
+// cached tokens, and the output/completion total already includes reasoning
+// tokens. Split them into the distinct buckets createTokenUsage expects (input
+// excludes cached, output excludes reasoning) so the summed total matches
+// CodeBuddy's own total. Prefer the camelCase `usage` object, falling back to
+// the raw OpenAI `rawUsage` object.
+function readCodeBuddyUsage(providerData: Record<string, unknown>): TokenUsage | null {
+  let totalInput = 0;
+  let totalOutput = 0;
+  let cached = 0;
+  let reasoning = 0;
+
+  const usage = objectField(providerData, "usage");
+  if (usage) {
+    totalInput = numberField(usage, "inputTokens");
+    totalOutput = numberField(usage, "outputTokens");
+    cached = firstDetailNumber(usage.inputTokensDetails, "cached_tokens");
+    reasoning = firstDetailNumber(usage.outputTokensDetails, "reasoning_tokens");
+  }
+
+  const rawUsage = objectField(providerData, "rawUsage");
+  if (!totalInput && !totalOutput && rawUsage) {
+    totalInput = numberField(rawUsage, "prompt_tokens");
+    totalOutput = numberField(rawUsage, "completion_tokens");
+    cached = numberField(objectField(rawUsage, "prompt_tokens_details"), "cached_tokens");
+    reasoning = numberField(objectField(rawUsage, "completion_tokens_details"), "reasoning_tokens");
+  }
+
+  if (!totalInput && !totalOutput) return null;
+
+  return createTokenUsage(Math.max(0, totalInput - cached), Math.max(0, totalOutput - reasoning), cached, reasoning);
+}
+
+// CodeBuddy stores token detail breakdowns as single-element arrays, e.g.
+// `inputTokensDetails: [{ cached_tokens: 19567 }]`. Accept either an array
+// (read the first entry) or a plain object.
+function firstDetailNumber(value: unknown, key: string): number {
+  if (Array.isArray(value)) return numberField(value[0], key);
+  return numberField(value, key);
 }
 
 function firstClaudeGitBranch(rows: unknown[]): string | null {
