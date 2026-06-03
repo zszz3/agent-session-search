@@ -29,6 +29,8 @@ export interface AppSettings {
   includeClaudeInternal: boolean;
   includeCodexInternal: boolean;
   includeCodeBuddyCli: boolean;
+  hideCodexQuota: boolean;
+  hideClaudeQuota: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -40,6 +42,8 @@ export const defaultSettings: AppSettings = {
   includeClaudeInternal: false,
   includeCodexInternal: false,
   includeCodeBuddyCli: false,
+  hideCodexQuota: false,
+  hideClaudeQuota: false,
 };
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];

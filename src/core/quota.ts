@@ -24,6 +24,8 @@ interface QuotaLoadOptions {
 
 export interface UsageQuotaLoadOptions extends QuotaLoadOptions {
   codexFetcher?: CodexUsageFetcher;
+  hideCodexQuota?: boolean;
+  hideClaudeQuota?: boolean;
 }
 
 export type CodexUsageFetcher = (accessToken: string, accountId: string) => Promise<CodexUsageResponse>;
@@ -91,10 +93,14 @@ interface ClaudeStatuslineQuota {
 
 export async function loadUsageQuotaSnapshot(options: UsageQuotaLoadOptions = {}): Promise<UsageQuotaSnapshot> {
   const now = options.now ?? new Date();
-  const [codex, claudeCode] = await Promise.all([loadCodexQuotaCard({ ...options, now }), Promise.resolve(loadClaudeQuotaCard({ ...options, now }))]);
+  // Hidden providers are skipped at the source: no HTTP/file load and no card.
+  const [codex, claudeCode] = await Promise.all([
+    options.hideCodexQuota ? Promise.resolve(null) : loadCodexQuotaCard({ ...options, now }),
+    options.hideClaudeQuota ? Promise.resolve(null) : Promise.resolve(loadClaudeQuotaCard({ ...options, now })),
+  ]);
   return {
     generatedAt: now.toISOString(),
-    providers: [codex, claudeCode],
+    providers: [codex, claudeCode].filter((card): card is UsageQuotaCard => card !== null),
   };
 }
 

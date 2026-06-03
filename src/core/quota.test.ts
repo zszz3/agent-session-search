@@ -131,4 +131,65 @@ describe("usage quota loader", () => {
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
+
+  it("skips loading and omits the Codex card when hidden", async () => {
+    const homeDir = makeHome();
+    try {
+      writeJson(path.join(homeDir, ".codex", "auth.json"), {
+        tokens: { access_token: "codex-access", account_id: "account-1" },
+      });
+      let fetched = false;
+
+      const snapshot = await loadUsageQuotaSnapshot({
+        now: NOW,
+        homeDir,
+        env: {},
+        hideCodexQuota: true,
+        codexFetcher: async () => {
+          fetched = true;
+          return {};
+        },
+      });
+
+      expect(fetched).toBe(false);
+      expect(snapshot.providers.map((provider) => provider.provider)).toEqual(["claude-code"]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the Claude Code card when hidden", async () => {
+    const homeDir = makeHome();
+    try {
+      const snapshot = await loadUsageQuotaSnapshot({
+        now: NOW,
+        homeDir,
+        env: {},
+        hideClaudeQuota: true,
+        codexFetcher: async () => ({}),
+      });
+
+      expect(snapshot.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an empty provider list when both quotas are hidden", async () => {
+    const homeDir = makeHome();
+    try {
+      const snapshot = await loadUsageQuotaSnapshot({
+        now: NOW,
+        homeDir,
+        env: {},
+        hideCodexQuota: true,
+        hideClaudeQuota: true,
+        codexFetcher: async () => ({}),
+      });
+
+      expect(snapshot.providers).toEqual([]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
 });

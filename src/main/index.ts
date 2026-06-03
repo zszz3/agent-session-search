@@ -334,7 +334,13 @@ function registerIpc(): void {
   );
   ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot());
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
-  ipcMain.handle("quota:get", () => loadUsageQuotaSnapshot());
+  ipcMain.handle("quota:get", () => {
+    const settings = getSettings();
+    return loadUsageQuotaSnapshot({
+      hideCodexQuota: settings.hideCodexQuota,
+      hideClaudeQuota: settings.hideClaudeQuota,
+    });
+  });
   ipcMain.handle("tags:list", () => store.listTags());
   ipcMain.handle("projects:list", () => store.listProjects());
   ipcMain.handle("title:set", (_event, sessionKey: string, title: string | null) => store.setCustomTitle(sessionKey, title));

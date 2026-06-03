@@ -15,6 +15,7 @@ import {
   EyeOff,
   Folder,
   FolderOpen,
+  Gauge,
   GitBranch,
   Keyboard,
   Languages,
@@ -678,10 +679,14 @@ export function App(): ReactElement {
     const enablingClaude = next.includeClaudeInternal === true && !appSettings?.includeClaudeInternal;
     const enablingCodex = next.includeCodexInternal === true && !appSettings?.includeCodexInternal;
     const enablingCodeBuddy = next.includeCodeBuddyCli === true && !appSettings?.includeCodeBuddyCli;
+    const quotaVisibilityChanged =
+      ("hideCodexQuota" in next && next.hideCodexQuota !== appSettings?.hideCodexQuota) ||
+      ("hideClaudeQuota" in next && next.hideClaudeQuota !== appSettings?.hideClaudeQuota);
     setSettingsFeedback({ kind: "running", message: t("Saving settings...", "正在保存设置...") });
     try {
       const nextSettings = await window.sessionSearch.setSettings(next);
       setAppSettings(nextSettings);
+      if (quotaVisibilityChanged) void loadQuotas();
 
       if (enablingClaude || enablingCodex || enablingCodeBuddy) {
         // Keep the toggle responsive: scan the personal source in the background
@@ -1654,7 +1659,7 @@ function SettingsDialog({
   const globalShortcut = settings?.globalShortcut ?? (RUNTIME_PLATFORM === "win32" ? "Ctrl+Alt+Space" : "Alt+Space");
   const saving = feedback?.kind === "running";
   const l = (en: string, zh: string) => localize(language, en, zh);
-  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "sources" | "appearance">("terminal");
+  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "sources" | "usage" | "appearance">("terminal");
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -1678,6 +1683,10 @@ function SettingsDialog({
             <button className={activeSection === "sources" ? "active" : ""} onClick={() => setActiveSection("sources")}>
               <Folder size={15} />
               <span>{l("Personal sources", "个人来源")}</span>
+            </button>
+            <button className={activeSection === "usage" ? "active" : ""} onClick={() => setActiveSection("usage")}>
+              <Gauge size={15} />
+              <span>{l("Usage limits", "剩余额度")}</span>
             </button>
             <button className={activeSection === "appearance" ? "active" : ""} onClick={() => setActiveSection("appearance")}>
               <Sun size={15} />
@@ -1780,6 +1789,40 @@ function SettingsDialog({
                     checked={Boolean(settings?.includeCodeBuddyCli)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ includeCodeBuddyCli: event.currentTarget.checked })}
+                  />
+                </label>
+              </section>
+            ) : null}
+            {activeSection === "usage" ? (
+              <section className="settings-pane">
+                <header className="settings-pane-head">
+                  <h3>{l("Usage limits", "剩余额度")}</h3>
+                  <p>{l("Hide a provider in the Remaining panel if you do not have that subscription.", "如果没有某个订阅,可在剩余额度面板中隐藏对应来源。")}</p>
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Hide Codex usage", "隐藏 Codex 额度")}</span>
+                    <span className="settings-field-sub">{l("Skip loading and hide the Codex card.", "不加载并隐藏 Codex 额度卡片。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.hideCodexQuota)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ hideCodexQuota: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Hide Claude Code usage", "隐藏 Claude Code 额度")}</span>
+                    <span className="settings-field-sub">{l("Skip loading and hide the Claude Code card.", "不加载并隐藏 Claude Code 额度卡片。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.hideClaudeQuota)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ hideClaudeQuota: event.currentTarget.checked })}
                   />
                 </label>
               </section>
