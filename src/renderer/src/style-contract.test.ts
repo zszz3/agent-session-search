@@ -11,4 +11,16 @@ describe("stylesheet theme contract", () => {
     expect(stylesheet).not.toContain("LIGHT WORKBENCH");
     expect(stylesheet).not.toContain("DARK WORKBENCH");
   });
+
+  it("reserves a stable scrollbar gutter on scrollers whose overflow is frozen by the overlay", () => {
+    // Opening the detail overlay toggles `.sidebar`/`.results` to overflow:hidden.
+    // Without a reserved gutter the scrollbar's width is released and the
+    // right-aligned content jumps sideways, so both must keep a stable gutter.
+    const blocks = [...stylesheet.matchAll(/(?:\.sidebar|\.results)\s*\{[^}]*\}/g)].map((m) => m[0]);
+    const scrollers = blocks.filter((block) => /overflow-y:\s*auto/.test(block));
+    expect(scrollers).toHaveLength(2);
+    for (const scroller of scrollers) {
+      expect(scroller).toMatch(/scrollbar-gutter:\s*stable/);
+    }
+  });
 });
