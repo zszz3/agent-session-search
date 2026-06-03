@@ -281,6 +281,7 @@ select:focus-visible {
   margin-top: 40px;
   padding: 0 10px 10px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   background: var(--sidebar-bg);
 }
@@ -1163,6 +1164,7 @@ select:focus-visible {
   gap: 0;
   padding: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: var(--radius);
