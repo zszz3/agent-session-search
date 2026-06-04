@@ -1,4 +1,4 @@
-import type { IndexedSession, SessionMessage, SessionSearchResult } from "./types";
+import type { IndexedSession, SessionMessage, SessionSearchResult, SessionTraceEvent } from "./types";
 
 const SOURCE_LABEL: Record<string, string> = {
   "claude-cli": "Claude Code",
@@ -29,7 +29,42 @@ export function formatMessageTime(ts: string): string {
   return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function formatSessionMarkdown(session: SessionSearchResult | IndexedSession, messages: SessionMessage[]): string {
+function traceMarker(event: SessionTraceEvent): string {
+  if (event.kind === "tool_call") return "→";
+  if (event.status === "success") return "✓";
+  if (event.status === "failure") return "✗";
+  return "•";
+}
+
+function traceTitle(event: SessionTraceEvent): string {
+  const eventType = event.eventType ? ` · ${event.eventType}` : "";
+  const callId = event.callId ? ` · \`${event.callId}\`` : "";
+  const time = formatMessageTime(event.timestamp);
+  const timeSuffix = time ? ` · *${time}*` : "";
+  return `${traceMarker(event)} ${event.title}${eventType}${callId}${timeSuffix}`;
+}
+
+function formatTraceMarkdown(traceEvents: SessionTraceEvent[]): string[] {
+  if (traceEvents.length === 0) return [];
+  return [
+    "## Tool Trace",
+    "",
+    ...traceEvents.flatMap((event) => [
+      `### ${traceTitle(event)}`,
+      "",
+      event.detail ? `\`\`\`text\n${event.detail}\n\`\`\`` : "_No detail captured._",
+      "",
+      "---",
+      "",
+    ]),
+  ];
+}
+
+export function formatSessionMarkdown(
+  session: SessionSearchResult | IndexedSession,
+  messages: SessionMessage[],
+  traceEvents: SessionTraceEvent[] = [],
+): string {
   const title = "displayTitle" in session ? session.displayTitle : session.firstQuestion || session.originalTitle;
   const source = SOURCE_LABEL[session.source] || session.source;
   const header = [
@@ -45,9 +80,13 @@ export function formatSessionMarkdown(session: SessionSearchResult | IndexedSess
     const time = formatMessageTime(message.timestamp);
     return [`## ${time ? `${role} (${time})` : role}`, "", message.content, "", "---", ""];
   });
-  return [...header, ...body].join("\n");
+  return [...header, ...body, ...formatTraceMarkdown(traceEvents)].join("\n");
 }
 
-export function formatSessionPlainText(session: SessionSearchResult | IndexedSession, messages: SessionMessage[]): string {
-  return formatSessionMarkdown(session, messages).replace(/^#+\s/gm, "");
+export function formatSessionPlainText(
+  session: SessionSearchResult | IndexedSession,
+  messages: SessionMessage[],
+  traceEvents: SessionTraceEvent[] = [],
+): string {
+  return formatSessionMarkdown(session, messages, traceEvents).replace(/^#+\s/gm, "");
 }

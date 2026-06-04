@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { cleanTitle, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
+import { truncateTraceDetail } from "./trace-detail";
 import type {
   CodeBuddyConversationLine,
   ClaudeAppSessionFile,
@@ -13,6 +14,7 @@ import type {
   SessionFormat,
   SessionMessage,
   SessionSource,
+  SessionTraceEvent,
   TokenUsage,
   TokenUsageEvent,
 } from "./types";
@@ -131,6 +133,266 @@ function numberField(value: unknown, key: string): number {
   if (!isRecord(value)) return 0;
   const field = value[key];
   return typeof field === "number" && Number.isFinite(field) ? field : 0;
+}
+
+function unknownField(value: unknown, key: string): unknown {
+  if (!isRecord(value)) return undefined;
+  return value[key];
+}
+
+function stringifyDetail(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return truncateTraceDetail(value);
+  try {
+    return truncateTraceDetail(JSON.stringify(value, null, 2));
+  } catch {
+    return truncateTraceDetail(String(value));
+  }
+}
+
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function firstStringField(value: unknown, keys: string[]): string {
+  if (!isRecord(value)) return "";
+  for (const key of keys) {
+    const field = value[key];
+    if (typeof field === "string" && field.trim()) return field.trim();
+  }
+  return "";
+}
+
+function titleWithSummary(name: string, summary: string): string {
+  return summary ? `${name} · ${summary}` : name;
+}
+
+function statusFromExit(exitCode: number | undefined, fallback?: boolean): "success" | "failure" | "unknown" {
+  if (typeof exitCode === "number") return exitCode === 0 ? "success" : "failure";
+  if (typeof fallback === "boolean") return fallback ? "success" : "failure";
+  return "unknown";
+}
+
+function joinNonEmpty(parts: string[]): string {
+  return truncateTraceDetail(parts.filter((part) => part.trim()).join("\n\n"));
+}
+
+type TraceEventDraft = Omit<SessionTraceEvent, "index">;
+
+function extractClaudeTraceEvents(rows: unknown[]): TraceEventDraft[] {
+  const events: TraceEventDraft[] = [];
+
+  for (const row of rows) {
+    if (!isRecord(row) || (row.type !== "user" && row.type !== "assistant")) continue;
+    const message = objectField(row, "message");
+    const blocks = unknownField(message, "content");
+    if (!Array.isArray(blocks)) continue;
+
+    for (const block of blocks) {
+      if (!isRecord(block)) continue;
+      if (block.type === "tool_use") {
+        const input = unknownField(block, "input");
+        const name = stringField(block, "name") || "tool";
+        const summary = firstStringField(input, ["command", "cmd", "file_path", "path", "query", "url"]);
+        events.push({
+          kind: "tool_call",
+          source: "claude",
+          title: titleWithSummary(name, summary),
+          detail: stringifyDetail(input),
+          timestamp: stringField(row, "timestamp"),
+          callId: stringField(block, "id") || null,
+          eventType: null,
+          status: "unknown",
+        });
+      } else if (block.type === "tool_result") {
+        events.push({
+          kind: "tool_result",
+          source: "claude",
+          title: "tool result",
+          detail: stringifyDetail(unknownField(block, "content")),
+          timestamp: stringField(row, "timestamp"),
+          callId: stringField(block, "tool_use_id") || null,
+          eventType: null,
+          status: "unknown",
+        });
+      }
+    }
+  }
+
+  return events;
+}
+
+function extractCodexResponseTrace(row: Record<string, unknown>): TraceEventDraft[] {
+  if (row.type !== "response_item") return [];
+  const payload = objectField(row, "payload");
+  if (!payload) return [];
+  const payloadType = stringField(payload, "type");
+
+  if (payloadType === "function_call") {
+    const args = parseMaybeJson(unknownField(payload, "arguments"));
+    const name = stringField(payload, "name") || "tool";
+    const summary = firstStringField(args, ["command", "cmd", "query", "path", "file_path", "url"]);
+    return [
+      {
+        kind: "tool_call",
+        source: "codex",
+        title: titleWithSummary(name, summary),
+        detail: stringifyDetail(args),
+        timestamp: stringField(row, "timestamp"),
+        callId: stringField(payload, "call_id") || null,
+        eventType: null,
+        status: "unknown",
+      },
+    ];
+  }
+
+  if (payloadType === "function_call_output") {
+    return [
+      {
+        kind: "tool_result",
+        source: "codex",
+        title: "tool output",
+        detail: stringifyDetail(unknownField(payload, "output")),
+        timestamp: stringField(row, "timestamp"),
+        callId: stringField(payload, "call_id") || null,
+        eventType: null,
+        status: "unknown",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function extractCodexEventTrace(row: Record<string, unknown>): TraceEventDraft[] {
+  if (row.type !== "event_msg") return [];
+  const payload = objectField(row, "payload");
+  const eventType = stringField(payload, "type");
+  if (!payload || !eventType) return [];
+
+  const common = {
+    source: "codex" as const,
+    timestamp: stringField(row, "timestamp"),
+    callId: stringField(payload, "call_id") || null,
+    eventType,
+  };
+
+  if (eventType === "exec_command_end") {
+    const output = joinNonEmpty([
+      stringField(payload, "stdout") ? `stdout:\n${stringField(payload, "stdout")}` : "",
+      stringField(payload, "stderr") ? `stderr:\n${stringField(payload, "stderr")}` : "",
+      stringField(payload, "aggregated_output") ? `output:\n${stringField(payload, "aggregated_output")}` : "",
+      stringField(payload, "formatted_output") ? `formatted:\n${stringField(payload, "formatted_output")}` : "",
+    ]);
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: titleWithSummary("shell", stringField(payload, "command") || firstStringField(unknownField(payload, "parsed_cmd"), ["cmd", "command"])),
+        detail: joinNonEmpty([
+          stringField(payload, "cwd") ? `cwd: ${stringField(payload, "cwd")}` : "",
+          typeof unknownField(payload, "exit_code") === "number" ? `exit_code: ${unknownField(payload, "exit_code")}` : "",
+          output,
+        ]),
+        status: statusFromExit(typeof unknownField(payload, "exit_code") === "number" ? numberField(payload, "exit_code") : undefined),
+      },
+    ];
+  }
+
+  if (eventType === "patch_apply_end") {
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: "apply_patch",
+        detail: joinNonEmpty([
+          stringField(payload, "stdout") ? `stdout:\n${stringField(payload, "stdout")}` : "",
+          stringField(payload, "stderr") ? `stderr:\n${stringField(payload, "stderr")}` : "",
+          unknownField(payload, "changes") ? `changes:\n${stringifyDetail(unknownField(payload, "changes"))}` : "",
+        ]),
+        status: statusFromExit(undefined, typeof unknownField(payload, "success") === "boolean" ? Boolean(unknownField(payload, "success")) : undefined),
+      },
+    ];
+  }
+
+  if (eventType === "mcp_tool_call_end") {
+    const invocation = unknownField(payload, "invocation");
+    const invocationName = firstStringField(invocation, ["name", "tool", "method"]);
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: titleWithSummary("mcp", invocationName || stringField(payload, "plugin_id")),
+        detail: stringifyDetail(unknownField(payload, "result") || invocation),
+        status: "unknown",
+      },
+    ];
+  }
+
+  if (eventType === "web_search_end") {
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: titleWithSummary("web_search", stringField(payload, "query")),
+        detail: stringifyDetail(unknownField(payload, "action")),
+        status: "unknown",
+      },
+    ];
+  }
+
+  if (eventType === "error") {
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: "error",
+        detail: joinNonEmpty([stringField(payload, "message"), stringifyDetail(unknownField(payload, "codex_error_info"))]),
+        status: "failure",
+      },
+    ];
+  }
+
+  if (eventType === "turn_aborted" || eventType === "context_compacted") {
+    return [
+      {
+        ...common,
+        kind: "event",
+        title: eventType,
+        detail: stringifyDetail(payload),
+        status: "unknown",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function extractCodexTraceEvents(rows: unknown[]): TraceEventDraft[] {
+  const events: TraceEventDraft[] = [];
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    events.push(...extractCodexResponseTrace(row), ...extractCodexEventTrace(row));
+  }
+  return events;
+}
+
+function dedupeTraceEvents(events: TraceEventDraft[]): SessionTraceEvent[] {
+  const eventCallIds = new Set(events.filter((event) => event.kind === "event" && event.callId).map((event) => event.callId));
+  return events
+    .filter((event) => !(event.kind === "tool_result" && event.callId && eventCallIds.has(event.callId)))
+    .map((event, index) => ({ ...event, index }));
+}
+
+function extractTraceEvents(rows: unknown[], format: SessionFormat): SessionTraceEvent[] {
+  if (format === "claude") return dedupeTraceEvents(extractClaudeTraceEvents(rows));
+  if (format === "codex") return dedupeTraceEvents(extractCodexTraceEvents(rows));
+  return [];
 }
 
 function addTokenUsage(total: TokenUsage, next: TokenUsage): void {
@@ -394,6 +656,7 @@ export function loadCodexSessionFile(filePath: string, title?: string, updatedAt
 
   const messages = extractMessages(rows, "codex");
   const tokenEvents = extractCodexTokenEvents(rows);
+  const traceEvents = extractTraceEvents(rows, "codex");
   const tokenUsage = tokenUsageFromEvents(tokenEvents);
   const question = firstQuestion(messages);
   const source: SessionSource = meta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli";
@@ -410,7 +673,7 @@ export function loadCodexSessionFile(filePath: string, title?: string, updatedAt
     tokenUsage,
   });
 
-  return { session, messages, tokenEvents };
+  return { session, messages, tokenEvents, traceEvents };
 }
 
 function walkJsonlFiles(dir: string): string[] {
@@ -453,6 +716,7 @@ export function* loadCodexSessionsIterator(codexDir = path.join(os.homedir(), ".
     const indexedTitle = titleMap.get(meta.id);
     const messages = extractMessages(rows, "codex");
     const tokenEvents = extractCodexTokenEvents(rows);
+    const traceEvents = extractTraceEvents(rows, "codex");
     const tokenUsage = tokenUsageFromEvents(tokenEvents);
     const question = firstQuestion(messages);
     const source: SessionSource = sourceOverride || (meta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli");
@@ -471,6 +735,7 @@ export function* loadCodexSessionsIterator(codexDir = path.join(os.homedir(), ".
       }),
       messages,
       tokenEvents,
+      traceEvents,
     };
   }
 }
@@ -515,6 +780,7 @@ export function* loadClaudeCliSessionsIterator(claudeDir = path.join(os.homedir(
       const rows = readJsonl(filePath);
       const messages = extractMessages(rows, "claude");
       const tokenEvents = extractClaudeTokenEvents(rows);
+      const traceEvents = extractTraceEvents(rows, "claude");
       const tokenUsage = tokenUsageFromEvents(tokenEvents);
       const question = firstQuestion(messages);
       const embeddedCwd = (rows.find((row) => row && typeof row === "object" && "cwd" in row) as
@@ -536,6 +802,7 @@ export function* loadClaudeCliSessionsIterator(claudeDir = path.join(os.homedir(
         }),
         messages,
         tokenEvents,
+        traceEvents,
       };
     }
   }
@@ -582,6 +849,7 @@ export function* loadClaudeAppSessionsIterator(
     const rows = fs.existsSync(convoPath) ? readJsonl(convoPath) : [];
     const messages = extractMessages(rows, "claude");
     const tokenEvents = extractClaudeTokenEvents(rows);
+    const traceEvents = extractTraceEvents(rows, "claude");
     const tokenUsage = tokenUsageFromEvents(tokenEvents);
     const question = firstQuestion(messages);
     const title = appMeta.title && !/^Session\s+\d+$/i.test(appMeta.title) ? appMeta.title : cleanTitle(question);
@@ -603,6 +871,7 @@ export function* loadClaudeAppSessionsIterator(
       }),
       messages,
       tokenEvents,
+      traceEvents,
     };
   }
 }
@@ -623,6 +892,7 @@ export function* loadCodeBuddyCliSessionsIterator(codeBuddyDir = path.join(os.ho
     const meta = firstCodeBuddySessionMeta(rows, fallbackRawId);
     const messages = extractMessages(rows, "codebuddy");
     const tokenEvents = extractCodeBuddyTokenEvents(rows);
+    const traceEvents = extractTraceEvents(rows, "codebuddy");
     const tokenUsage = tokenUsageFromEvents(tokenEvents);
     const question = firstQuestion(messages);
     const aiTitle = firstCodeBuddyAiTitle(rows);
@@ -641,6 +911,7 @@ export function* loadCodeBuddyCliSessionsIterator(codeBuddyDir = path.join(os.ho
       }),
       messages,
       tokenEvents,
+      traceEvents,
     };
   }
 }

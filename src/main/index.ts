@@ -435,6 +435,7 @@ function registerIpc(): void {
   ipcMain.handle("session:messages", (_event, sessionKey: string, offset?: number, limit?: number) =>
     store.getMessages(sessionKey, offset ?? 0, limit ?? 120),
   );
+  ipcMain.handle("session:trace-events", (_event, sessionKey: string) => store.getTraceEvents(sessionKey));
   ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot());
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
   ipcMain.handle("quota:get", () => {
@@ -532,20 +533,20 @@ function registerIpc(): void {
   ipcMain.handle("command:copy-markdown", (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return;
-    clipboard.writeText(formatSessionMarkdown(session, store.getAllMessages(sessionKey)));
+    clipboard.writeText(formatSessionMarkdown(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)));
   });
   ipcMain.handle("command:export-markdown", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return false;
     const exportPath = await chooseMarkdownExportPath(markdownExportFileName(session.displayTitle || session.originalTitle || session.rawId));
     if (!exportPath) return false;
-    await fs.writeFile(exportPath, formatSessionMarkdown(session, store.getAllMessages(sessionKey)), "utf-8");
+    await fs.writeFile(exportPath, formatSessionMarkdown(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)), "utf-8");
     return true;
   });
   ipcMain.handle("command:copy-plain", (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return;
-    clipboard.writeText(formatSessionPlainText(session, store.getAllMessages(sessionKey)));
+    clipboard.writeText(formatSessionPlainText(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)));
   });
 }
 

@@ -9,6 +9,7 @@ import {
   loadCodexSessions,
   parseCodexSessionMetaLine,
 } from "./session-loader";
+import { TRACE_DETAIL_PREVIEW_MAX_CHARS } from "./trace-detail";
 
 describe("Codex session loading", () => {
   it("extracts id, cwd, originator, first question, and visible messages from a rollout file", () => {
@@ -122,6 +123,114 @@ describe("Codex session loading", () => {
         totalTokens: 1550,
       },
     ]);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("extracts Codex tool calls and execution events as trace events", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-"));
+    const filePath = path.join(dir, "rollout.jsonl");
+    fs.writeFileSync(
+      filePath,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-06-01T10:00:00Z",
+          payload: { id: "codex-trace-1", cwd: "/repo" },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-01T10:01:00Z",
+          payload: { type: "message", role: "user", content: [{ type: "input_text", text: "列一下文件" }] },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-01T10:02:00Z",
+          payload: {
+            type: "function_call",
+            name: "shell_command",
+            call_id: "call-1",
+            arguments: JSON.stringify({ command: "ls -la", workdir: "/repo" }),
+          },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-01T10:03:00Z",
+          payload: { type: "function_call_output", call_id: "call-1", output: "total 8" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-01T10:04:00Z",
+          payload: {
+            type: "exec_command_end",
+            call_id: "call-1",
+            command: "ls -la",
+            cwd: "/repo",
+            exit_code: 0,
+            stdout: "total 8",
+            stderr: "",
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-01T10:05:00Z",
+          payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1 } } },
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadCodexSessionFile(filePath);
+
+    expect(loaded?.traceEvents).toHaveLength(2);
+    expect(loaded?.traceEvents?.[0]).toMatchObject({
+      kind: "tool_call",
+      source: "codex",
+      title: "shell_command · ls -la",
+      callId: "call-1",
+    });
+    expect(loaded?.traceEvents?.[1]).toMatchObject({
+      kind: "event",
+      source: "codex",
+      eventType: "exec_command_end",
+      title: "shell · ls -la",
+      callId: "call-1",
+      status: "success",
+    });
+    expect(loaded?.traceEvents?.[1].detail).toContain("total 8");
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("caps large Codex trace details during loading", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-"));
+    const filePath = path.join(dir, "rollout.jsonl");
+    const stdout = "x".repeat(TRACE_DETAIL_PREVIEW_MAX_CHARS + 50);
+    fs.writeFileSync(
+      filePath,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-06-01T10:00:00Z",
+          payload: { id: "codex-trace-large", cwd: "/repo" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-01T10:01:00Z",
+          payload: {
+            type: "exec_command_end",
+            command: "npm test",
+            exit_code: 0,
+            stdout,
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadCodexSessionFile(filePath);
+    const detail = loaded?.traceEvents?.[0]?.detail || "";
+
+    expect(detail.length).toBeLessThanOrEqual(TRACE_DETAIL_PREVIEW_MAX_CHARS);
+    expect(detail).toContain("Indexed preview truncated");
 
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -309,6 +418,50 @@ describe("Claude session loading", () => {
         totalTokens: 1360,
       },
     ]);
+
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+  });
+
+  it("extracts Claude tool_use and tool_result blocks as trace events", () => {
+    const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-"));
+    const projectDir = path.join(claudeDir, "projects", "-repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, "claude-trace-1.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-06-01T10:01:00Z",
+          cwd: "/repo",
+          sessionId: "claude-trace-1",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "我先读文件" },
+              { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "/repo/src/App.tsx" } },
+              { type: "tool_result", tool_use_id: "tool-1", content: "export function App() {}" },
+            ],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadClaudeCliSessions(claudeDir);
+
+    expect(loaded[0].messages.map((message) => message.content)).toEqual(["我先读文件"]);
+    expect(loaded[0].traceEvents).toHaveLength(2);
+    expect(loaded[0].traceEvents?.[0]).toMatchObject({
+      kind: "tool_call",
+      source: "claude",
+      title: "Read · /repo/src/App.tsx",
+      callId: "tool-1",
+    });
+    expect(loaded[0].traceEvents?.[1]).toMatchObject({
+      kind: "tool_result",
+      source: "claude",
+      callId: "tool-1",
+    });
+    expect(loaded[0].traceEvents?.[1].detail).toContain("export function App");
 
     fs.rmSync(claudeDir, { recursive: true, force: true });
   });

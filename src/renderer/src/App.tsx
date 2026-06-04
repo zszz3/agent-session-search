@@ -61,6 +61,7 @@ import type {
   SessionSource,
   SessionStats,
   SessionStatsPeriod,
+  SessionTraceEvent,
   UsageQuotaCard,
   UsageQuotaSnapshot,
 } from "../../core/types";
@@ -138,6 +139,8 @@ const LIVE_STATUS_FILTERS: Array<{ label: string; value: LiveStatusFilter }> = [
 ];
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
+const INITIAL_SESSION_LIMIT = 30;
+const SESSION_PAGE_SIZE = 30;
 const INITIAL_MESSAGE_LIMIT = 20;
 const MESSAGE_PAGE_SIZE = 80;
 
@@ -261,6 +264,8 @@ export function App(): ReactElement {
   const [visibility, setVisibility] = useState<ViewMode>("default");
   const [sortBy, setSortBy] = useState<SessionSortBy>("created");
   const [liveStatus, setLiveStatus] = useState<LiveStatusFilter>("all");
+  const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_LIMIT);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -276,6 +281,7 @@ export function App(): ReactElement {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionSearchResult | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
+  const [traceEvents, setTraceEvents] = useState<SessionTraceEvent[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -301,6 +307,10 @@ export function App(): ReactElement {
   const detailLoadSeqRef = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const t = useCallback((en: string, zh: string) => localize(language, en, zh), [language]);
+  const searchScopeKey = useMemo(
+    () => JSON.stringify([query, source, tag ?? "", projectPath ?? "", visibility, sortBy]),
+    [query, source, tag, projectPath, visibility, sortBy],
+  );
 
   const load = useCallback(async () => {
     const requestId = ++loadSeqRef.current;
@@ -311,23 +321,25 @@ export function App(): ReactElement {
       projectPath,
       visibility,
       sortBy,
-      limit: 300,
+      limit: sessionLimit + 1,
     };
-    const [nextResults, nextTags, nextProjects, nextStats] = await Promise.all([
+    const [rawResults, nextTags, nextProjects, nextStats] = await Promise.all([
       window.sessionSearch.searchSessions(options),
       window.sessionSearch.listTags(),
       window.sessionSearch.listProjects(),
       window.sessionSearch.getStats({ period: statsPeriod }),
     ]);
     if (requestId !== loadSeqRef.current) return;
+    const nextResults = rawResults.slice(0, sessionLimit);
     setResults(nextResults);
+    setHasMoreSessions(rawResults.length > sessionLimit);
     setTags(nextTags);
     setProjects(nextProjects);
     setStats(nextStats);
     setSelectedKey((current) =>
       current && !nextResults.some((session) => session.sessionKey === current) ? null : current,
     );
-  }, [query, source, tag, projectPath, visibility, sortBy, statsPeriod]);
+  }, [query, source, tag, projectPath, visibility, sortBy, sessionLimit, statsPeriod]);
 
   const refreshStats = useCallback(async () => {
     setStatsRefreshing(true);
@@ -390,6 +402,11 @@ export function App(): ReactElement {
       });
     }
   }, []);
+
+  useEffect(() => {
+    setSessionLimit(INITIAL_SESSION_LIMIT);
+    setHasMoreSessions(false);
+  }, [searchScopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -609,12 +626,14 @@ export function App(): ReactElement {
     setContextMenu(null);
     setDetail(session);
     setMessages([]);
+    setTraceEvents([]);
     setMessagesLoading(true);
 
     const sessionKey = session.sessionKey;
-    const [fresh, loadedMessages] = await Promise.all([
+    const [fresh, loadedMessages, loadedTraceEvents] = await Promise.all([
       window.sessionSearch.getSession(sessionKey),
       window.sessionSearch.getMessages(sessionKey, 0, INITIAL_MESSAGE_LIMIT),
+      window.sessionSearch.getTraceEvents(sessionKey),
     ]);
     if (requestId !== detailLoadSeqRef.current) return;
     if (!fresh) {
@@ -623,6 +642,7 @@ export function App(): ReactElement {
     }
     setDetail(fresh);
     setMessages(loadedMessages);
+    setTraceEvents(loadedTraceEvents);
     setMessagesLoading(false);
   }
 
@@ -630,6 +650,7 @@ export function App(): ReactElement {
     detailLoadSeqRef.current++;
     setDetail(null);
     setMessages([]);
+    setTraceEvents([]);
     setMessagesLoading(false);
   }
 
@@ -1117,7 +1138,11 @@ export function App(): ReactElement {
 
         <div className="result-count">
           <span>
-            {displayedResults.length === results.length
+            {hasMoreSessions
+              ? displayedResults.length === results.length
+                ? t(`${results.length}+ sessions`, `${results.length}+ 个会话`)
+                : t(`${displayedResults.length} of ${results.length}+ sessions`, `${displayedResults.length} / ${results.length}+ 个会话`)
+              : displayedResults.length === results.length
               ? t(`${results.length} sessions`, `${results.length} 个会话`)
               : t(`${displayedResults.length} of ${results.length} sessions`, `${displayedResults.length} / ${results.length} 个会话`)}
           </span>
@@ -1143,7 +1168,13 @@ export function App(): ReactElement {
               }}
             />
           ))}
-          {displayedResults.length === 0 ? <div className="empty">{t("No sessions found.", "没有找到会话。")}</div> : null}
+          {displayedResults.length === 0 && !hasMoreSessions ? <div className="empty">{t("No sessions found.", "没有找到会话。")}</div> : null}
+          {hasMoreSessions ? (
+            <button className="load-more-sessions" onClick={() => setSessionLimit((current) => current + SESSION_PAGE_SIZE)}>
+              <ChevronDown size={14} />
+              {t(`Load ${SESSION_PAGE_SIZE} more`, `再加载 ${SESSION_PAGE_SIZE} 个`)}
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -1151,6 +1182,7 @@ export function App(): ReactElement {
         <DetailPanel
           session={detail}
           messages={messages}
+          traceEvents={traceEvents}
           loading={messagesLoading}
           actionStatus={actionStatus}
           query={query}
@@ -1705,9 +1737,58 @@ function SessionRow({
   );
 }
 
+type ConversationTimelineItem =
+  | { kind: "message"; key: string; timestampMs: number | null; order: number; message: SessionMessage }
+  | { kind: "trace"; key: string; timestampMs: number | null; order: number; event: SessionTraceEvent };
+
+function timestampMs(timestamp: string): number | null {
+  if (!timestamp) return null;
+  const parsed = new Date(timestamp).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function conversationTimeline(messages: SessionMessage[], traceEvents: SessionTraceEvent[]): ConversationTimelineItem[] {
+  const messageTimes = messages.map((message) => timestampMs(message.timestamp)).filter((time): time is number => time !== null);
+  const maxMessageTime = messageTimes.length > 0 ? Math.max(...messageTimes) : null;
+  const visibleTraceEvents =
+    messages.length === 0
+      ? traceEvents
+      : traceEvents.filter((event) => {
+          const time = timestampMs(event.timestamp);
+          return time === null || maxMessageTime === null || time <= maxMessageTime;
+        });
+
+  const items: ConversationTimelineItem[] = [
+    ...messages.map((message) => ({
+      kind: "message" as const,
+      key: `message:${message.index}`,
+      timestampMs: timestampMs(message.timestamp),
+      order: message.index * 2,
+      message,
+    })),
+    ...visibleTraceEvents.map((event) => ({
+      kind: "trace" as const,
+      key: `trace:${event.index}`,
+      timestampMs: timestampMs(event.timestamp),
+      order: event.index * 2 + 1,
+      event,
+    })),
+  ];
+
+  return items.sort((a, b) => {
+    if (a.timestampMs !== null && b.timestampMs !== null && a.timestampMs !== b.timestampMs) {
+      return a.timestampMs - b.timestampMs;
+    }
+    if (a.timestampMs !== null && b.timestampMs === null) return -1;
+    if (a.timestampMs === null && b.timestampMs !== null) return 1;
+    return a.order - b.order;
+  });
+}
+
 function DetailPanel({
   session,
   messages,
+  traceEvents,
   loading,
   actionStatus,
   query,
@@ -1732,6 +1813,7 @@ function DetailPanel({
 }: {
   session: SessionSearchResult;
   messages: SessionMessage[];
+  traceEvents: SessionTraceEvent[];
   loading: boolean;
   actionStatus: ActionStatus | null;
   query: string;
@@ -1761,6 +1843,7 @@ function DetailPanel({
   const actionRunning = actionStatus?.kind === "running";
   const l = (en: string, zh: string) => localize(language, en, zh);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const timelineItems = useMemo(() => conversationTimeline(messages, traceEvents), [messages, traceEvents]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1822,6 +1905,7 @@ function DetailPanel({
           <p>
             {session.projectPath || l("No project", "无项目")} · {new Date(session.timestamp).toLocaleString()} · {l(`${messages.length} messages`, `${messages.length} 条消息`)} ·{" "}
             {l(`${formatTokenCount(session.tokenUsage.totalTokens)} tokens`, `${formatTokenCount(session.tokenUsage.totalTokens)} token`)}
+            {traceEvents.length > 0 ? <> · {l(`${traceEvents.length} trace events`, `${traceEvents.length} 条轨迹`)}</> : null}
           </p>
         </div>
         <div className="detail-header-actions">
@@ -1885,8 +1969,12 @@ function DetailPanel({
           <h3>{l("Full Conversation", "完整会话")}</h3>
           {loading ? <div className="loading-state">{l("Loading conversation...", "正在加载会话...")}</div> : null}
           {!loading && messages.length === 0 ? <div className="loading-state">{l("No visible messages indexed for this session.", "这个会话没有可见消息被索引。")}</div> : null}
-          {messages.map((message) => (
-            <MessageBlock key={message.index} message={message} query={query} language={language} />
+          {timelineItems.map((item) => (
+            item.kind === "message" ? (
+              <MessageBlock key={item.key} message={item.message} query={query} language={language} />
+            ) : (
+              <TraceEventBlock key={item.key} event={item.event} language={language} />
+            )
           ))}
           {!loading && messages.length < session.messageCount ? (
             <button className="show-more" onClick={onShowMore}>
@@ -1918,6 +2006,39 @@ function MessageBlock({ message, query, language }: { message: SessionMessage; q
       </div>
       <pre>{content}</pre>
     </div>
+  );
+}
+
+function traceStatusSymbol(event: SessionTraceEvent): string {
+  if (event.kind === "tool_call") return "→";
+  if (event.status === "success") return "✓";
+  if (event.status === "failure") return "✗";
+  return "•";
+}
+
+function TraceEventBlock({ event, language }: { event: SessionTraceEvent; language: LanguageMode }): ReactElement {
+  const detail = useMemo(() => {
+    if (!event.detail) return localize(language, "No detail captured.", "没有记录详情。");
+    return event.detail.length > 2400
+      ? `${event.detail.slice(0, 2400)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`
+      : event.detail;
+  }, [event.detail, language]);
+
+  return (
+    <details className={`trace-event ${event.kind} ${event.status || "unknown"}`}>
+      <summary className="trace-head">
+        <strong>
+          <span className="trace-symbol">{traceStatusSymbol(event)}</span>
+          {event.title}
+        </strong>
+        <span>{formatMessageTime(event.timestamp)}</span>
+      </summary>
+      <div className="trace-meta">
+        {event.eventType ? <span>{event.eventType}</span> : null}
+        {event.callId ? <span>{event.callId}</span> : null}
+      </div>
+      <pre>{detail}</pre>
+    </details>
   );
 }
 

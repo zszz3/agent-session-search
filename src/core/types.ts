@@ -16,6 +16,20 @@ export interface SessionMessage {
   index: number;
 }
 
+export type SessionTraceKind = "tool_call" | "tool_result" | "event";
+
+export interface SessionTraceEvent {
+  index: number;
+  kind: SessionTraceKind;
+  source: SessionFormat;
+  title: string;
+  detail: string;
+  timestamp: string;
+  callId?: string | null;
+  eventType?: string | null;
+  status?: "success" | "failure" | "unknown" | null;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -50,6 +64,7 @@ export interface LoadedSession {
   session: IndexedSession;
   messages: SessionMessage[];
   tokenEvents?: TokenUsageEvent[];
+  traceEvents?: SessionTraceEvent[];
 }
 
 export interface SearchOptions {
@@ -175,7 +190,17 @@ export interface ClaudeConversationLine {
   gitBranch?: string;
   message?: {
     role: "user" | "assistant";
-    content?: string | Array<{ type?: string; text?: string }>;
+    content?:
+      | string
+      | Array<{
+          type?: string;
+          text?: string;
+          id?: string;
+          name?: string;
+          input?: unknown;
+          tool_use_id?: string;
+          content?: unknown;
+        }>;
   };
 }
 
@@ -199,6 +224,27 @@ export interface CodexConversationLine {
       repository_url?: string;
     };
     originator?: string;
+    name?: string;
+    arguments?: unknown;
+    call_id?: string;
+    output?: unknown;
+    command?: string;
+    parsed_cmd?: unknown;
+    stdout?: string;
+    stderr?: string;
+    aggregated_output?: string;
+    formatted_output?: string;
+    exit_code?: number;
+    status?: string;
+    success?: boolean;
+    changes?: unknown;
+    invocation?: unknown;
+    plugin_id?: string;
+    result?: unknown;
+    query?: string;
+    action?: unknown;
+    message?: string;
+    codex_error_info?: unknown;
   };
 }
 

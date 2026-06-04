@@ -14,6 +14,7 @@ import type {
   SessionSearchResult,
   SessionStats,
   SessionStatsOptions,
+  SessionTraceEvent,
   UsageQuotaSnapshot,
 } from "../core/types";
 
@@ -23,6 +24,7 @@ const api = {
   getSession: (sessionKey: string): Promise<SessionSearchResult | null> => ipcRenderer.invoke("session:get", sessionKey),
   getMessages: (sessionKey: string, offset?: number, limit?: number): Promise<SessionMessage[]> =>
     ipcRenderer.invoke("session:messages", sessionKey, offset, limit),
+  getTraceEvents: (sessionKey: string): Promise<SessionTraceEvent[]> => ipcRenderer.invoke("session:trace-events", sessionKey),
   getLiveSessions: (): Promise<LiveSessionSnapshot> => ipcRenderer.invoke("sessions:live"),
   getStats: (options?: SessionStatsOptions): Promise<SessionStats> => ipcRenderer.invoke("stats:get", options),
   getQuotas: (): Promise<UsageQuotaSnapshot> => ipcRenderer.invoke("quota:get"),

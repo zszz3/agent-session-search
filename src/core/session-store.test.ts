@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInMemoryStore } from "./session-store";
-import type { IndexedSession, SessionMessage } from "./types";
+import { TRACE_DETAIL_PREVIEW_MAX_CHARS } from "./trace-detail";
+import type { IndexedSession, SessionMessage, SessionTraceEvent } from "./types";
 
 function sampleSession(overrides: Partial<IndexedSession> = {}): IndexedSession {
   return {
@@ -23,6 +24,29 @@ function sampleSession(overrides: Partial<IndexedSession> = {}): IndexedSession 
 const messages: SessionMessage[] = [
   { role: "user", content: "修复登录态失效", timestamp: "2026-06-01T10:00:00Z", index: 0 },
   { role: "assistant", content: "refresh token expired after 30 minutes", timestamp: "2026-06-01T10:01:00Z", index: 1 },
+];
+
+const traceEvents: SessionTraceEvent[] = [
+  {
+    index: 0,
+    kind: "tool_call",
+    source: "codex",
+    title: "shell_command · npm test",
+    detail: '{\n  "command": "npm test"\n}',
+    timestamp: "2026-06-01T10:02:00Z",
+    callId: "call-1",
+  },
+  {
+    index: 1,
+    kind: "event",
+    source: "codex",
+    eventType: "exec_command_end",
+    title: "shell · npm test",
+    detail: "stdout:\npass",
+    timestamp: "2026-06-01T10:03:00Z",
+    callId: "call-1",
+    status: "success",
+  },
 ];
 
 describe("SessionStore", () => {
@@ -505,5 +529,26 @@ describe("SessionStore", () => {
       "refresh token expired after 30 minutes",
     ]);
     expect(store.getMessages("codex:abc", 2, 2).map((message) => message.content)).toEqual(["third"]);
+  });
+
+  it("stores and loads trace events for detail views", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(sampleSession(), messages, [], traceEvents);
+
+    expect(store.getTraceEvents("codex:abc")).toEqual(traceEvents);
+
+    store.upsertIndexedSession(sampleSession(), messages, [], [traceEvents[0]]);
+    expect(store.getTraceEvents("codex:abc")).toEqual([traceEvents[0]]);
+  });
+
+  it("stores trace detail as a bounded indexed preview", () => {
+    const store = createInMemoryStore();
+    const longDetail = "x".repeat(TRACE_DETAIL_PREVIEW_MAX_CHARS + 25);
+    store.upsertIndexedSession(sampleSession(), messages, [], [{ ...traceEvents[0], detail: longDetail }]);
+
+    const [stored] = store.getTraceEvents("codex:abc");
+    expect(stored.detail.length).toBeLessThanOrEqual(TRACE_DETAIL_PREVIEW_MAX_CHARS);
+    expect(stored.detail).toContain("Indexed preview truncated");
+    expect(stored.detail).toContain("characters omitted");
   });
 });

@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from "node:sqlite";
+import { truncateTraceDetail } from "./trace-detail";
 import type {
   IndexedSession,
   ProjectSummary,
@@ -12,6 +13,7 @@ import type {
   SessionStatsSummary,
   SessionSortBy,
   SessionSource,
+  SessionTraceEvent,
   TokenUsage,
   TokenUsageEvent,
 } from "./types";
@@ -54,6 +56,18 @@ interface SessionRow {
   total_tokens: number;
 }
 
+interface TraceEventRow {
+  trace_index: number;
+  kind: SessionTraceEvent["kind"];
+  source: SessionTraceEvent["source"];
+  title: string;
+  detail: string;
+  timestamp: string;
+  call_id: string | null;
+  event_type: string | null;
+  status: SessionTraceEvent["status"] | null;
+}
+
 export class SessionStore {
   private readonly db: Db;
 
@@ -77,7 +91,12 @@ export class SessionStore {
     }
   }
 
-  upsertIndexedSession(session: IndexedSession, messages: SessionMessage[], tokenEvents: TokenUsageEvent[] = []): void {
+  upsertIndexedSession(
+    session: IndexedSession,
+    messages: SessionMessage[],
+    tokenEvents: TokenUsageEvent[] = [],
+    traceEvents: SessionTraceEvent[] = [],
+  ): void {
     const normalizedTokenEvents = tokenEvents.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
     const tokenUsage = normalizedTokenEvents.length > 0 ? tokenUsageFromEvents(normalizedTokenEvents) : normalizeTokenUsage(session.tokenUsage);
     this.transaction(() => {
@@ -133,6 +152,7 @@ export class SessionStore {
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
+      this.db.prepare("DELETE FROM trace_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(session.sessionKey);
 
       const insertMessage = this.db.prepare(
@@ -161,6 +181,30 @@ export class SessionStore {
           event.cachedInputTokens,
           event.reasoningOutputTokens,
           event.totalTokens,
+        );
+      }
+
+      const insertTraceEvent = this.db.prepare(
+        `
+        INSERT INTO trace_events (
+          session_key, trace_index, kind, source, title, detail,
+          timestamp, call_id, event_type, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      );
+      for (const event of traceEvents) {
+        insertTraceEvent.run(
+          session.sessionKey,
+          event.index,
+          event.kind,
+          event.source,
+          event.title,
+          truncateTraceDetail(event.detail),
+          event.timestamp,
+          event.callId ?? null,
+          event.eventType ?? null,
+          event.status ?? null,
         );
       }
 
@@ -289,6 +333,31 @@ export class SessionStore {
     return this.getMessages(sessionKey, 0, 100_000);
   }
 
+  getTraceEvents(sessionKey: string): SessionTraceEvent[] {
+    return (
+      this.db
+        .prepare(
+          `
+          SELECT trace_index, kind, source, title, detail, timestamp, call_id, event_type, status
+          FROM trace_events
+          WHERE session_key = ?
+          ORDER BY trace_index
+        `,
+        )
+        .all(sessionKey) as unknown as TraceEventRow[]
+    ).map((row) => ({
+      index: row.trace_index,
+      kind: row.kind,
+      source: row.source,
+      title: row.title,
+      detail: row.detail,
+      timestamp: row.timestamp,
+      ...(row.call_id ? { callId: row.call_id } : {}),
+      ...(row.event_type ? { eventType: row.event_type } : {}),
+      ...(row.status ? { status: row.status } : {}),
+    }));
+  }
+
   getStats(options: SessionStatsOptions = {}, now = Date.now()): SessionStats {
     const range = resolveStatsRange(options, now);
     const summariesBySource = new Map<SessionSource, SessionStatsSummary>();
@@ -364,6 +433,7 @@ export class SessionStore {
     this.transaction(() => {
       this.db.prepare("DELETE FROM messages").run();
       this.db.prepare("DELETE FROM token_events").run();
+      this.db.prepare("DELETE FROM trace_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
       this.db
         .prepare(
@@ -448,6 +518,21 @@ export class SessionStore {
         FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS trace_events (
+        session_key TEXT NOT NULL,
+        trace_index INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        call_id TEXT,
+        event_type TEXT,
+        status TEXT,
+        PRIMARY KEY (session_key, trace_index),
+        FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS tags (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE
@@ -482,6 +567,8 @@ export class SessionStore {
         ON token_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_token_events_dedupe
         ON token_events(dedupe_key, total_tokens, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_trace_events_session
+        ON trace_events(session_key, trace_index);
     `);
     this.addColumnIfMissing("sessions", "favorited", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
