@@ -9,7 +9,9 @@
   "bin": {
     "agent-session-search": "bin/agent-session-search.cjs",
     "agent-session-search-claude-statusline": "bin/claude-statusline-snapshot.cjs",
-    "agent-session-search-setup-claude-statusline": "bin/setup-claude-statusline.cjs"
+    "agent-session-search-setup-claude-statusline": "bin/setup-claude-statusline.cjs",
+    "agent-session-search-skill-usage": "bin/skill-usage-record.cjs",
+    "agent-session-search-setup-skill-usage-hook": "bin/setup-skill-usage-hook.cjs"
   },
   "engines": {
     "node": ">=22.13.0"

@@ -80,7 +80,7 @@ import {
   type SidebarSectionsState,
 } from "./sidebar-sections";
 import { LANGUAGE_STORAGE_KEY, localize, readInitialLanguage, type LanguageMode } from "./language";
-import { filterInstalledSkills, skillSourceLabel, type SkillSourceFilter } from "./skill-manager";
+import { filterInstalledSkills, sortInstalledSkills, skillSourceLabel, type SkillSourceFilter } from "./skill-manager";
 import { readInitialTheme, THEME_STORAGE_KEY, type ThemeMode } from "./theme";
 
 const SOURCE_LABEL: Record<SessionSource, string> = {
@@ -290,6 +290,8 @@ export function App(): ReactElement {
   const [skillsFeedback, setSkillsFeedback] = useState<SkillsFeedback>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [settingsFeedback, setSettingsFeedback] = useState<SettingsFeedback>(null);
+  const [skillHookInstalled, setSkillHookInstalled] = useState<boolean | null>(null);
+  const [skillHookBusy, setSkillHookBusy] = useState(false);
   const [pendingPersonalSources, setPendingPersonalSources] = useState<{ claude: boolean; codex: boolean; codebuddy: boolean }>({
     claude: false,
     codex: false,
@@ -401,6 +403,29 @@ export function App(): ReactElement {
   useEffect(() => {
     if (skillsOpen) void loadSkills();
   }, [skillsOpen, loadSkills]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    void window.sessionSearch.getSkillUsageHookStatus().then(setSkillHookInstalled).catch(() => setSkillHookInstalled(false));
+  }, [settingsOpen]);
+
+  const toggleSkillUsageHook = useCallback(async (enabled: boolean) => {
+    setSkillHookBusy(true);
+    setSettingsFeedback({ kind: "running", message: enabled ? t("Enabling skill usage tracking...", "正在开启 Skill 使用统计...") : t("Disabling skill usage tracking...", "正在关闭 Skill 使用统计...") });
+    try {
+      if (enabled) await window.sessionSearch.installSkillUsageHook();
+      else await window.sessionSearch.uninstallSkillUsageHook();
+      setSkillHookInstalled(await window.sessionSearch.getSkillUsageHookStatus());
+      if (skillsOpen) void loadSkills();
+      const message = enabled ? t("Skill usage tracking on.", "已开启 Skill 使用统计。") : t("Skill usage tracking off.", "已关闭 Skill 使用统计。");
+      setSettingsFeedback({ kind: "success", message });
+      window.setTimeout(() => setSettingsFeedback((current) => (current?.kind === "success" && current.message === message ? null : current)), 1600);
+    } catch (error) {
+      setSettingsFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setSkillHookBusy(false);
+    }
+  }, [skillsOpen, loadSkills, t]);
 
   useEffect(() => {
     void refreshLiveSessions();
@@ -1262,6 +1287,9 @@ export function App(): ReactElement {
           onLanguageChange={setLanguage}
           onDefaultTerminalChange={(terminal) => void updateDefaultTerminal(terminal)}
           onGlobalShortcutChange={(shortcut) => void updateGlobalShortcut(shortcut)}
+          skillHookInstalled={skillHookInstalled}
+          skillHookBusy={skillHookBusy}
+          onSkillHookChange={(enabled) => void toggleSkillUsageHook(enabled)}
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}
@@ -1312,10 +1340,12 @@ function SkillsDialog({
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>("all");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
-  const filteredSkills = useMemo(
-    () => filterInstalledSkills(snapshot.skills, query, sourceFilter),
-    [snapshot.skills, query, sourceFilter],
-  );
+  // Usage counts only apply to Claude Code, so sort by most-used only when that
+  // filter is active; every other filter keeps the default alphabetical order.
+  const filteredSkills = useMemo(() => {
+    const filtered = filterInstalledSkills(snapshot.skills, query, sourceFilter);
+    return sourceFilter === "claude" ? sortInstalledSkills(filtered, "usage") : filtered;
+  }, [snapshot.skills, query, sourceFilter]);
   const selectedSkill =
     filteredSkills.find((skill) => skill.id === selectedSkillId) ??
     filteredSkills[0] ??
@@ -1401,6 +1431,7 @@ function SkillsDialog({
                   >
                     <span className="skill-item-head">
                       <strong>{skill.name}</strong>
+                      {skill.usageCount ? <span className="skill-usage-count" title={l("Times used", "使用次数")}>{formatCompactNumber(skill.usageCount)}</span> : null}
                       <SkillSourceBadge source={skill.source} language={language} />
                     </span>
                     <span className="skill-item-desc">{skill.description || l("No description", "无描述")}</span>
@@ -1436,6 +1467,14 @@ function SkillsDialog({
                   <div>
                     <dt>{l("Agent", "Agent")}</dt>
                     <dd>{selectedSkill.agent === "codex" ? "Codex" : "Claude Code"}</dd>
+                  </div>
+                  <div>
+                    <dt>{l("Used", "使用次数")}</dt>
+                    <dd>
+                      {selectedSkill.usageCount
+                        ? l(`${selectedSkill.usageCount} times`, `${selectedSkill.usageCount} 次`) + (selectedSkill.lastUsedAt ? ` · ${new Date(selectedSkill.lastUsedAt).toLocaleString()}` : "")
+                        : l("Not yet", "暂无")}
+                    </dd>
                   </div>
                   <div>
                     <dt>{l("Updated", "更新时间")}</dt>
@@ -2379,6 +2418,9 @@ function SettingsDialog({
   onLanguageChange,
   onDefaultTerminalChange,
   onGlobalShortcutChange,
+  skillHookInstalled,
+  skillHookBusy,
+  onSkillHookChange,
   onClose,
 }: {
   settings: AppSettings | null;
@@ -2390,13 +2432,16 @@ function SettingsDialog({
   onLanguageChange: (language: LanguageMode) => void;
   onDefaultTerminalChange: (terminal: AppSettings["defaultTerminal"]) => void;
   onGlobalShortcutChange: (shortcut: AppSettings["globalShortcut"]) => void;
+  skillHookInstalled: boolean | null;
+  skillHookBusy: boolean;
+  onSkillHookChange: (enabled: boolean) => void;
   onClose: () => void;
 }): ReactElement {
   const defaultTerminal = settings?.defaultTerminal ?? (RUNTIME_PLATFORM === "win32" ? "WindowsTerminal" : "Terminal");
   const globalShortcut = settings?.globalShortcut ?? (RUNTIME_PLATFORM === "win32" ? "Ctrl+Alt+Space" : "Alt+Space");
   const saving = feedback?.kind === "running";
   const l = (en: string, zh: string) => localize(language, en, zh);
-  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "sources" | "usage" | "appearance">("terminal");
+  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "sources" | "usage" | "skills" | "appearance">("terminal");
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -2424,6 +2469,10 @@ function SettingsDialog({
             <button className={activeSection === "usage" ? "active" : ""} onClick={() => setActiveSection("usage")}>
               <Gauge size={15} />
               <span>{l("Usage limits", "剩余额度")}</span>
+            </button>
+            <button className={activeSection === "skills" ? "active" : ""} onClick={() => setActiveSection("skills")}>
+              <PackageSearch size={15} />
+              <span>{l("Skill usage", "Skill 统计")}</span>
             </button>
             <button className={activeSection === "appearance" ? "active" : ""} onClick={() => setActiveSection("appearance")}>
               <Sun size={15} />
@@ -2560,6 +2609,32 @@ function SettingsDialog({
                     checked={Boolean(settings?.hideClaudeQuota)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ hideClaudeQuota: event.currentTarget.checked })}
+                  />
+                </label>
+              </section>
+            ) : null}
+            {activeSection === "skills" ? (
+              <section className="settings-pane">
+                <header className="settings-pane-head">
+                  <h3>{l("Skill usage", "Skill 统计")}</h3>
+                  <p>{l("Count how often each skill is used so the Skills panel can sort by most used.", "统计每个 skill 的使用次数，让 Skills 面板可以按使用最多排序。")}</p>
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Track skill usage", "统计 Skill 使用次数")}</span>
+                    <span className="settings-field-sub">
+                      {l(
+                        "Installs a PostToolUse hook in ~/.claude/settings.json. Claude Code only — Codex and the Claude desktop chat app are not covered.",
+                        "在 ~/.claude/settings.json 安装 PostToolUse hook。仅 Claude Code 生效——Codex 和 Claude 桌面聊天端不支持。",
+                      )}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(skillHookInstalled)}
+                    disabled={skillHookInstalled === null || skillHookBusy}
+                    onChange={(event) => onSkillHookChange(event.currentTarget.checked)}
                   />
                 </label>
               </section>

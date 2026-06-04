@@ -15,6 +15,7 @@ import Store from "electron-store";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   mergeApiConfigWithProfileDefaults,
   mergeClaudeApiConfigWithProfileDefaults,
@@ -40,7 +41,8 @@ import { focusLiveSessionTerminal } from "../core/session-focus";
 import { loadLiveSessionSnapshot } from "../core/session-activity";
 import { routeResumeSession } from "../core/resume-router";
 import { SessionStore } from "../core/session-store";
-import { listInstalledSkills } from "../core/skill-manager";
+import { listInstalledSkills, type InstalledSkillsSnapshot } from "../core/skill-manager";
+import { loadSkillUsage, usageForSkill } from "../core/skill-usage";
 import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
@@ -48,6 +50,41 @@ import type { SearchOptions, SessionStatsOptions } from "../core/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
+
+// The skill-usage hook installer is a self-contained CommonJS script in bin/
+// (sibling of out/), shared with the global-install path. Load it lazily via a
+// runtime require so the bundler leaves it as an external dependency, and the
+// hook command it writes points back at bin/skill-usage-record.cjs.
+const requireCjs = createRequire(import.meta.url);
+const SKILL_USAGE_HOOK_SETUP_PATH = path.join(__dirname, "../../bin/setup-skill-usage-hook.cjs");
+interface SkillUsageHookSetup {
+  installSkillUsageHook(options?: Record<string, unknown>): { status: string; detail?: string };
+  uninstallSkillUsageHook(options?: Record<string, unknown>): { status: string; detail?: string };
+  skillUsageHookStatus(options?: Record<string, unknown>): { installed: boolean };
+}
+function loadSkillUsageHookSetup(): SkillUsageHookSetup {
+  return requireCjs(SKILL_USAGE_HOOK_SETUP_PATH) as SkillUsageHookSetup;
+}
+
+// Merges skill-usage counts (from the hook log) and hook-install state onto the
+// scanned skill list so the renderer can sort by most-used.
+function buildSkillsSnapshot(): InstalledSkillsSnapshot {
+  const snapshot = listInstalledSkills({ projectDirs: [process.cwd()] });
+  const usage = loadSkillUsage();
+  const skills = snapshot.skills.map((skill) => {
+    const stat = usageForSkill(usage, skill.name);
+    return { ...skill, usageCount: stat?.count ?? 0, lastUsedAt: stat?.lastUsedAt ?? null };
+  });
+
+  let hookInstalled = false;
+  try {
+    hookInstalled = loadSkillUsageHookSetup().skillUsageHookStatus().installed;
+  } catch {
+    hookInstalled = false;
+  }
+
+  return { ...snapshot, skills, usage: { hookInstalled, logExists: usage.exists, totalEvents: usage.totalEvents } };
+}
 
 app.setName(PRODUCT_NAME);
 app.setAppUserModelId("dev.zszz3.agent-session-search");
@@ -435,12 +472,29 @@ function registerIpc(): void {
     if (previous.includeCodeBuddyCli && !next.includeCodeBuddyCli) store.deleteSessionsBySource(["codebuddy-cli"]);
     return next;
   });
-  ipcMain.handle("skills:list", () => listInstalledSkills({ projectDirs: [process.cwd()] }));
+  ipcMain.handle("skills:list", () => buildSkillsSnapshot());
   ipcMain.handle("skills:copy-path", (_event, skillPath: string) => {
     clipboard.writeText(skillPath);
   });
   ipcMain.handle("skills:reveal", async (_event, skillPath: string) => {
     await revealInFileManager(skillPath);
+  });
+  ipcMain.handle("skills:usage-hook-status", () => {
+    try {
+      return loadSkillUsageHookSetup().skillUsageHookStatus().installed;
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle("skills:install-usage-hook", () => {
+    const result = loadSkillUsageHookSetup().installSkillUsageHook();
+    if (result.status === "error") throw new Error(result.detail || "Could not configure the skill usage hook.");
+    return result.status;
+  });
+  ipcMain.handle("skills:uninstall-usage-hook", () => {
+    const result = loadSkillUsageHookSetup().uninstallSkillUsageHook();
+    if (result.status === "error") throw new Error(result.detail || "Could not remove the skill usage hook.");
+    return result.status;
   });
   ipcMain.handle("command:copy-resume", (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);

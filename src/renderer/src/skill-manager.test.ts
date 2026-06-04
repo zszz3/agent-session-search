@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledSkill } from "../../core/skill-manager";
-import { filterInstalledSkills } from "./skill-manager";
+import { filterInstalledSkills, sortInstalledSkills } from "./skill-manager";
 
 function skill(overrides: Partial<InstalledSkill> & Pick<InstalledSkill, "name" | "agent" | "source">): InstalledSkill {
   return {
@@ -39,5 +39,17 @@ describe("skill manager renderer data", () => {
     expect(filterInstalledSkills(skills, "review", "all").map((item) => item.name)).toEqual(["review-code"]);
     expect(filterInstalledSkills(skills, "release", "all").map((item) => item.name)).toEqual(["deploy-helper"]);
     expect(filterInstalledSkills(skills, ".claude", "all").map((item) => item.name)).toEqual(["deploy-helper"]);
+  });
+
+  it("sorts by usage, name, or update time", () => {
+    const skills = [
+      skill({ name: "alpha", agent: "claude", source: "claude-user", usageCount: 1, lastUsedAt: 100, mtimeMs: 10 }),
+      skill({ name: "bravo", agent: "claude", source: "claude-user", usageCount: 5, lastUsedAt: 200, mtimeMs: 30 }),
+      skill({ name: "charlie", agent: "claude", source: "claude-user", usageCount: 0, lastUsedAt: null, mtimeMs: 20 }),
+    ];
+
+    expect(sortInstalledSkills(skills, "usage").map((item) => item.name)).toEqual(["bravo", "alpha", "charlie"]);
+    expect(sortInstalledSkills(skills, "name").map((item) => item.name)).toEqual(["alpha", "bravo", "charlie"]);
+    expect(sortInstalledSkills(skills, "updated").map((item) => item.name)).toEqual(["bravo", "charlie", "alpha"]);
   });
 });

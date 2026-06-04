@@ -16,6 +16,17 @@ export interface InstalledSkill {
   rootPath: string;
   markdown: string;
   mtimeMs: number;
+  // Populated from the skill-usage hook log; absent until usage is merged in.
+  usageCount?: number;
+  lastUsedAt?: number | null;
+}
+
+export interface SkillUsageSummary {
+  // Whether the Claude Code PostToolUse hook is installed in ~/.claude/settings.json.
+  hookInstalled: boolean;
+  // Whether the usage log exists yet (skills have been used since install).
+  logExists: boolean;
+  totalEvents: number;
 }
 
 export interface SkillRootStatus {
@@ -30,6 +41,7 @@ export interface InstalledSkillsSnapshot {
   skills: InstalledSkill[];
   roots: SkillRootStatus[];
   scannedAt: number;
+  usage?: SkillUsageSummary;
 }
 
 export interface SkillManagerOptions {
