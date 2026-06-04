@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export type SkillAgent = "codex" | "claude";
-export type SkillSource = "codex-user" | "codex-system" | "codex-shared" | "claude-user" | "claude-project";
+export type SkillSource = "codex-user" | "codex-system" | "codex-shared" | "claude-user" | "claude-project" | "claude-plugin";
 
 export interface InstalledSkill {
   id: string;
@@ -36,6 +36,7 @@ export interface SkillManagerOptions {
   homeDir?: string;
   codexHome?: string;
   projectDirs?: string[];
+  claudePluginsDir?: string;
 }
 
 interface SkillRootConfig {
@@ -74,11 +75,56 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
     skills.push(...rootSkills);
   }
 
+  const pluginsDir = options.claudePluginsDir || path.join(homeDir, ".claude", "plugins");
+  const pluginRoots = collectClaudePluginRoots(pluginsDir);
+  const pluginSkills: InstalledSkill[] = [];
+  for (const root of pluginRoots) {
+    pluginSkills.push(...readSkillsFromRoot(root));
+  }
+  rootStatuses.push({
+    agent: "claude",
+    source: "claude-plugin",
+    path: pluginsDir,
+    exists: fs.existsSync(path.join(pluginsDir, "installed_plugins.json")),
+    skillCount: dedupeSkills(pluginSkills).length,
+  });
+  skills.push(...pluginSkills);
+
   return {
     skills: dedupeSkills(skills).sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source) || a.path.localeCompare(b.path)),
     roots: rootStatuses,
     scannedAt: Date.now(),
   };
+}
+
+function collectClaudePluginRoots(pluginsDir: string): SkillRootConfig[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(pluginsDir, "installed_plugins.json"), "utf8");
+  } catch {
+    return [];
+  }
+
+  let parsed: { plugins?: Record<string, Array<{ installPath?: string }>> };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  const plugins = parsed.plugins;
+  if (!plugins || typeof plugins !== "object") return [];
+
+  const roots: SkillRootConfig[] = [];
+  for (const installs of Object.values(plugins)) {
+    if (!Array.isArray(installs)) continue;
+    for (const install of installs) {
+      const installPath = install?.installPath;
+      if (typeof installPath !== "string" || !installPath) continue;
+      roots.push({ agent: "claude", source: "claude-plugin", path: path.join(installPath, "skills") });
+    }
+  }
+  return roots;
 }
 
 function readSkillsFromRoot(root: SkillRootConfig): InstalledSkill[] {

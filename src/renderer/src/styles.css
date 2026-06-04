@@ -1874,13 +1874,21 @@ select:focus-visible {
   border-radius: 8px;
   background: var(--panel-bg);
   color: var(--text-muted);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.skills-search input {
+.skills-search:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.skills-search input,
+.skills-search input:focus {
   height: 34px;
   padding: 0;
   border: 0;
   border-radius: 0;
+  outline: 0;
   background: transparent;
   box-shadow: none;
 }
@@ -1924,7 +1932,7 @@ select:focus-visible {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
-  padding: 0 14px 12px;
+  padding: 12px 14px;
   overflow-x: auto;
 }
 
@@ -2060,7 +2068,8 @@ select:focus-visible {
 }
 
 .skill-source-badge.claude-user,
-.skill-source-badge.claude-project {
+.skill-source-badge.claude-project,
+.skill-source-badge.claude-plugin {
   background: var(--claude-badge-bg);
   color: var(--claude-badge-text);
 }

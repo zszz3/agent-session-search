@@ -63,6 +63,46 @@ describe("skill manager", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
+  it("includes Claude Code plugin skills from installed_plugins.json", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-plugins-"));
+    const pluginsDir = path.join(homeDir, ".claude", "plugins");
+    const superpowersInstall = path.join(pluginsDir, "cache", "official", "superpowers", "5.1.0");
+    const docsInstall = path.join(pluginsDir, "cache", "official", "document-skills", "abc123");
+    writeSkill(
+      path.join(superpowersInstall, "skills"),
+      "brainstorming",
+      ["---", "name: brainstorming", "description: Explore intent before building", "---", "", "# Brainstorm"].join("\n"),
+    );
+    writeSkill(
+      path.join(docsInstall, "skills"),
+      "pdf",
+      ["---", "name: pdf", "description: Work with PDF files", "---", "", "# PDF"].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(pluginsDir, "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          "superpowers@official": [{ scope: "user", installPath: superpowersInstall }],
+          "document-skills@official": [{ scope: "user", installPath: docsInstall }],
+        },
+      }),
+      "utf8",
+    );
+
+    const snapshot = listInstalledSkills({ homeDir, codexHome: path.join(homeDir, ".codex"), projectDirs: [] });
+
+    expect(snapshot.skills.map((skill) => ({ name: skill.name, agent: skill.agent, source: skill.source }))).toEqual([
+      { name: "brainstorming", agent: "claude", source: "claude-plugin" },
+      { name: "pdf", agent: "claude", source: "claude-plugin" },
+    ]);
+    expect(snapshot.roots).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "claude-plugin", exists: true, skillCount: 2 })]),
+    );
+
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
   it("falls back to directory names and reports missing roots", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-fallback-"));
     const codexHome = path.join(homeDir, ".codex");

@@ -12,6 +12,7 @@ export function skillSourceLabel(source: SkillSource): string {
   if (source === "codex-system") return "Codex System";
   if (source === "codex-shared") return "Shared";
   if (source === "claude-project") return "Project";
+  if (source === "claude-plugin") return "Claude Plugin";
   return "Claude Code";
 }
 
