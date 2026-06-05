@@ -378,7 +378,7 @@ export function App(): ReactElement {
     };
     const [rawResults, nextTags, nextProjects, nextStats] = await Promise.all([
       window.sessionSearch.searchSessions(options),
-      window.sessionSearch.listTags(projectPath),
+      window.sessionSearch.listTags(projectPath && appSettings?.filterTagsByProject ? projectPath : undefined),
       window.sessionSearch.listProjects(),
       window.sessionSearch.getStats({ period: statsPeriod }),
     ]);
@@ -3017,6 +3017,24 @@ function SettingsDialog({
                     ))}
                   </select>
                 </div>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Filter tags by project", "按项目过滤标签")}</span>
+                    <span className="settings-field-sub">
+                      {l(
+                        "When enabled, the Tags sidebar only shows tags from sessions in the selected project.",
+                        "开启后，标签侧栏只显示当前选中项目中的标签。",
+                      )}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.filterTagsByProject)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ filterTagsByProject: event.currentTarget.checked })}
+                  />
+                </label>
               </section>
             ) : null}
             {activeSection === "shortcut" ? (

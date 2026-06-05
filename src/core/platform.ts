@@ -53,6 +53,7 @@ export interface AppSettings {
   includeCodeBuddyCli: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
+  filterTagsByProject: boolean;
   apiConfig: ApiConfig;
   claudeApiConfig: ClaudeApiConfig;
 }
@@ -75,6 +76,7 @@ export const defaultSettings: AppSettings = {
   includeCodeBuddyCli: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
+  filterTagsByProject: true,
   apiConfig: defaultApiConfig,
   claudeApiConfig: defaultClaudeApiConfig,
 };
