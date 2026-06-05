@@ -282,7 +282,23 @@ export class SessionStore {
     this.db.prepare("DELETE FROM tags WHERE name = ?").run(tagName.trim());
   }
 
-  listTags(): string[] {
+  listTags(projectPath?: string): string[] {
+    if (projectPath) {
+      return (
+        this.db
+          .prepare(
+            `
+            SELECT DISTINCT tags.name
+            FROM tags
+            JOIN session_tags ON session_tags.tag_id = tags.id
+            JOIN sessions ON sessions.session_key = session_tags.session_key
+            WHERE sessions.project_path = ?
+            ORDER BY lower(tags.name)
+          `,
+          )
+          .all(projectPath) as Array<{ name: string }>
+      ).map((row) => row.name);
+    }
     return (this.db.prepare("SELECT name FROM tags ORDER BY lower(name)").all() as Array<{ name: string }>).map(
       (row) => row.name,
     );

@@ -378,7 +378,7 @@ export function App(): ReactElement {
     };
     const [rawResults, nextTags, nextProjects, nextStats] = await Promise.all([
       window.sessionSearch.searchSessions(options),
-      window.sessionSearch.listTags(),
+      window.sessionSearch.listTags(projectPath),
       window.sessionSearch.listProjects(),
       window.sessionSearch.getStats({ period: statsPeriod }),
     ]);

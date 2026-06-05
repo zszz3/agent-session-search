@@ -542,7 +542,7 @@ function registerIpc(): void {
       hideClaudeQuota: settings.hideClaudeQuota,
     });
   });
-  ipcMain.handle("tags:list", () => store.listTags());
+  ipcMain.handle("tags:list", (_event, projectPath?: string) => store.listTags(projectPath));
   ipcMain.handle("projects:list", () => {
     const settings = getSettings();
     return store.listProjects(settings.projectGrouping, settings.promotedProjectRoots);
