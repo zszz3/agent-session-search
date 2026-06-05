@@ -517,7 +517,14 @@ function stopAutoIndexRefresh(): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(options));
+  ipcMain.handle("search:sessions", (_event, options: SearchOptions) => {
+    const settings = getSettings();
+    return store.searchSessions({
+      ...options,
+      projectGrouping: settings.projectGrouping,
+      promotedProjectRoots: settings.promotedProjectRoots,
+    });
+  });
   ipcMain.handle("session:get", (_event, sessionKey: string) => {
     store.markOpened(sessionKey);
     return store.getSession(sessionKey);
@@ -535,8 +542,11 @@ function registerIpc(): void {
       hideClaudeQuota: settings.hideClaudeQuota,
     });
   });
-  ipcMain.handle("tags:list", () => store.listTags());
-  ipcMain.handle("projects:list", () => store.listProjects());
+  ipcMain.handle("tags:list", (_event, projectPath?: string) => store.listTags(projectPath));
+  ipcMain.handle("projects:list", () => {
+    const settings = getSettings();
+    return store.listProjects(settings.projectGrouping, settings.promotedProjectRoots);
+  });
   ipcMain.handle("title:set", (_event, sessionKey: string, title: string | null) => store.setCustomTitle(sessionKey, title));
   ipcMain.handle("tag:add", (_event, sessionKey: string, tagName: string) => store.addTag(sessionKey, tagName));
   ipcMain.handle("tag:remove", (_event, sessionKey: string, tagName: string) => store.removeTag(sessionKey, tagName));
