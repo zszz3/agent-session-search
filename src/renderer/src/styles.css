@@ -1892,6 +1892,15 @@ select:focus-visible {
   color: var(--accent);
 }
 
+.context-menu button.danger {
+  color: var(--danger);
+}
+
+.context-menu button.danger svg,
+.context-menu button.danger:hover:not(:disabled) svg {
+  color: var(--danger);
+}
+
 .context-menu hr {
   margin: 5px 6px;
   border: 0;
@@ -2244,7 +2253,7 @@ select:focus-visible {
 
 .skill-preview-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--border-subtle);
@@ -2272,31 +2281,6 @@ select:focus-visible {
   color: var(--text-muted);
   font-size: 12.5px;
   line-height: 1.45;
-}
-
-.skill-preview-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-}
-
-.skill-preview-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--panel-bg);
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.skill-preview-actions button:hover {
-  background: var(--panel-hover);
-  color: var(--text);
 }
 
 .skill-meta {
@@ -2862,6 +2846,55 @@ select:focus-visible {
 
 .dialog-copy strong {
   color: var(--text);
+}
+
+.dialog-copy.danger-copy {
+  margin-top: -8px;
+  color: var(--danger);
+}
+
+.delete-skill-dialog {
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px;
+}
+
+.delete-skill-dialog .dialog-title {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.delete-skill-dialog .dialog-copy {
+  margin: 8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.42;
+}
+
+.delete-skill-dialog .dialog-copy.danger-copy {
+  margin-top: -4px;
+}
+
+.delete-skill-path {
+  overflow: hidden;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--panel-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-skill-dialog .dialog-actions {
+  margin-top: 12px;
+}
+
+.delete-skill-dialog .dialog-actions button {
+  min-width: 68px;
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
 }
 
 .dialog-actions {

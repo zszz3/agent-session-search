@@ -402,6 +402,26 @@ export function App(): ReactElement {
     }
   }, [t]);
 
+  const deleteSkill = useCallback(async (skill: InstalledSkill) => {
+    setSkillsLoading(true);
+    setSkillsFeedback({ kind: "running", message: t(`Deleting ${skill.name}...`, `正在删除 ${skill.name}...`) });
+    try {
+      const result = await window.sessionSearch.deleteSkill(skill.path);
+      setInstalledSkills(await window.sessionSearch.listSkills());
+      const message = t(`Deleted ${result.skillName}.`, `已删除 ${result.skillName}。`);
+      setSkillsFeedback({ kind: "success", message });
+      window.setTimeout(() => {
+        setSkillsFeedback((current) => (current?.kind === "success" && current.message === message ? null : current));
+      }, 2200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSkillsFeedback({ kind: "error", message });
+      throw error;
+    } finally {
+      setSkillsLoading(false);
+    }
+  }, [t]);
+
   const refreshLiveSessions = useCallback(async () => {
     try {
       setLiveSessions(await window.sessionSearch.getLiveSessions());
@@ -1351,6 +1371,7 @@ export function App(): ReactElement {
           onReveal={(skillPath) =>
             void runUtilityAction(`Opening ${FILE_MANAGER_LABEL}`, () => window.sessionSearch.revealSkill(skillPath), `${FILE_MANAGER_LABEL} opened.`)
           }
+          onDelete={(skill) => deleteSkill(skill)}
           onClose={() => setSkillsOpen(false)}
         />
       ) : null}
@@ -1367,6 +1388,7 @@ function SkillsDialog({
   onRefresh,
   onCopyPath,
   onReveal,
+  onDelete,
   onClose,
 }: {
   snapshot: InstalledSkillsSnapshot;
@@ -1377,6 +1399,7 @@ function SkillsDialog({
   onRefresh: () => void;
   onCopyPath: (skillPath: string) => void;
   onReveal: (skillPath: string) => void;
+  onDelete: (skill: InstalledSkill) => Promise<void>;
   onClose: () => void;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
@@ -1384,6 +1407,9 @@ function SkillsDialog({
   const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>("all");
   const [sortKey, setSortKey] = useState<SkillSortKey>("usage");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [skillContextMenu, setSkillContextMenu] = useState<{ x: number; y: number; skill: InstalledSkill } | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<InstalledSkill | null>(null);
+  const [deletingSkill, setDeletingSkill] = useState(false);
   const filteredSkills = useMemo(() => {
     const filtered = filterInstalledSkills(snapshot.skills, query, sourceFilter);
     return sortInstalledSkills(filtered, sortKey);
@@ -1409,6 +1435,14 @@ function SkillsDialog({
   }, [selectedSkill?.id]);
 
   const handleListKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.key === "Escape") {
+      if (deleteCandidate) setDeleteCandidate(null);
+      else if (skillContextMenu) setSkillContextMenu(null);
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     if (!filteredSkills.length) return;
     event.preventDefault();
@@ -1418,9 +1452,32 @@ function SkillsDialog({
     setSelectedSkillId(filteredSkills[nextIndex].id);
   };
 
+  const requestDelete = (skill: InstalledSkill) => {
+    setSkillContextMenu(null);
+    setDeleteCandidate(skill);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteCandidate) return;
+    setDeletingSkill(true);
+    try {
+      await onDelete(deleteCandidate);
+      setDeleteCandidate(null);
+    } finally {
+      setDeletingSkill(false);
+    }
+  };
+
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
-      <section className="command-dialog skills-dialog" onMouseDown={(event) => event.stopPropagation()} onKeyDown={handleListKeyDown}>
+      <section
+        className="command-dialog skills-dialog"
+        onMouseDown={(event) => {
+          event.stopPropagation();
+          setSkillContextMenu(null);
+        }}
+        onKeyDown={handleListKeyDown}
+      >
         <div className="dialog-title">
           <span>{l("Skills", "Skills 管理")}</span>
           <span className="skills-dialog-count">
@@ -1477,6 +1534,11 @@ function SkillsDialog({
                     type="button"
                     className={`skill-item ${selectedSkill?.id === skill.id ? "active" : ""}`}
                     onClick={() => setSelectedSkillId(skill.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setSelectedSkillId(skill.id);
+                      setSkillContextMenu({ x: event.clientX, y: event.clientY, skill });
+                    }}
                   >
                     <span className="skill-item-head">
                       <strong>{skill.name}</strong>
@@ -1500,16 +1562,6 @@ function SkillsDialog({
                       <SkillSourceBadge source={selectedSkill.source} language={language} />
                     </div>
                     <p>{selectedSkill.description || l("No description", "无描述")}</p>
-                  </div>
-                  <div className="skill-preview-actions">
-                    <button onClick={() => onCopyPath(selectedSkill.path)}>
-                      <Copy size={14} />
-                      {l("Copy Path", "复制路径")}
-                    </button>
-                    <button onClick={() => onReveal(selectedSkill.path)}>
-                      <FolderOpen size={14} />
-                      {revealLabel}
-                    </button>
                   </div>
                 </div>
                 <dl className="skill-meta">
@@ -1541,6 +1593,33 @@ function SkillsDialog({
             )}
           </div>
         </div>
+        {skillContextMenu ? (
+          <SkillContextMenu
+            state={skillContextMenu}
+            language={language}
+            revealLabel={revealLabel}
+            onCopyPath={() => {
+              onCopyPath(skillContextMenu.skill.path);
+              setSkillContextMenu(null);
+            }}
+            onReveal={() => {
+              onReveal(skillContextMenu.skill.path);
+              setSkillContextMenu(null);
+            }}
+            onDelete={() => requestDelete(skillContextMenu.skill)}
+          />
+        ) : null}
+        {deleteCandidate ? (
+          <DeleteSkillDialog
+            skill={deleteCandidate}
+            language={language}
+            deleting={deletingSkill}
+            onConfirm={() => void confirmDelete()}
+            onCancel={() => {
+              if (!deletingSkill) setDeleteCandidate(null);
+            }}
+          />
+        ) : null}
       </section>
     </div>
   );
@@ -1566,6 +1645,96 @@ function skillSourceUiLabel(source: SkillSource, language: LanguageMode): string
 
 function SkillSourceBadge({ source, language }: { source: SkillSource; language: LanguageMode }): ReactElement {
   return <span className={`skill-source-badge ${source}`}>{skillSourceUiLabel(source, language)}</span>;
+}
+
+function SkillContextMenu({
+  state,
+  language,
+  revealLabel,
+  onCopyPath,
+  onReveal,
+  onDelete,
+}: {
+  state: { x: number; y: number; skill: InstalledSkill };
+  language: LanguageMode;
+  revealLabel: string;
+  onCopyPath: () => void;
+  onReveal: () => void;
+  onDelete: () => void;
+}): ReactElement {
+  const l = (en: string, zh: string) => localize(language, en, zh);
+  const canDelete = state.skill.source !== "codex-system";
+  return (
+    <div
+      className="context-menu skill-context-menu"
+      style={{ left: state.x, top: state.y }}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <button type="button" onClick={onCopyPath}>
+        <Copy size={14} /> {l("Copy Path", "复制路径")}
+      </button>
+      <button type="button" onClick={onReveal}>
+        <FolderOpen size={14} /> {l(`Show in ${revealLabel}`, `在 ${revealLabel} 中显示`)}
+      </button>
+      <hr />
+      <button
+        type="button"
+        className="danger"
+        onClick={onDelete}
+        disabled={!canDelete}
+        title={canDelete ? l("Delete this skill", "删除这个 Skill") : l("Codex system skills cannot be deleted here.", "Codex 系统 Skill 不能在这里删除。")}
+      >
+        <Trash2 size={14} /> {l("Delete Skill", "删除 Skill")}
+      </button>
+    </div>
+  );
+}
+
+function DeleteSkillDialog({
+  skill,
+  language,
+  deleting,
+  onConfirm,
+  onCancel,
+}: {
+  skill: InstalledSkill;
+  language: LanguageMode;
+  deleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}): ReactElement {
+  const l = (en: string, zh: string) => localize(language, en, zh);
+  return (
+    <div className="dialog-backdrop" onMouseDown={onCancel}>
+      <div className="command-dialog delete-skill-dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="dialog-title">
+          <span>{l("Delete Skill", "删除 Skill")}</span>
+          <button type="button" className="icon-button" onClick={onCancel} disabled={deleting} aria-label={l("Close", "关闭")}>
+            <X size={16} />
+          </button>
+        </div>
+        <p className="dialog-copy">
+          {l("Delete", "删除")} <strong>{skill.name}</strong>
+          {l(" permanently?", "？")}
+        </p>
+        <p className="dialog-copy danger-copy">
+          {l("This deletes the whole skill folder and cannot be undone.", "这会删除整个 Skill 文件夹，无法撤销。")}
+        </p>
+        <div className="delete-skill-path" title={skill.directoryPath}>
+          {skill.directoryPath}
+        </div>
+        <div className="dialog-actions">
+          <button type="button" onClick={onCancel} disabled={deleting}>
+            {l("Cancel", "取消")}
+          </button>
+          <button type="button" className="danger-action" onClick={onConfirm} disabled={deleting}>
+            {deleting ? l("Deleting...", "正在删除...") : l("Delete Permanently", "永久删除")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function skillPreviewMarkdown(markdown: string, language: LanguageMode): string {
