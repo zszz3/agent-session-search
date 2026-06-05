@@ -958,6 +958,7 @@ select:focus-visible {
 .toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1047,7 +1048,8 @@ select:focus-visible {
   display: inline-flex;
   align-items: center;
   height: 38px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 178px;
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -1083,7 +1085,8 @@ select:focus-visible {
   align-items: center;
   gap: 7px;
   height: 38px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 130px;
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -3055,11 +3058,10 @@ select:focus-visible {
 
   .toolbar {
     align-items: stretch;
-    flex-wrap: wrap;
   }
 
   .searchbox {
-    min-width: 100%;
+    min-width: 200px;
   }
 
   .detail {
