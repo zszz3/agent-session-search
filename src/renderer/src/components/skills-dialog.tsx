@@ -231,7 +231,7 @@ export function SkillsDialog({
               setSkillContextMenu(null);
             }}
             onReveal={() => {
-              onReveal(skillContextMenu.skill.path);
+              onReveal(skillContextMenu.skill.directoryPath);
               setSkillContextMenu(null);
             }}
             onDelete={() => requestDelete(skillContextMenu.skill)}

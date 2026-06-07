@@ -573,8 +573,8 @@ function registerIpc(): void {
   ipcMain.handle("skills:copy-path", (_event, skillPath: string) => {
     clipboard.writeText(skillPath);
   });
-  ipcMain.handle("skills:reveal", async (_event, skillPath: string) => {
-    await revealInFileManager(skillPath);
+  ipcMain.handle("skills:reveal", async (_event, targetPath: string) => {
+    await revealInFileManager(targetPath);
   });
   ipcMain.handle("skills:delete", (_event, skillPath: string) => deleteInstalledSkill(skillPath, { projectDirs: [process.cwd()] }));
   ipcMain.handle("skills:usage-hook-status", () => {
