@@ -37,6 +37,7 @@ import {
 import type { ApiConfig, ClaudeApiConfig } from "../../core/api-config";
 import type { IndexStatus } from "../../core/indexer";
 import { formatRelativeTime } from "../../core/format-session";
+import { QUOTA_REFRESH_INTERVAL_MS } from "../../core/refresh-policy";
 import type { AppSettings, AppSettingsUpdate } from "../../core/platform";
 import type { InstalledSkill, InstalledSkillsSnapshot } from "../../core/skill-manager";
 import { globalShortcutOptions } from "../../core/shortcuts";
@@ -282,13 +283,14 @@ export function App(): ReactElement {
     }
   }, [statsPeriod, t]);
 
-  const loadQuotas = useCallback(async (manual = false) => {
-    setQuotaLoading(true);
-    if (manual) setQuotaFeedback({ kind: "running", message: t("Refreshing usage limits...", "正在刷新额度...") });
+  const loadQuotas = useCallback(async (mode: "initial" | "manual" | "background" = "initial") => {
+    const background = mode === "background";
+    if (!background) setQuotaLoading(true);
+    if (mode === "manual") setQuotaFeedback({ kind: "running", message: t("Refreshing usage limits...", "正在刷新额度...") });
     try {
       const nextQuotas = await window.sessionSearch.getQuotas();
       setQuotas(nextQuotas);
-      if (manual) {
+      if (mode === "manual") {
         const successMessage = t("Usage limits refreshed.", "额度已刷新。");
         setQuotaFeedback({ kind: "success", message: successMessage });
         window.setTimeout(() => {
@@ -296,9 +298,10 @@ export function App(): ReactElement {
         }, 1800);
       }
     } catch (error) {
-      setQuotaFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      // Background polls fail silently so a transient read error does not clobber the last good value.
+      if (!background) setQuotaFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
-      setQuotaLoading(false);
+      if (!background) setQuotaLoading(false);
     }
   }, [t]);
 
@@ -370,6 +373,8 @@ export function App(): ReactElement {
 
   useEffect(() => {
     void loadQuotas();
+    const timer = window.setInterval(() => void loadQuotas("background"), QUOTA_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
   }, [loadQuotas]);
 
   useEffect(() => {
@@ -974,7 +979,7 @@ export function App(): ReactElement {
           feedback={quotaFeedback}
           expanded={sidebarSections.remaining}
           onToggle={() => toggleSidebarSectionById("remaining")}
-          onRefresh={() => void loadQuotas(true)}
+          onRefresh={() => void loadQuotas("manual")}
           language={language}
         />
 
