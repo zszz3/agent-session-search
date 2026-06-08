@@ -1,6 +1,6 @@
 <h1 align="center">Agent-Session-Search</h1>
 
-<p align="center">A local desktop tool to search, organize, and resume your Claude Code / Codex / CodeBuddy session history in one place</p>
+<p align="center">A local desktop tool to search, organize, inspect, and resume local or SSH-remote Claude Code / Codex / CodeBuddy sessions</p>
 
 <p align="center">
   <a href="../README.md">简体中文</a> ｜ English
@@ -17,22 +17,29 @@
   <img src="../assets/show.png" alt="Agent-Session-Search preview" width="860">
 </p>
 
-Agent-Session-Search is a local desktop console for finding, organizing, and resuming Claude Code and Codex sessions.
+Agent-Session-Search is a local desktop console for finding, organizing, inspecting, and resuming Claude Code and Codex sessions.
 
-It indexes existing local session files, lets you add your own titles and tags, and keeps that metadata in a separate local SQLite database. It does not modify the original Claude or Codex session files.
+It indexes existing local session files, can read remote sessions over SSH, lets you add your own titles and tags, and keeps app metadata in a separate local SQLite database. Indexing and organizing do not modify the original Claude or Codex session files; source files are deleted only when the user explicitly confirms session deletion.
 
 ## Features
 
-- Search Claude Code and Codex sessions from one desktop app.
+- Search Claude Code, Codex, and optional CodeBuddy CLI sessions from one desktop app.
 - Full-text search across custom titles, original titles, first user questions, conversation text, and project paths.
-- Add custom titles and tags without changing the upstream session files.
-- Filter by project, tag, source, open/closed state, pinned sessions, or hidden sessions.
+- Paginated first load: long session lists render a small page first and load more on demand.
+- Add custom titles, tags, favorites, pinned state, and hidden state without changing upstream session files.
+- Delete tags and local session source files with confirmation.
+- Filter by project, environment, tag, source, open/closed state, pinned sessions, or hidden sessions.
+- Sort by latest activity, created time, or updated time.
+- Add local and SSH environments; SSH environments can be refreshed manually or kept in sync through remote file watching.
 - Resume a session in Terminal, iTerm, Ghostty, WezTerm, or Warp.
 - Bring detected open terminals to front, copy resume commands, or export Markdown.
+- Read details with Markdown / code block rendering, collapsed tool traces, and user / assistant / tool message filters.
 - Track message and token usage for Today / 7D / 30D / All time.
 - Show Codex subscription quota; Claude Code quota can be shown through a statusline snapshot bridge.
 - Refresh the local index and usage stats from the tray menu or in-app controls.
-- Count how often each Claude Code skill is used (enable it in Settings; it installs a PostToolUse hook in `~/.claude/settings.json`, Claude Code only); the Skills panel sorts by most used when filtered to Claude Code.
+- Manage installed Skills: list Codex / Claude Code skills, search, preview, filter by source, copy paths, reveal folders, and delete user skills.
+- Track Skill usage: Claude Code uses a PostToolUse hook; Codex usage is inferred from local session function calls that read `SKILL.md`. Usage is indexed in local SQLite and refreshed incrementally from the Skills panel.
+- Switch Codex / Claude Code API providers with presets for CodexZH, DeepSeek, GLM, LongCat, Kimi, MiMo, plus custom base URL, model, and API key fields.
 - Switch between light/dark themes and English/Chinese UI.
 - Toggle the app with `Option+Space` on macOS by default; the shortcut can be changed or disabled in Settings.
 
@@ -45,8 +52,27 @@ It indexes existing local session files, lets you add your own titles and tags, 
 | Claude Code CLI | `~/.claude/projects/*/*.jsonl` plus optional `~/.claude/sessions/*.json` metadata |
 | Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` plus Claude Code project logs |
 | CodeBuddy CLI | Optional in settings; reads `~/.codebuddy/projects/**/*.jsonl` |
+| SSH remote environment | Reads the same Codex / Claude Code session paths under the remote user's home directory over SSH |
 
 Codex title metadata is read from `~/.codex/session_index.jsonl` when that file exists. If no upstream title is available, the app uses the first meaningful user question as the default title.
+
+## SSH Remote Sessions
+
+SSH environments do not require Agent-Session-Search to be installed on the remote machine, and the app does not create a remote database. The local app uses the system `ssh` command, runs a temporary Python collector on the remote host, reads session summaries from remote `~/.codex` and `~/.claude`, then stores those summaries in the local SQLite index.
+
+Remote sync behavior:
+
+- Adding or enabling an SSH environment starts with one full summary sync.
+- If `inotifywait` exists on the remote host, the app keeps an SSH watcher open for `~/.codex/sessions`, `~/.codex/session_index.jsonl`, `~/.claude/projects`, and `~/.claude/sessions`.
+- If `inotifywait` is missing but `fswatch` exists, it watches `~/.codex` and `~/.claude`.
+- If neither watcher is available, it falls back to polling every 60 seconds.
+- Remote details are loaded on demand: the list stores summaries first, and the original remote session file is fetched only when that session is opened.
+
+Remote host requirements:
+
+- Non-interactive `ssh` access from the local machine.
+- `python3`.
+- `inotifywait` or `fswatch` for real-time watching; polling still works without them.
 
 ## Keyboard Shortcuts
 
@@ -64,8 +90,10 @@ Codex title metadata is read from `~/.codex/session_index.jsonl` when that file 
 
 Agent-Session-Search keeps two kinds of data separate:
 
-- Upstream session data stays in the original Claude and Codex files and is treated as read-only input.
-- App metadata, including custom titles, tags, pinned state, hidden state, and the search index, is stored in a local SQLite database under Electron's `userData` directory.
+- Upstream session data stays in the original Claude and Codex files and is treated as read-only input while indexing, searching, and tagging; explicitly confirmed session deletion removes the corresponding source file.
+- SSH remote session files are also treated as read-only input and fetched over SSH only for summaries and on-demand details.
+- App metadata, including custom titles, tags, favorites, pinned state, hidden state, the search index, remote environment configuration, Skill usage index, and API provider keys, is stored in a local SQLite database under Electron's `userData` directory.
+- Applying Codex / Claude Code provider settings edits the local `~/.codex/config.toml` or `~/.claude/settings.json` using the CLI's native configuration format and writes backups first.
 
 ## Installation
 

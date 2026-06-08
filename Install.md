@@ -22,6 +22,8 @@ agent-session-search
 
 应用启动后常驻后台（菜单栏有图标），默认按 **⌥ Option + Space** 唤起搜索窗口；如果和 Raycast 等工具冲突，可以在 Settings 里修改或关闭全局快捷键。Settings 也可以用 `Cmd+,` 打开，Appearance 里可以切换明暗主题和 English / 中文界面。
 
+如果要使用 SSH 远程会话，请确保本机可以用系统 `ssh` 非交互连接远端机器，远端安装了 `python3`。实时监听需要远端有 `inotifywait` 或 `fswatch`；没有时应用会退化为轮询同步。
+
 ### 后续启动还要 `nvm use 22` 吗？
 
 不需要重新执行 `npm ci`、`npm run build` 或 `npm install -g .`。日常启动只需要：
@@ -73,6 +75,7 @@ $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 
 - macOS 或 Windows
 - Node.js 22.13 或更高版本（含 npm）
+- SSH 远程会话可选依赖：本机 `ssh`，远端 `python3`，远端 `inotifywait` 或 `fswatch` 用于实时监听
 
 温馨提示：Electron binary 默认从 GitHub release 下载。如果下载很慢或失败，可在安装前设置镜像后再执行安装命令：
 
@@ -258,6 +261,8 @@ The app creates a local SQLite database at Electron's `userData` path:
 ```
 
 This database contains the search index and app-only metadata such as custom titles, tags, pinned state, and hidden state. It is runtime state, not source code.
+
+SSH remote sessions are read-only inputs. The app stores remote summaries and on-demand details in the local SQLite index, but it does not install a remote daemon or create a remote database.
 
 Never commit:
 
