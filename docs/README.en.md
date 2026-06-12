@@ -1,6 +1,6 @@
 <h1 align="center">Agent-Session-Search</h1>
 
-<p align="center">A local desktop tool to search, organize, inspect, and resume local or SSH-remote Claude Code / Codex / CodeBuddy sessions</p>
+<p align="center">A local desktop tool to search, organize, inspect, and resume AI coding-agent sessions</p>
 
 <p align="center">
   <a href="../README.md">简体中文</a> ｜ English
@@ -17,13 +17,13 @@
   <img src="../assets/show.png" alt="Agent-Session-Search preview" width="860">
 </p>
 
-Agent-Session-Search is a local desktop console for finding, organizing, inspecting, and resuming Claude Code and Codex sessions.
+Agent-Session-Search is a local desktop console for finding, organizing, inspecting, and resuming AI coding-agent sessions.
 
-It indexes existing local session files, can read remote sessions over SSH, lets you add your own titles and tags, and keeps app metadata in a separate local SQLite database. Indexing and organizing do not modify the original Claude or Codex session files; source files are deleted only when the user explicitly confirms session deletion.
+It indexes existing local Claude and Codex sessions by default, and can also read remote Claude/Codex sessions over SSH. Optional local sources, including CodeBuddy CLI, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae, can be enabled from Settings -> Optional sources. The app lets you add your own titles and tags, and keeps app metadata in a separate local SQLite database. Indexing and organizing do not modify the original agent session data. Independent source files are deleted only when the user explicitly confirms session deletion; shared Hermes/OpenCode SQLite databases are never deleted as a whole for one session.
 
 ## Features
 
-- Search Claude Code, Codex, and optional CodeBuddy CLI sessions from one desktop app.
+- Search Claude Code, Codex, and enabled optional sources such as CodeBuddy CLI, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae from one desktop app.
 - Full-text search across custom titles, original titles, first user questions, conversation text, and project paths.
 - Paginated first load: long session lists render a small page first and load more on demand.
 - Add custom titles, tags, favorites, pinned state, and hidden state without changing upstream session files.
@@ -52,9 +52,16 @@ It indexes existing local session files, can read remote sessions over SSH, lets
 | Claude Code CLI | `~/.claude/projects/*/*.jsonl` plus optional `~/.claude/sessions/*.json` metadata |
 | Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` plus Claude Code project logs |
 | CodeBuddy CLI | Optional in settings; reads `~/.codebuddy/projects/**/*.jsonl` |
+| OpenClaw | Optional in settings; reads `~/.openclaw/agents/*/sessions/*.jsonl`, legacy `~/.clawdbot/agents/*/sessions/*.jsonl`, excluding `*.trajectory.jsonl` |
+| Hermes | Optional in settings; reads `~/.hermes/state.db` |
+| OpenCode | Optional in settings; reads `~/.local/share/opencode/opencode.db` |
+| Cursor Agent | Optional in settings; reads `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` |
+| Trae | Optional in settings; reads `~/.trae-cn/memory/projects/**/session_memory_*.jsonl`; open-state detection reads Trae's local workspace state database |
 | SSH remote environment | Reads the same Codex / Claude Code session paths under the remote user's home directory over SSH |
 
 Codex title metadata is read from `~/.codex/session_index.jsonl` when that file exists. If no upstream title is available, the app uses the first meaningful user question as the default title.
+
+CodeBuddy CLI, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae are off by default and can be selected from Settings -> Optional sources. Once enabled, they support local read-only indexing, search, details, and source filtering. Resume, SSH remote sync, and provider-specific usage stats for these sources are intentionally separate follow-up work. Trae also supports open-state detection.
 
 ## SSH Remote Sessions
 
@@ -90,7 +97,7 @@ Remote host requirements:
 
 Agent-Session-Search keeps two kinds of data separate:
 
-- Upstream session data stays in the original Claude and Codex files and is treated as read-only input while indexing, searching, and tagging; explicitly confirmed session deletion removes the corresponding source file.
+- Upstream session data stays in the original agent files or databases and is treated as read-only input while indexing, searching, and tagging. Confirmed deletion removes independent session files, but Hermes and OpenCode use shared SQLite databases, so the app does not delete an entire database for one session.
 - SSH remote session files are also treated as read-only input and fetched over SSH only for summaries and on-demand details.
 - App metadata, including custom titles, tags, favorites, pinned state, hidden state, the search index, remote environment configuration, Skill usage index, and API provider keys, is stored in a local SQLite database under Electron's `userData` directory.
 - Applying Codex / Claude Code provider settings edits the local `~/.codex/config.toml` or `~/.claude/settings.json` using the CLI's native configuration format and writes backups first.

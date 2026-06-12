@@ -1,5 +1,9 @@
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import type { LiveSession, LiveSessionFamily, LiveSessionSnapshot } from "./types";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => import("node:sqlite").DatabaseSync };
 
 type ProcessListRunner = (command: string, args: string[]) => Promise<string>;
 
@@ -12,9 +16,14 @@ export interface LoadLiveSessionOptions {
   platform?: NodeJS.Platform;
   runner?: ProcessListRunner;
   now?: Date;
+  includeTrae?: boolean;
 }
 
-export function detectLiveSessionsFromProcessLines(lines: string[], codexSessionFilesByPid: Map<number, string> = new Map()): LiveSession[] {
+export function detectLiveSessionsFromProcessLines(
+  lines: string[],
+  codexSessionFilesByPid: Map<number, string> = new Map(),
+  traeSessionIdsByPid: Map<number, string> = new Map(),
+): LiveSession[] {
   const sessions: LiveSession[] = [];
   const seen = new Set<string>();
 
@@ -23,7 +32,10 @@ export function detectLiveSessionsFromProcessLines(lines: string[], codexSession
     if (!entry) continue;
 
     const tokens = splitCommandLine(entry.command);
-    const command = detectResumeCommand(tokens) ?? detectPlainCodexCommand(tokens, codexSessionFilesByPid.get(entry.pid));
+    const command =
+      detectResumeCommand(tokens) ??
+      detectPlainCodexCommand(tokens, codexSessionFilesByPid.get(entry.pid)) ??
+      detectTraeAppSession(entry.command, traeSessionIdsByPid.get(entry.pid));
     if (!command) continue;
 
     const key = `${command.family}:${command.rawId}`;
@@ -51,10 +63,12 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
         : await runner("/bin/ps", ["-axo", "pid=,command="]);
     const lines = output.split(/\r?\n/);
     const codexSessionFilesByPid = platform === "win32" ? new Map<number, string>() : await loadPlainCodexSessionFiles(lines, runner);
+    const traeSessionIdsByPid =
+      platform === "win32" || options.includeTrae === false ? new Map<number, string>() : await loadTraeSessionIds(lines, runner);
 
     return {
       generatedAt,
-      sessions: detectLiveSessionsFromProcessLines(lines, codexSessionFilesByPid),
+      sessions: detectLiveSessionsFromProcessLines(lines, codexSessionFilesByPid, traeSessionIdsByPid),
     };
   } catch (error) {
     return {
@@ -87,6 +101,28 @@ async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRu
   return sessionFiles;
 }
 
+async function loadTraeSessionIds(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
+  const sessionIds = new Map<number, string>();
+  const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
+  const pids = entries.filter((entry) => isTraeAppCommand(entry.command)).map((entry) => entry.pid);
+
+  await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        const output = await runner("lsof", ["-p", String(pid)]);
+        const stateDbPath = extractTraeStateDbPath(output);
+        if (!stateDbPath) return;
+        const rawId = readTraeCurrentSessionRawId(stateDbPath);
+        if (rawId) sessionIds.set(pid, rawId);
+      } catch {
+        // Trae can rotate workspaces or exit between ps and lsof; keep the rest.
+      }
+    }),
+  );
+
+  return sessionIds;
+}
+
 function parseProcessLine(line: string): ProcessEntry | null {
   const match = line.trim().match(/^(\d+)\s+(.+)$/);
   if (!match) return null;
@@ -117,6 +153,11 @@ function detectPlainCodexCommand(tokens: string[], sessionFile: string | undefin
   if (!sessionFile || !isPlainCodexCommand(tokens)) return null;
   const rawId = extractCodexSessionId(sessionFile);
   return rawId ? { family: "codex", rawId } : null;
+}
+
+function detectTraeAppSession(command: string, rawId: string | undefined): { family: LiveSessionFamily; rawId: string } | null {
+  if (!rawId || !isTraeAppCommand(command)) return null;
+  return { family: "trae", rawId };
 }
 
 function isPlainCodexCommand(tokens: string[]): boolean {
@@ -171,6 +212,14 @@ function executableFamily(token: string | undefined): LiveSessionFamily | null {
   return null;
 }
 
+function isTraeAppCommand(command: string): boolean {
+  const lower = command.toLowerCase();
+  return (
+    lower.includes("trae") &&
+    (lower.includes(".app") || lower.includes("--user-data-dir") || lower.includes("trae cn") || lower.includes("trae.exe"))
+  );
+}
+
 function isNodeExecutable(token: string | undefined): boolean {
   const normalized = normalizedExecutableName(token);
   return normalized === "node" || normalized === "nodejs";
@@ -192,6 +241,49 @@ function extractCodexSessionFile(lsofOutput: string): string | null {
 
 function extractCodexSessionId(sessionFile: string): string | null {
   return sessionFile.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/)?.[1] ?? null;
+}
+
+function extractTraeStateDbPath(lsofOutput: string): string | null {
+  const candidates: string[] = [];
+  for (const line of lsofOutput.split(/\r?\n/)) {
+    const end = line.indexOf("state.vscdb");
+    if (end < 0) continue;
+    const start = line.indexOf("/");
+    if (start < 0) continue;
+    candidates.push(line.slice(start, end + "state.vscdb".length));
+  }
+  return candidates.find((candidate) => candidate.includes("workspaceStorage")) ?? candidates[0] ?? null;
+}
+
+function readTraeCurrentSessionRawId(stateDbPath: string): string | null {
+  try {
+    const db = new DatabaseSync(stateDbPath, { readOnly: true });
+    try {
+      const row = db
+        .prepare("SELECT value FROM ItemTable WHERE key = ? LIMIT 1")
+        .get("memento/icube-ai-agent-storage") as { value?: unknown } | undefined;
+      const sessionId = typeof row?.value === "string" ? extractTraeCurrentSessionId(JSON.parse(row.value)) : null;
+      return sessionId ? normalizeTraeSessionRawId(sessionId) : null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function extractTraeCurrentSessionId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  if ("currentSessionId" in value && typeof value.currentSessionId === "string") return value.currentSessionId;
+  for (const child of Object.values(value)) {
+    const sessionId = extractTraeCurrentSessionId(child);
+    if (sessionId) return sessionId;
+  }
+  return null;
+}
+
+function normalizeTraeSessionRawId(sessionId: string): string {
+  return sessionId.startsWith("session_memory_") ? sessionId : `session_memory_${sessionId}`;
 }
 
 function splitCommandLine(command: string): string[] {

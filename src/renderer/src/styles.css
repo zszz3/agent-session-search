@@ -1432,6 +1432,11 @@ select:focus-visible {
   color: var(--codebuddy-badge-text);
 }
 
+.source-badge.other {
+  background: var(--panel-subtle);
+  color: var(--text-muted);
+}
+
 .live-status {
   display: inline-flex;
   align-items: center;

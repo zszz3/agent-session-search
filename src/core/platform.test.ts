@@ -67,6 +67,18 @@ describe("resume commands", () => {
     );
   });
 
+  it("does not treat newly indexed local sources as Codex resume sessions", () => {
+    const session = {
+      source: "opencode-cli",
+      rawId: "opencode-1",
+      projectPath: "/repo",
+    } as SessionSearchResult;
+
+    expect(() => getResumeCommand(session, defaultSettings, { platform: "darwin" })).toThrow(
+      "Resume is not supported for OpenCode sessions yet.",
+    );
+  });
+
   it("builds a PowerShell-compatible resume command when the terminal is PowerShell", () => {
     const session = {
       source: "claude-cli",

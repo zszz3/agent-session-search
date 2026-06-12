@@ -546,6 +546,28 @@ describe("SessionStore", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("does not delete shared SQLite source databases for database-backed agent sessions", () => {
+    const store = createInMemoryStore();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-delete-db-session-"));
+    const filePath = path.join(dir, "state.db");
+    fs.writeFileSync(filePath, "sqlite placeholder", "utf8");
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "hermes:abc",
+        rawId: "abc",
+        source: "hermes",
+        filePath,
+      }),
+      messages,
+    );
+
+    expect(() => store.deleteSession("hermes:abc")).toThrow("Cannot delete shared Hermes source database.");
+    expect(fs.existsSync(filePath)).toBe(true);
+    expect(store.getSession("hermes:abc")).not.toBeNull();
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("does not search tag names from the text search box, but supports explicit tag filtering", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(sampleSession(), messages);

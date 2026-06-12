@@ -167,4 +167,16 @@ describe("detail panel actions", () => {
     expect(settingsDialog).toContain("connection-diagnostics");
     expect(settingsDialog).toContain("connection-diagnostic-check");
   });
+
+  it("does not route the selected-session resume shortcut for unsupported sources", () => {
+    const shortcutHandler = appSource.slice(
+      appSource.indexOf('if ((event.metaKey || event.ctrlKey) && event.key === "Enter")'),
+      appSource.indexOf('if (event.key === "ArrowDown" || event.key === "ArrowUp")'),
+    );
+
+    expect(shortcutHandler).toContain("supportsResumeSource(session.source)");
+    expect(shortcutHandler.indexOf("supportsResumeSource(session.source)")).toBeLessThan(
+      shortcutHandler.indexOf("window.sessionSearch.resumeSession(session.sessionKey)"),
+    );
+  });
 });

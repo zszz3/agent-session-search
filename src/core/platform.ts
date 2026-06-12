@@ -58,6 +58,11 @@ export interface AppSettings {
   includeClaudeInternal: boolean;
   includeCodexInternal: boolean;
   includeCodeBuddyCli: boolean;
+  includeOpenClaw: boolean;
+  includeHermes: boolean;
+  includeOpenCode: boolean;
+  includeCursorAgent: boolean;
+  includeTrae: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
   apiConfig: ApiConfig;
@@ -78,6 +83,11 @@ export const defaultSettings: AppSettings = {
   includeClaudeInternal: false,
   includeCodexInternal: false,
   includeCodeBuddyCli: false,
+  includeOpenClaw: false,
+  includeHermes: false,
+  includeOpenCode: false,
+  includeCursorAgent: false,
+  includeTrae: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
   apiConfig: defaultApiConfig,
@@ -97,8 +107,26 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
 
-export function sourceFamily(source: SessionSource): "claude" | "codex" | "codebuddy" {
+type SourceFamily = "claude" | "codex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+
+function sourceDisplayName(source: SessionSource): string {
+  if (source === "opencode-cli") return "OpenCode";
+  if (source === "cursor-agent") return "Cursor Agent";
+  if (source === "openclaw") return "OpenClaw";
+  if (source === "hermes") return "Hermes";
+  if (source === "trae") return "Trae";
+  if (source === "codebuddy-cli") return "CodeBuddy";
+  if (source.startsWith("claude")) return "Claude";
+  return "Codex";
+}
+
+export function sourceFamily(source: SessionSource): SourceFamily {
   if (source === "codebuddy-cli") return "codebuddy";
+  if (source === "openclaw") return "openclaw";
+  if (source === "hermes") return "hermes";
+  if (source === "opencode-cli") return "opencode";
+  if (source === "cursor-agent") return "cursor";
+  if (source === "trae") return "trae";
   return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
 }
 
@@ -115,6 +143,9 @@ function buildResumeProcessArgs(
   }
   if (family === "codebuddy") {
     return { command: settings.codeBuddyBinary, args: ["--resume", session.rawId] };
+  }
+  if (family !== "codex") {
+    throw new Error(`Resume is not supported for ${sourceDisplayName(session.source)} sessions yet.`);
   }
 
   const args = ["resume", session.rawId];
@@ -483,6 +514,9 @@ export async function resolveMacApplicationName(names: string[], runner: Process
 
 export async function openNativeApp(source: SessionSource): Promise<void> {
   const family = sourceFamily(source);
+  if (family !== "claude" && family !== "codex" && family !== "codebuddy") {
+    throw new Error(`Native app opening is not configured for ${sourceDisplayName(source)} sessions yet.`);
+  }
   const appName = family === "claude" ? "Claude" : family === "codebuddy" ? "CodeBuddy CN" : "Codex";
   if (process.platform === "darwin") {
     await runProcess("/usr/bin/open", ["-a", appName]);

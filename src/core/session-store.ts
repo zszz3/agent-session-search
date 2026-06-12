@@ -336,8 +336,12 @@ export class SessionStore {
   deleteSession(sessionKey: string): boolean {
     let deleted = false;
     this.transaction(() => {
-      const row = this.db.prepare("SELECT file_path FROM sessions WHERE session_key = ?").get(sessionKey) as { file_path: string } | undefined;
+      const row = this.db.prepare("SELECT source, file_path FROM sessions WHERE session_key = ?").get(sessionKey) as
+        | { source: SessionSource; file_path: string }
+        | undefined;
       if (!row) return;
+      if (row.source === "hermes") throw new Error("Cannot delete shared Hermes source database.");
+      if (row.source === "opencode-cli") throw new Error("Cannot delete shared OpenCode source database.");
       this.deleteSessionSourceFile(row.file_path);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(sessionKey);
       this.db.prepare("DELETE FROM sessions WHERE session_key = ?").run(sessionKey);

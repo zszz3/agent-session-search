@@ -62,12 +62,24 @@ import type {
   SearchOptions,
   SessionEnvironment,
   SessionSearchResult,
+  SessionSource,
   SessionStatsOptions,
 } from "../core/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
 type ApiProviderKeyTarget = "codex" | "claude";
+
+const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeCodeBuddyCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae">; sources: SessionSource[] }> = [
+  { key: "includeClaudeInternal", sources: ["claude-internal"] },
+  { key: "includeCodexInternal", sources: ["codex-internal"] },
+  { key: "includeCodeBuddyCli", sources: ["codebuddy-cli"] },
+  { key: "includeOpenClaw", sources: ["openclaw"] },
+  { key: "includeHermes", sources: ["hermes"] },
+  { key: "includeOpenCode", sources: ["opencode-cli"] },
+  { key: "includeCursorAgent", sources: ["cursor-agent"] },
+  { key: "includeTrae", sources: ["trae"] },
+];
 
 // The skill-usage hook installer is a self-contained CommonJS script in bin/
 // (sibling of out/), shared with the global-install path. Load it lazily via a
@@ -154,6 +166,11 @@ function getSettings(): AppSettings {
     globalShortcut: normalizeGlobalShortcut(settings.globalShortcut),
     defaultTerminal: normalizeTerminal(settings.defaultTerminal),
   };
+}
+
+function pruneDisabledOptionalSources(settings: AppSettings): void {
+  const disabledSources = OPTIONAL_SOURCE_SETTINGS.flatMap((item) => (settings[item.key] ? [] : item.sources));
+  store.deleteSessionsBySource(disabledSources);
 }
 
 async function getHydratedSettings(): Promise<AppSettings> {
@@ -585,15 +602,22 @@ function ensureRemoteEnvironmentLifecycle(): RemoteEnvironmentLifecycle {
 async function runIndexSync(): Promise<IndexStatus> {
   if (activeIndexRun) return activeIndexRun;
 
+  const settings = getSettings();
+  pruneDisabledOptionalSources(settings);
   indexStatus = { ...indexStatus, running: true, error: null };
   mainWindow?.webContents.send("index-status", indexStatus);
 
   activeIndexRun = syncDefaultSessionsInBatches(store, {
     batchSize: 2,
     loadOptions: {
-      includeClaudeInternal: getSettings().includeClaudeInternal,
-      includeCodexInternal: getSettings().includeCodexInternal,
-      includeCodeBuddyCli: getSettings().includeCodeBuddyCli,
+      includeClaudeInternal: settings.includeClaudeInternal,
+      includeCodexInternal: settings.includeCodexInternal,
+      includeCodeBuddyCli: settings.includeCodeBuddyCli,
+      includeOpenClaw: settings.includeOpenClaw,
+      includeHermes: settings.includeHermes,
+      includeOpenCode: settings.includeOpenCode,
+      includeCursorAgent: settings.includeCursorAgent,
+      includeTrae: settings.includeTrae,
     },
     onProgress: (status) => {
       indexStatus = { ...status, lastIndexedAt: indexStatus.lastIndexedAt };
@@ -652,7 +676,7 @@ function registerIpc(): void {
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     return store.getTraceEvents(sessionKey);
   });
-  ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot());
+  ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot({ includeTrae: getSettings().includeTrae }));
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
   ipcMain.handle("quota:get", () => {
     const settings = getSettings();
@@ -700,9 +724,7 @@ function registerIpc(): void {
     }
     persistApiProviderKeysFromUpdate(settings, next);
     settingsStore.set(withoutApiProviderKeys(next));
-    if (previous.includeClaudeInternal && !next.includeClaudeInternal) store.deleteSessionsBySource(["claude-internal"]);
-    if (previous.includeCodexInternal && !next.includeCodexInternal) store.deleteSessionsBySource(["codex-internal"]);
-    if (previous.includeCodeBuddyCli && !next.includeCodeBuddyCli) store.deleteSessionsBySource(["codebuddy-cli"]);
+    pruneDisabledOptionalSources(next);
     return withStoredApiProviderKeys(next);
   });
   ipcMain.handle("api-provider-key:get", (_event, target: unknown, providerId: string) =>
@@ -751,7 +773,7 @@ function registerIpc(): void {
       store.markResumed(sessionKey);
       return { route: "resume" as const };
     }
-    const snapshot = await loadLiveSessionSnapshot();
+    const snapshot = await loadLiveSessionSnapshot({ includeTrae: getSettings().includeTrae });
     const route = snapshot.error ? { route: "resume" as const } : routeResumeSession(session, snapshot.sessions);
     if (route.route === "focus") {
       await focusLiveSessionTerminal(route.pid);
@@ -812,6 +834,7 @@ app.whenReady().then(() => {
   const dbPath = path.join(app.getPath("userData"), "session-search.sqlite");
   store = new SessionStore(dbPath);
   migrateLegacyApiProviderKeys();
+  pruneDisabledOptionalSources(getSettings());
   registerIpc();
   createApplicationMenu();
   createWindow();

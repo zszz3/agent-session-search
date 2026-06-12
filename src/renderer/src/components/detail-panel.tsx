@@ -86,6 +86,7 @@ export function DetailPanel({
   onAddTag,
   onRemoveTag,
   onFavorite,
+  canResume,
   onResume,
   onResumeIterm,
   onCopyResume,
@@ -113,6 +114,7 @@ export function DetailPanel({
   onAddTag: () => void;
   onRemoveTag: (tagName: string) => void;
   onFavorite: () => void;
+  canResume: boolean;
   onResume: () => void;
   onResumeIterm: () => void;
   onCopyResume: () => void;
@@ -215,10 +217,12 @@ export function DetailPanel({
           </div>
         </div>
         <div className="detail-actions">
-          <button onClick={onResume} disabled={actionRunning}>
-            <Play size={15} /> Resume
-          </button>
-          {showItermAction ? (
+          {canResume ? (
+            <button onClick={onResume} disabled={actionRunning}>
+              <Play size={15} /> Resume
+            </button>
+          ) : null}
+          {canResume && showItermAction ? (
             <button onClick={onResumeIterm} disabled={actionRunning}>
               <TerminalIcon size={15} /> iTerm
             </button>
@@ -226,9 +230,11 @@ export function DetailPanel({
           <button onClick={onAddTag} disabled={actionRunning}>
             <Tag size={15} /> {l("Add Tag", "添加标签")}
           </button>
-          <button onClick={onCopyResume} disabled={actionRunning}>
-            <Copy size={15} /> {l("Copy Cmd", "复制命令")}
-          </button>
+          {canResume ? (
+            <button onClick={onCopyResume} disabled={actionRunning}>
+              <Copy size={15} /> {l("Copy Cmd", "复制命令")}
+            </button>
+          ) : null}
           <button onClick={onCopyMarkdown} disabled={actionRunning}>Markdown</button>
           <button onClick={onExportMarkdown} disabled={actionRunning}>
             <Download size={15} /> {l("Export MD", "导出 MD")}

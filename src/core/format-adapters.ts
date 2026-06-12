@@ -103,8 +103,59 @@ export const codebuddyAdapter: FormatAdapter = {
   },
 };
 
+function roleFromRaw(raw: unknown): "user" | "assistant" | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const message = record.message && typeof record.message === "object" ? (record.message as Record<string, unknown>) : null;
+  const role = record.role ?? message?.role ?? record.type;
+  return role === "user" || role === "assistant" ? role : null;
+}
+
+function contentFromRaw(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return "";
+  const record = raw as Record<string, unknown>;
+  const message = record.message && typeof record.message === "object" ? (record.message as Record<string, unknown>) : null;
+  return record.content ?? record.text ?? message?.content ?? message?.text ?? "";
+}
+
+function timestampFromRaw(raw: unknown): string {
+  if (!raw || typeof raw !== "object") return "";
+  const value = (raw as Record<string, unknown>).timestamp ?? (raw as Record<string, unknown>).time ?? (raw as Record<string, unknown>).createdAt;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString();
+  return "";
+}
+
+function genericAdapter(format: SessionFormat): FormatAdapter {
+  return {
+    format,
+    parseLine(raw) {
+      const role = roleFromRaw(raw);
+      if (!role) return null;
+      const content = extractTextBlocks(contentFromRaw(raw));
+      if (!content) return null;
+      return {
+        role,
+        content,
+        timestamp: timestampFromRaw(raw),
+      };
+    },
+  };
+}
+
+export const openClawAdapter = genericAdapter("openclaw");
+export const hermesAdapter = genericAdapter("hermes");
+export const openCodeAdapter = genericAdapter("opencode");
+export const cursorAdapter = genericAdapter("cursor");
+export const traeAdapter = genericAdapter("trae");
+
 export function getFormatForSource(source: SessionSource): SessionFormat {
   if (source === "codebuddy-cli") return "codebuddy";
+  if (source === "openclaw") return "openclaw";
+  if (source === "hermes") return "hermes";
+  if (source === "opencode-cli") return "opencode";
+  if (source === "cursor-agent") return "cursor";
+  if (source === "trae") return "trae";
   return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
 }
 
@@ -113,9 +164,19 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
     return sourceOrFormat === "claude" ? claudeAdapter : codexAdapter;
   }
   if (sourceOrFormat === "codebuddy") return codebuddyAdapter;
+  if (sourceOrFormat === "openclaw") return openClawAdapter;
+  if (sourceOrFormat === "hermes") return hermesAdapter;
+  if (sourceOrFormat === "opencode") return openCodeAdapter;
+  if (sourceOrFormat === "cursor") return cursorAdapter;
+  if (sourceOrFormat === "trae") return traeAdapter;
   const format = getFormatForSource(sourceOrFormat);
   if (format === "claude") return claudeAdapter;
   if (format === "codebuddy") return codebuddyAdapter;
+  if (format === "openclaw") return openClawAdapter;
+  if (format === "hermes") return hermesAdapter;
+  if (format === "opencode") return openCodeAdapter;
+  if (format === "cursor") return cursorAdapter;
+  if (format === "trae") return traeAdapter;
   return codexAdapter;
 }
 

@@ -5,8 +5,13 @@ export type SessionSource =
   | "codex-cli"
   | "codex-app"
   | "codex-internal"
-  | "codebuddy-cli";
-export type SessionFormat = "claude" | "codex" | "codebuddy";
+  | "codebuddy-cli"
+  | "openclaw"
+  | "hermes"
+  | "opencode-cli"
+  | "cursor-agent"
+  | "trae";
+export type SessionFormat = "claude" | "codex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
 export type SessionSortBy = "activity" | "created" | "updated";
 export type EnvironmentKind = "local" | "ssh";
 export type EnvironmentSyncState = "idle" | "syncing" | "watching" | "disconnected" | "error";
@@ -104,12 +109,14 @@ export interface LoadedSession {
   traceEvents?: SessionTraceEvent[];
 }
 
+export type SessionSourceFilter = SessionSource | "claude" | "codex" | "all";
+
 export interface SearchOptions {
   query?: string;
   tag?: string;
   projectPath?: string;
   environmentId?: string | "all";
-  source?: SessionSource | "claude" | "codex" | "all";
+  source?: SessionSourceFilter;
   visibility?: "default" | "favorites" | "hidden" | "pinned";
   sortBy?: SessionSortBy;
   limit?: number;
@@ -200,7 +207,7 @@ export interface UsageQuotaSnapshot {
   providers: UsageQuotaCard[];
 }
 
-export type LiveSessionFamily = "claude" | "codex" | "codebuddy";
+export type LiveSessionFamily = "claude" | "codex" | "codebuddy" | "trae";
 
 export interface LiveSession {
   family: LiveSessionFamily;

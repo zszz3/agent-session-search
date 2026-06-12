@@ -8,14 +8,25 @@ export interface LiveFilterableSession {
   rawId: string;
 }
 
-export function liveSessionKeyForSession(session: LiveFilterableSession): string {
-  const family = session.source.startsWith("claude") ? "claude" : session.source.startsWith("codex") ? "codex" : "codebuddy";
+export function liveSessionKeyForSession(session: LiveFilterableSession): string | null {
+  const family = session.source.startsWith("claude")
+    ? "claude"
+    : session.source.startsWith("codex")
+      ? "codex"
+      : session.source === "codebuddy-cli"
+        ? "codebuddy"
+        : session.source === "trae"
+          ? "trae"
+          : null;
+  if (!family) return null;
   return `${family}:${session.rawId}`;
 }
 
 export function getLiveSessionState(session: LiveFilterableSession, liveSessionKeys: Set<string>, liveDetectionFailed: boolean): LiveSessionState {
   if (liveDetectionFailed) return "unknown";
-  return liveSessionKeys.has(liveSessionKeyForSession(session)) ? "open" : "closed";
+  const liveKey = liveSessionKeyForSession(session);
+  if (!liveKey) return "unknown";
+  return liveSessionKeys.has(liveKey) ? "open" : "closed";
 }
 
 export function filterSessionsByLiveStatus<T extends LiveFilterableSession>(

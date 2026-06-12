@@ -2,12 +2,17 @@ import type { IndexedSession, SessionMessage, SessionSearchResult, SessionTraceE
 
 const SOURCE_LABEL: Record<string, string> = {
   "claude-cli": "Claude Code",
-  "claude-app": "Claude App",
+  "claude-app": "Claude Code",
   "claude-internal": "Claude Extra",
-  "codex-cli": "Codex CLI",
-  "codex-app": "Codex App",
+  "codex-cli": "Codex",
+  "codex-app": "Codex",
   "codex-internal": "Codex Extra",
   "codebuddy-cli": "CodeBuddy CLI",
+  openclaw: "OpenClaw",
+  hermes: "Hermes",
+  "opencode-cli": "OpenCode",
+  "cursor-agent": "Cursor Agent",
+  trae: "Trae",
 };
 
 export function formatRelativeTime(ts: number): string {

@@ -44,6 +44,12 @@ describe("live session focus", () => {
     expect(liveSessionPidForSession(session({ source: "codex-cli", rawId: "codex-1" }), liveSessions)).toBe(20);
   });
 
+  it("does not match unsupported sources against CodeBuddy live sessions", () => {
+    const liveSessions: LiveSession[] = [{ family: "codebuddy", rawId: "same-id", pid: 30 }];
+
+    expect(liveSessionPidForSession(session({ source: "opencode-cli", rawId: "same-id" }), liveSessions)).toBeNull();
+  });
+
   it("activates the terminal app that owns the live session process", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner = async (command: string, args: string[]): Promise<string> => {

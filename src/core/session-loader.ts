@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { cleanTitle, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
 import { truncateTraceDetail } from "./trace-detail";
 import type {
@@ -15,9 +16,13 @@ import type {
   SessionMessage,
   SessionSource,
   SessionTraceEvent,
+  SessionTraceKind,
   TokenUsage,
   TokenUsageEvent,
 } from "./types";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => import("node:sqlite").DatabaseSync };
 
 const CODEX_APP_ORIGINATOR = "Codex Desktop";
 const CLAUDE_INTERNAL_DIR = ".claude-internal";
@@ -28,6 +33,11 @@ export interface SessionLoadOptions {
   includeClaudeInternal?: boolean;
   includeCodexInternal?: boolean;
   includeCodeBuddyCli?: boolean;
+  includeOpenClaw?: boolean;
+  includeHermes?: boolean;
+  includeOpenCode?: boolean;
+  includeCursorAgent?: boolean;
+  includeTrae?: boolean;
 }
 
 export interface VirtualSessionFileStat {
@@ -595,7 +605,7 @@ function firstClaudeGitBranch(rows: unknown[]): string | null {
 }
 
 function createIndexedSession(input: {
-  keyPrefix: "claude" | "codex" | "claude-internal" | "codex-internal" | "codebuddy";
+  keyPrefix: "claude" | "codex" | "claude-internal" | "codex-internal" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
   rawId: string;
   source: SessionSource;
   projectPath: string;
@@ -933,6 +943,464 @@ export function* loadCodeBuddyCliSessionsIterator(codeBuddyDir = path.join(os.ho
   }
 }
 
+function readOnlyDatabase(dbPath: string): import("node:sqlite").DatabaseSync | null {
+  if (!fs.existsSync(dbPath)) return null;
+  try {
+    return new DatabaseSync(dbPath, { readOnly: true });
+  } catch {
+    return null;
+  }
+}
+
+function sqliteTableExists(db: import("node:sqlite").DatabaseSync, tableName: string): boolean {
+  try {
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?").get(tableName) as { name?: string } | undefined;
+    return Boolean(row?.name);
+  } catch {
+    return false;
+  }
+}
+
+function sqliteColumns(db: import("node:sqlite").DatabaseSync, tableName: string): Set<string> {
+  try {
+    return new Set((db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name));
+  } catch {
+    return new Set();
+  }
+}
+
+function sqliteHasColumns(db: import("node:sqlite").DatabaseSync, tableName: string, columns: string[]): boolean {
+  const available = sqliteColumns(db, tableName);
+  return columns.every((column) => available.has(column));
+}
+
+function parseJsonText(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function timestampString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
+  return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString();
+}
+
+function timestampMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value < 10_000_000_000 ? Math.round(value * 1000) : Math.round(value);
+  if (typeof value !== "string") return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function messageFromParts(role: "user" | "assistant", content: string, timestamp: string, index: number): SessionMessage {
+  return { role, content, timestamp, index };
+}
+
+function extractText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join("\n");
+  if (!isRecord(value)) return "";
+  const direct = firstStringField(value, ["text", "content", "message", "summary", "input", "output"]);
+  if (direct) return direct;
+  const nested = unknownField(value, "content") ?? unknownField(value, "text");
+  if (nested !== value) return extractText(nested);
+  return "";
+}
+
+function roleFromValue(value: unknown): "user" | "assistant" | null {
+  if (!isRecord(value)) return null;
+  const message = objectField(value, "message");
+  const role = unknownField(value, "role") ?? unknownField(value, "type") ?? unknownField(message, "role");
+  return role === "user" || role === "assistant" ? role : null;
+}
+
+function sourceMessages(rows: unknown[], format: SessionFormat): SessionMessage[] {
+  return extractMessages(rows, format);
+}
+
+function normalizeTraceTitle(name: string, summary: string): string {
+  return titleWithSummary(name || "event", summary);
+}
+
+function traceEventsFromRows(rows: unknown[], format: SessionFormat): SessionTraceEvent[] {
+  const events: TraceEventDraft[] = [];
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    const rowType = stringField(row, "type");
+    if (!rowType || rowType === "session" || rowType === "message" || rowType === "user" || rowType === "assistant") continue;
+
+    const data = unknownField(row, "data") ?? unknownField(row, "arguments") ?? unknownField(row, "input") ?? row;
+    const parsedData = parseJsonText(data);
+    const eventName = stringField(row, "customType") || stringField(row, "name") || stringField(row, "tool_name") || rowType;
+    const summary =
+      firstStringField(parsedData, ["command", "cmd", "path", "file_path", "query", "url"]) ||
+      firstStringField(row, ["command", "cmd", "path", "file_path", "query", "url"]);
+    const kind: SessionTraceKind = rowType === "tool_call" || eventName.includes("tool_call") ? "tool_call" : rowType === "tool_result" ? "tool_result" : "event";
+    events.push({
+      kind,
+      source: format,
+      title: normalizeTraceTitle(eventName, summary),
+      detail: stringifyDetail(parsedData),
+      timestamp: timestampString(unknownField(row, "timestamp") ?? unknownField(row, "time")),
+      callId: stringField(row, "call_id") || stringField(row, "id") || null,
+      eventType: rowType,
+      status: "unknown",
+    });
+  }
+  return dedupeTraceEvents(events);
+}
+
+function loadOpenClawSessionFile(filePath: string): LoadedSession | null {
+  const rows = readJsonl(filePath);
+  if (rows.length === 0) return null;
+
+  const fallbackRawId = path.basename(filePath, ".jsonl");
+  const meta = rows.find((row): row is Record<string, unknown> => isRecord(row) && stringField(row, "type") === "session");
+  const rawId = stringField(meta, "id") || fallbackRawId;
+  const projectPath = stringField(meta, "cwd") || rows.map((row) => (isRecord(row) ? stringField(row, "cwd") : "")).find(Boolean) || "";
+  const messages = sourceMessages(rows, "openclaw");
+  const traceEvents = traceEventsFromRows(rows, "openclaw");
+  const question = firstQuestion(messages);
+  const stat = safeStat(filePath);
+
+  return {
+    session: createIndexedSession({
+      keyPrefix: "openclaw",
+      rawId,
+      source: "openclaw",
+      projectPath,
+      filePath,
+      originalTitle: cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: timestampMs(meta && unknownField(meta, "timestamp")) || stat.mtimeMs,
+      stat,
+    }),
+    messages,
+    traceEvents,
+  };
+}
+
+export function loadOpenClawSessions(openClawDir = path.join(os.homedir(), ".openclaw")): LoadedSession[] {
+  return [...loadOpenClawSessionsIterator(openClawDir)];
+}
+
+export function* loadOpenClawSessionsIterator(openClawDir = path.join(os.homedir(), ".openclaw")): Generator<LoadedSession> {
+  const agentsDir = path.join(openClawDir, "agents");
+  if (!fs.existsSync(agentsDir)) return;
+  for (const filePath of walkJsonlFiles(agentsDir)) {
+    if (filePath.endsWith(".trajectory.jsonl")) continue;
+    if (!filePath.includes(`${path.sep}sessions${path.sep}`)) continue;
+    const loaded = loadOpenClawSessionFile(filePath);
+    if (loaded) yield loaded;
+  }
+}
+
+function decodeTraeProjectDir(value: string): string {
+  if (!value) return "";
+  if (value.startsWith("-")) return value.replace(/-/g, "/");
+  return value;
+}
+
+function traeAssistantSummary(row: Record<string, unknown>): string {
+  const parts = [
+    stringField(row, "outcome"),
+    Array.isArray(row.actions) && row.actions.length > 0 ? `Actions:\n${row.actions.map((item) => `- ${String(item)}`).join("\n")}` : "",
+    Array.isArray(row.learned) && row.learned.length > 0 ? `Learned:\n${row.learned.map((item) => `- ${String(item)}`).join("\n")}` : "",
+  ];
+  return joinNonEmpty(parts);
+}
+
+function loadTraeMemoryFile(filePath: string, traeDir: string): LoadedSession | null {
+  const rows = readJsonl(filePath).filter(isRecord);
+  if (rows.length === 0) return null;
+  const rawId = path.basename(filePath, ".jsonl");
+  const projectMarker = `${path.sep}memory${path.sep}projects${path.sep}`;
+  const projectSegment = filePath.includes(projectMarker) ? filePath.split(projectMarker)[1]?.split(path.sep)[0] || "" : "";
+  const projectPath = firstStringField(rows[0], ["projectPath", "project_path", "cwd"]) || decodeTraeProjectDir(projectSegment);
+  const messages: SessionMessage[] = [];
+  for (const row of rows) {
+    const ts = timestampString(stringField(row, "message_summary_time") || stringField(row, "timestamp"));
+    const intent = stringField(row, "intent");
+    if (intent && isMeaningfulUserMessage(intent)) messages.push(messageFromParts("user", intent, ts, messages.length));
+    const assistant = traeAssistantSummary(row);
+    if (assistant) messages.push(messageFromParts("assistant", assistant, ts, messages.length));
+  }
+  const question = firstQuestion(messages);
+  const stat = safeStat(filePath);
+  return {
+    session: createIndexedSession({
+      keyPrefix: "trae",
+      rawId,
+      source: "trae",
+      projectPath,
+      filePath,
+      originalTitle: cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: timestampMs(stringField(rows[0], "message_summary_time") || stringField(rows[0], "timestamp")) || stat.mtimeMs,
+      stat,
+    }),
+    messages,
+  };
+}
+
+export function loadTraeSessions(traeDir = path.join(os.homedir(), ".trae-cn")): LoadedSession[] {
+  return [...loadTraeSessionsIterator(traeDir)];
+}
+
+export function* loadTraeSessionsIterator(traeDir = path.join(os.homedir(), ".trae-cn")): Generator<LoadedSession> {
+  const memoryDir = path.join(traeDir, "memory", "projects");
+  if (!fs.existsSync(memoryDir)) return;
+  for (const filePath of walkJsonlFiles(memoryDir)) {
+    if (!path.basename(filePath).startsWith("session_memory_")) continue;
+    const loaded = loadTraeMemoryFile(filePath, traeDir);
+    if (loaded) yield loaded;
+  }
+}
+
+function extractProjectPathFromJson(value: unknown): string {
+  const parsed = parseJsonText(value);
+  if (!isRecord(parsed)) return "";
+  return firstStringField(parsed, ["cwd", "directory", "projectPath", "project_path", "workdir", "workspacePath", "workspace_path"]);
+}
+
+function createSourceTokenUsage(inputTokens: number, outputTokens: number, cachedInputTokens: number, reasoningOutputTokens: number): TokenUsage {
+  return createTokenUsage(
+    Math.max(0, inputTokens),
+    Math.max(0, outputTokens),
+    Math.max(0, cachedInputTokens),
+    Math.max(0, reasoningOutputTokens),
+  );
+}
+
+export function loadHermesSessions(hermesDir = path.join(os.homedir(), ".hermes")): LoadedSession[] {
+  const dbPath = path.join(hermesDir, "state.db");
+  const db = readOnlyDatabase(dbPath);
+  if (!db) return [];
+  try {
+    if (!sqliteTableExists(db, "sessions") || !sqliteTableExists(db, "messages")) return [];
+    if (!sqliteHasColumns(db, "sessions", ["id", "started_at"]) || !sqliteHasColumns(db, "messages", ["id", "session_id", "timestamp"])) {
+      return [];
+    }
+    const sessions = db.prepare("SELECT * FROM sessions ORDER BY started_at DESC").all() as Array<Record<string, unknown>>;
+    return sessions.map((session) => loadHermesSessionRow(db, dbPath, session)).filter((item): item is LoadedSession => Boolean(item));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+function loadHermesSessionRow(db: import("node:sqlite").DatabaseSync, dbPath: string, session: Record<string, unknown>): LoadedSession | null {
+  const rawId = stringField(session, "id");
+  if (!rawId) return null;
+  const rows = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp, id").all(rawId) as Array<Record<string, unknown>>;
+  const messages: SessionMessage[] = [];
+  const traceDrafts: TraceEventDraft[] = [];
+  for (const row of rows) {
+    const role = roleFromValue(row);
+    const content = stringField(row, "content");
+    const ts = timestampString(unknownField(row, "timestamp"));
+    if (role && content && isMeaningfulUserMessage(content)) messages.push(messageFromParts(role, content, ts, messages.length));
+    const toolName = stringField(row, "tool_name");
+    const toolCalls = stringField(row, "tool_calls");
+    if (toolName || toolCalls) {
+      traceDrafts.push({
+        kind: "tool_call",
+        source: "hermes",
+        title: toolName || "tool_call",
+        detail: stringifyDetail(parseJsonText(toolCalls || toolName)),
+        timestamp: ts,
+        callId: stringField(row, "tool_call_id") || null,
+        eventType: null,
+        status: "unknown",
+      });
+    }
+  }
+  const usage = createSourceTokenUsage(
+    numberField(session, "input_tokens"),
+    numberField(session, "output_tokens"),
+    numberField(session, "cache_read_tokens") + numberField(session, "cached_input_tokens"),
+    numberField(session, "reasoning_tokens") + numberField(session, "reasoning_output_tokens"),
+  );
+  const question = firstQuestion(messages);
+  const stat = safeStat(dbPath);
+  const title = stringField(session, "title");
+  return {
+    session: createIndexedSession({
+      keyPrefix: "hermes",
+      rawId,
+      source: "hermes",
+      projectPath: extractProjectPathFromJson(unknownField(session, "model_config")),
+      filePath: dbPath,
+      originalTitle: title || cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: timestampMs(unknownField(session, "started_at")) || stat.mtimeMs,
+      tokenUsage: usage,
+      stat,
+    }),
+    messages,
+    traceEvents: dedupeTraceEvents(traceDrafts),
+  };
+}
+
+function resolveOpenCodeDbPath(root: string): string {
+  const direct = path.join(root, "opencode.db");
+  if (fs.existsSync(direct)) return direct;
+  return path.join(root, ".local", "share", "opencode", "opencode.db");
+}
+
+export function loadOpenCodeSessions(opencodeRoot = path.join(os.homedir(), ".local", "share", "opencode")): LoadedSession[] {
+  const dbPath = resolveOpenCodeDbPath(opencodeRoot);
+  const db = readOnlyDatabase(dbPath);
+  if (!db) return [];
+  try {
+    if (!sqliteTableExists(db, "session")) return [];
+    if (!sqliteHasColumns(db, "session", ["id", "time_created"])) return [];
+    if (sqliteTableExists(db, "message") && !sqliteHasColumns(db, "message", ["id", "session_id", "type", "data"])) return [];
+    const sessions = db.prepare("SELECT * FROM session ORDER BY time_created DESC").all() as Array<Record<string, unknown>>;
+    return sessions.map((session) => loadOpenCodeSessionRow(db, dbPath, session)).filter((item): item is LoadedSession => Boolean(item));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+function opencodeMessagesFromParts(db: import("node:sqlite").DatabaseSync, rawId: string): { messages: SessionMessage[]; traceEvents: SessionTraceEvent[] } {
+  if (!sqliteTableExists(db, "message")) return { messages: [], traceEvents: [] };
+  const messageColumns = sqliteColumns(db, "message");
+  const partColumns = sqliteColumns(db, "part");
+  const hasPart = sqliteTableExists(db, "part") && partColumns.has("data");
+  const rows = hasPart
+    ? (db
+        .prepare(
+          `
+          SELECT message.id, message.type, message.time_created, message.data AS message_data,
+            part.id AS part_id, part.time_created AS part_time_created, part.data AS part_data
+          FROM message
+          LEFT JOIN part ON part.message_id = message.id
+          WHERE message.session_id = ?
+          ORDER BY message.time_created, part.time_created, part.id
+        `,
+        )
+        .all(rawId) as Array<Record<string, unknown>>)
+    : (db
+        .prepare(
+          `
+          SELECT id, type, ${messageColumns.has("time_created") ? "time_created" : "0 AS time_created"}, data AS message_data
+          FROM message
+          WHERE session_id = ?
+          ORDER BY time_created, id
+        `,
+        )
+        .all(rawId) as Array<Record<string, unknown>>);
+
+  const messages: SessionMessage[] = [];
+  const traceDrafts: TraceEventDraft[] = [];
+  for (const row of rows) {
+    const messageData = parseJsonText(unknownField(row, "message_data"));
+    const partData = parseJsonText(unknownField(row, "part_data"));
+    const role = (isRecord(messageData) && roleFromValue(messageData)) || roleFromValue(row);
+    const content = extractText(partData) || (isRecord(messageData) ? extractText(messageData) : "");
+    const ts = timestampString(unknownField(row, "part_time_created") || unknownField(row, "time_created"));
+    if (role && content && isMeaningfulUserMessage(content)) {
+      messages.push(messageFromParts(role, content, ts, messages.length));
+      continue;
+    }
+    if (content || isRecord(partData)) {
+      const name = isRecord(partData) ? firstStringField(partData, ["tool", "toolName", "name", "type"]) : stringField(row, "type");
+      traceDrafts.push({
+        kind: "event",
+        source: "opencode",
+        title: normalizeTraceTitle(name || "part", firstStringField(partData, ["command", "path", "file_path", "query"])),
+        detail: stringifyDetail(partData || messageData),
+        timestamp: ts,
+        callId: stringField(row, "part_id") || stringField(row, "id") || null,
+        eventType: stringField(row, "type") || null,
+        status: "unknown",
+      });
+    }
+  }
+  return { messages, traceEvents: dedupeTraceEvents(traceDrafts) };
+}
+
+function loadOpenCodeSessionRow(db: import("node:sqlite").DatabaseSync, dbPath: string, session: Record<string, unknown>): LoadedSession | null {
+  const rawId = stringField(session, "id");
+  if (!rawId) return null;
+  const { messages, traceEvents } = opencodeMessagesFromParts(db, rawId);
+  const question = firstQuestion(messages);
+  const stat = safeStat(dbPath);
+  const usage = createSourceTokenUsage(
+    numberField(session, "tokens_input"),
+    numberField(session, "tokens_output"),
+    numberField(session, "tokens_cache_read") + numberField(session, "tokens_cache_write"),
+    numberField(session, "tokens_reasoning"),
+  );
+  return {
+    session: createIndexedSession({
+      keyPrefix: "opencode",
+      rawId,
+      source: "opencode-cli",
+      projectPath: stringField(session, "directory") || stringField(session, "path"),
+      filePath: dbPath,
+      originalTitle: stringField(session, "title") || cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: timestampMs(unknownField(session, "time_updated")) || timestampMs(unknownField(session, "time_created")) || stat.mtimeMs,
+      tokenUsage: usage,
+      stat,
+    }),
+    messages,
+    traceEvents,
+  };
+}
+
+function loadCursorTranscriptFile(filePath: string): LoadedSession | null {
+  const rows = readJsonl(filePath);
+  if (rows.length === 0) return null;
+  const rawId = path.basename(filePath, ".jsonl");
+  const messages = sourceMessages(rows, "cursor");
+  const traceEvents = traceEventsFromRows(rows, "cursor");
+  const question = firstQuestion(messages);
+  const stat = safeStat(filePath);
+  const projectPath =
+    rows.map((row) => (isRecord(row) ? firstStringField(row, ["cwd", "projectPath", "project_path", "workspacePath", "workspace_path"]) : "")).find(Boolean) ||
+    "";
+  const firstTs = rows.map((row) => (isRecord(row) ? timestampMs(unknownField(row, "timestamp") ?? unknownField(row, "time")) : 0)).find(Boolean) || 0;
+  return {
+    session: createIndexedSession({
+      keyPrefix: "cursor",
+      rawId,
+      source: "cursor-agent",
+      projectPath,
+      filePath,
+      originalTitle: cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: firstTs || stat.mtimeMs,
+      stat,
+    }),
+    messages,
+    traceEvents,
+  };
+}
+
+export function loadCursorAgentSessions(cursorDir = path.join(os.homedir(), ".cursor")): LoadedSession[] {
+  return [...loadCursorAgentSessionsIterator(cursorDir)];
+}
+
+export function* loadCursorAgentSessionsIterator(cursorDir = path.join(os.homedir(), ".cursor")): Generator<LoadedSession> {
+  const projectsDir = path.join(cursorDir, "projects");
+  if (!fs.existsSync(projectsDir)) return;
+  for (const filePath of walkJsonlFiles(projectsDir)) {
+    if (!filePath.includes(`${path.sep}agent-transcripts${path.sep}`)) continue;
+    const loaded = loadCursorTranscriptFile(filePath);
+    if (loaded) yield loaded;
+  }
+}
+
 export function loadDefaultSessions(options: SessionLoadOptions = {}): LoadedSession[] {
   return [...loadDefaultSessionsIterator(options)];
 }
@@ -941,6 +1409,14 @@ export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): 
   yield* loadClaudeCliSessionsIterator();
   yield* loadClaudeAppSessionsIterator();
   yield* loadCodexSessionsIterator();
+  if (options.includeOpenClaw) {
+    yield* loadOpenClawSessionsIterator();
+    yield* loadOpenClawSessionsIterator(path.join(os.homedir(), ".clawdbot"));
+  }
+  if (options.includeHermes) yield* loadHermesSessions();
+  if (options.includeOpenCode) yield* loadOpenCodeSessions();
+  if (options.includeCursorAgent) yield* loadCursorAgentSessionsIterator();
+  if (options.includeTrae) yield* loadTraeSessionsIterator();
   if (options.includeClaudeInternal) yield* loadClaudeCliSessionsIterator(path.join(os.homedir(), CLAUDE_INTERNAL_DIR), "claude-internal");
   if (options.includeCodexInternal) yield* loadCodexSessionsIterator(path.join(os.homedir(), CODEX_INTERNAL_DIR), "codex-internal");
   if (options.includeCodeBuddyCli) yield* loadCodeBuddyCliSessionsIterator(path.join(os.homedir(), CODEBUDDY_DIR));

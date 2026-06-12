@@ -6,22 +6,23 @@ import { liveStateLabel, type LiveSessionState, type LiveStatusFilter } from "./
 
 export const SOURCE_LABEL: Record<SessionSource, string> = {
   "claude-cli": "Claude Code",
-  "claude-app": "Claude App",
+  "claude-app": "Claude Code",
   "claude-internal": "Claude Extra",
-  "codex-cli": "Codex CLI",
-  "codex-app": "Codex App",
+  "codex-cli": "Codex",
+  "codex-app": "Codex",
   "codex-internal": "Codex Extra",
   "codebuddy-cli": "CodeBuddy CLI",
+  openclaw: "OpenClaw",
+  hermes: "Hermes",
+  "opencode-cli": "OpenCode",
+  "cursor-agent": "Cursor Agent",
+  trae: "Trae",
 };
 
 const BASE_SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"] }> = [
   { label: "All", value: "all" },
-  { label: "Claude", value: "claude" },
+  { label: "Claude Code", value: "claude" },
   { label: "Codex", value: "codex" },
-  { label: "Claude Code", value: "claude-cli" },
-  { label: "Claude App", value: "claude-app" },
-  { label: "Codex CLI", value: "codex-cli" },
-  { label: "Codex App", value: "codex-app" },
 ];
 
 export function sourceFilters(settings: AppSettings | null): Array<{ label: string; value: SearchOptions["source"] }> {
@@ -30,6 +31,11 @@ export function sourceFilters(settings: AppSettings | null): Array<{ label: stri
     ...(settings?.includeClaudeInternal ? [{ label: "Claude Extra", value: "claude-internal" as const }] : []),
     ...(settings?.includeCodexInternal ? [{ label: "Codex Extra", value: "codex-internal" as const }] : []),
     ...(settings?.includeCodeBuddyCli ? [{ label: "CodeBuddy CLI", value: "codebuddy-cli" as const }] : []),
+    ...(settings?.includeOpenClaw ? [{ label: "OpenClaw", value: "openclaw" as const }] : []),
+    ...(settings?.includeHermes ? [{ label: "Hermes", value: "hermes" as const }] : []),
+    ...(settings?.includeOpenCode ? [{ label: "OpenCode", value: "opencode-cli" as const }] : []),
+    ...(settings?.includeCursorAgent ? [{ label: "Cursor Agent", value: "cursor-agent" as const }] : []),
+    ...(settings?.includeTrae ? [{ label: "Trae", value: "trae" as const }] : []),
   ];
 }
 
@@ -37,10 +43,15 @@ export function isBranchTag(tagName: string): boolean {
   return tagName.startsWith("branch:");
 }
 
-export function sourceUiFamily(source: SessionSource): "claude" | "codex" | "codebuddy" {
+export function sourceUiFamily(source: SessionSource): "claude" | "codex" | "codebuddy" | "other" {
   if (source.startsWith("claude")) return "claude";
   if (source.startsWith("codex")) return "codex";
-  return "codebuddy";
+  if (source === "codebuddy-cli") return "codebuddy";
+  return "other";
+}
+
+export function supportsResumeSource(source: SessionSource): boolean {
+  return source.startsWith("claude") || source.startsWith("codex") || source === "codebuddy-cli";
 }
 
 export function statsPeriodLabel(value: SessionStatsPeriod, language: LanguageMode): string {

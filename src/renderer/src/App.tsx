@@ -111,6 +111,7 @@ import {
   sourceFilters,
   sourceUiFamily,
   statsPeriodLabel,
+  supportsResumeSource,
 } from "./session-ui";
 
 const SORT_OPTIONS: Array<{ label: string; value: SessionSortBy }> = [
@@ -139,6 +140,30 @@ const LIVE_STATUS_FILTERS: Array<{ label: string; value: LiveStatusFilter }> = [
 ];
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
+type PendingSourceKey = "claude" | "codex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+type OptionalSourceSettingKey = keyof Pick<
+  AppSettings,
+  | "includeClaudeInternal"
+  | "includeCodexInternal"
+  | "includeCodeBuddyCli"
+  | "includeOpenClaw"
+  | "includeHermes"
+  | "includeOpenCode"
+  | "includeCursorAgent"
+  | "includeTrae"
+>;
+
+const OPTIONAL_SOURCE_SETTINGS: Array<{ key: OptionalSourceSettingKey; pendingKey: PendingSourceKey; filter: SearchOptions["source"] }> = [
+  { key: "includeClaudeInternal", pendingKey: "claude", filter: "claude-internal" },
+  { key: "includeCodexInternal", pendingKey: "codex", filter: "codex-internal" },
+  { key: "includeCodeBuddyCli", pendingKey: "codebuddy", filter: "codebuddy-cli" },
+  { key: "includeOpenClaw", pendingKey: "openclaw", filter: "openclaw" },
+  { key: "includeHermes", pendingKey: "hermes", filter: "hermes" },
+  { key: "includeOpenCode", pendingKey: "opencode", filter: "opencode-cli" },
+  { key: "includeCursorAgent", pendingKey: "cursor", filter: "cursor-agent" },
+  { key: "includeTrae", pendingKey: "trae", filter: "trae" },
+];
+
 const INITIAL_SESSION_LIMIT = 30;
 const SESSION_PAGE_SIZE = 30;
 const INITIAL_MESSAGE_LIMIT = 20;
@@ -301,10 +326,15 @@ export function App(): ReactElement {
   const [diagnosingEnvironmentId, setDiagnosingEnvironmentId] = useState<string | null>(null);
   const [skillHookInstalled, setSkillHookInstalled] = useState<boolean | null>(null);
   const [skillHookBusy, setSkillHookBusy] = useState(false);
-  const [pendingPersonalSources, setPendingPersonalSources] = useState<{ claude: boolean; codex: boolean; codebuddy: boolean }>({
+  const [pendingPersonalSources, setPendingPersonalSources] = useState<Record<PendingSourceKey, boolean>>({
     claude: false,
     codex: false,
     codebuddy: false,
+    openclaw: false,
+    hermes: false,
+    opencode: false,
+    cursor: false,
+    trae: false,
   });
   const loadSeqRef = useRef(0);
   const metadataLoadSeqRef = useRef(0);
@@ -519,9 +549,8 @@ export function App(): ReactElement {
   }, []);
 
   useEffect(() => {
-    if (source === "claude-internal" && appSettings && !appSettings.includeClaudeInternal) setSource("all");
-    if (source === "codex-internal" && appSettings && !appSettings.includeCodexInternal) setSource("all");
-    if (source === "codebuddy-cli" && appSettings && !appSettings.includeCodeBuddyCli) setSource("all");
+    if (!appSettings) return;
+    if (OPTIONAL_SOURCE_SETTINGS.some((item) => source === item.filter && !appSettings[item.key])) setSource("all");
   }, [source, appSettings]);
 
   useEffect(() => {
@@ -639,7 +668,7 @@ export function App(): ReactElement {
         event.preventDefault();
         if (actionStatus?.kind === "running" || !selectedKey) return;
         const session = displayedResults.find((item) => item.sessionKey === selectedKey);
-        if (session) {
+        if (session && supportsResumeSource(session.source)) {
           void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(session.sessionKey), (result) => resumeRouteMessage(result, language));
         }
         return;
@@ -693,6 +722,11 @@ export function App(): ReactElement {
       includeClaudeInternal: appSettings.includeClaudeInternal && !pendingPersonalSources.claude,
       includeCodexInternal: appSettings.includeCodexInternal && !pendingPersonalSources.codex,
       includeCodeBuddyCli: appSettings.includeCodeBuddyCli && !pendingPersonalSources.codebuddy,
+      includeOpenClaw: appSettings.includeOpenClaw && !pendingPersonalSources.openclaw,
+      includeHermes: appSettings.includeHermes && !pendingPersonalSources.hermes,
+      includeOpenCode: appSettings.includeOpenCode && !pendingPersonalSources.opencode,
+      includeCursorAgent: appSettings.includeCursorAgent && !pendingPersonalSources.cursor,
+      includeTrae: appSettings.includeTrae && !pendingPersonalSources.trae,
     });
   }, [appSettings, pendingPersonalSources]);
   const selectedProject = useMemo(
@@ -972,9 +1006,7 @@ export function App(): ReactElement {
   }
 
   async function updateSettings(next: AppSettingsUpdate): Promise<void> {
-    const enablingClaude = next.includeClaudeInternal === true && !appSettings?.includeClaudeInternal;
-    const enablingCodex = next.includeCodexInternal === true && !appSettings?.includeCodexInternal;
-    const enablingCodeBuddy = next.includeCodeBuddyCli === true && !appSettings?.includeCodeBuddyCli;
+    const newlyEnabledSources = OPTIONAL_SOURCE_SETTINGS.filter((item) => next[item.key] === true && !appSettings?.[item.key]);
     const quotaVisibilityChanged =
       ("hideCodexQuota" in next && next.hideCodexQuota !== appSettings?.hideCodexQuota) ||
       ("hideClaudeQuota" in next && next.hideClaudeQuota !== appSettings?.hideClaudeQuota);
@@ -984,21 +1016,23 @@ export function App(): ReactElement {
       setAppSettings(nextSettings);
       if (quotaVisibilityChanged) void loadQuotas();
 
-      if (enablingClaude || enablingCodex || enablingCodeBuddy) {
-        // Keep the toggle responsive: scan the personal source in the background
-        // and only reveal its sidebar filter once that scan finishes.
-        if (enablingClaude) setPendingPersonalSources((current) => ({ ...current, claude: true }));
-        if (enablingCodex) setPendingPersonalSources((current) => ({ ...current, codex: true }));
-        if (enablingCodeBuddy) setPendingPersonalSources((current) => ({ ...current, codebuddy: true }));
+      if (newlyEnabledSources.length > 0) {
+        // Keep the toggle responsive: scan optional sources in the background
+        // and only reveal their sidebar filters once that scan finishes.
+        setPendingPersonalSources((current) => {
+          const pending = { ...current };
+          for (const item of newlyEnabledSources) pending[item.pendingKey] = true;
+          return pending;
+        });
         setSettingsFeedback({ kind: "success", message: t("Loading sessions in the background...", "正在后台加载会话...") });
         void window.sessionSearch
           .refreshIndex()
           .then(async () => {
-            setPendingPersonalSources((current) => ({
-              claude: enablingClaude ? false : current.claude,
-              codex: enablingCodex ? false : current.codex,
-              codebuddy: enablingCodeBuddy ? false : current.codebuddy,
-            }));
+            setPendingPersonalSources((current) => {
+              const pending = { ...current };
+              for (const item of newlyEnabledSources) pending[item.pendingKey] = false;
+              return pending;
+            });
             await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
             setSettingsFeedback({ kind: "success", message: t("Sources ready.", "来源已就绪。") });
             window.setTimeout(() => {
@@ -1006,15 +1040,17 @@ export function App(): ReactElement {
             }, 1600);
           })
           .catch((error) => {
-            if (enablingClaude) setPendingPersonalSources((current) => ({ ...current, claude: false }));
-            if (enablingCodex) setPendingPersonalSources((current) => ({ ...current, codex: false }));
-            if (enablingCodeBuddy) setPendingPersonalSources((current) => ({ ...current, codebuddy: false }));
+            setPendingPersonalSources((current) => {
+              const pending = { ...current };
+              for (const item of newlyEnabledSources) pending[item.pendingKey] = false;
+              return pending;
+            });
             setSettingsFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
           });
         return;
       }
 
-      await load();
+      await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
       setSettingsFeedback({ kind: "success", message: t("Settings saved.", "设置已保存。") });
       window.setTimeout(() => {
         setSettingsFeedback((current) => (current?.kind === "success" ? null : current));
@@ -1485,6 +1521,7 @@ export function App(): ReactElement {
           onAddTag={() => beginAddTag(detail)}
           onRemoveTag={(tagName) => void removeTag(detail, tagName)}
           onFavorite={() => void toggleFavorite(detail)}
+          canResume={supportsResumeSource(detail.source)}
           onResume={() =>
             void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(detail.sessionKey), (result) => resumeRouteMessage(result, language))
           }
@@ -1518,6 +1555,7 @@ export function App(): ReactElement {
           language={language}
           revealLabel={FILE_MANAGER_LABEL}
           showMacActions={IS_MAC}
+          canResume={supportsResumeSource(contextMenu.session.source)}
           onRename={() => beginRename(contextMenu.session)}
           onAddTag={() => beginAddTag(contextMenu.session)}
           onFavorite={() =>
@@ -1898,6 +1936,7 @@ function ContextMenu({
   language,
   revealLabel,
   showMacActions,
+  canResume,
   onRename,
   onAddTag,
   onFavorite,
@@ -1916,6 +1955,7 @@ function ContextMenu({
   language: LanguageMode;
   revealLabel: string;
   showMacActions: boolean;
+  canResume: boolean;
   onRename: () => void;
   onAddTag: () => void;
   onFavorite: () => void;
@@ -1952,22 +1992,26 @@ function ContextMenu({
         {state.session.hidden ? <Eye size={14} /> : <Archive size={14} />} {state.session.hidden ? l("Unhide", "取消隐藏") : l("Hide", "隐藏")}
       </button>
       <hr />
-      <button onClick={onResume}>
-        <Play size={14} /> {l("Resume in Terminal", "在终端恢复")}
-      </button>
-      {showMacActions ? (
+      {canResume ? (
+        <button onClick={onResume}>
+          <Play size={14} /> {l("Resume in Terminal", "在终端恢复")}
+        </button>
+      ) : null}
+      {canResume && showMacActions ? (
         <button onClick={onResumeIterm}>
           <TerminalIcon size={14} /> Resume in iTerm
         </button>
       ) : null}
-      {showMacActions ? (
+      {canResume && showMacActions ? (
         <button onClick={onOpenApp} disabled={localOnlyDisabled} title={openAppTitle}>
           <AppWindow size={14} /> Open App
         </button>
       ) : null}
-      <button onClick={onCopyResume}>
-        <Copy size={14} /> {l("Copy Resume Cmd", "复制 Resume 命令")}
-      </button>
+      {canResume ? (
+        <button onClick={onCopyResume}>
+          <Copy size={14} /> {l("Copy Resume Cmd", "复制 Resume 命令")}
+        </button>
+      ) : null}
       <button onClick={onCopyMarkdown}>{l("Copy Markdown", "复制 Markdown")}</button>
       <button onClick={onExportMarkdown}>
         <Download size={14} /> {l("Export Markdown", "导出 Markdown")}
@@ -2057,7 +2101,7 @@ function SettingsDialog({
             </button>
             <button className={activeSection === "sources" ? "active" : ""} onClick={() => setActiveSection("sources")}>
               <Folder size={15} />
-              <span>{l("Personal sources", "个人来源")}</span>
+              <span>{l("Optional sources", "可选来源")}</span>
             </button>
             <button className={activeSection === "usage" ? "active" : ""} onClick={() => setActiveSection("usage")}>
               <Gauge size={15} />
@@ -2207,8 +2251,8 @@ function SettingsDialog({
             {activeSection === "sources" ? (
               <section className="settings-pane">
                 <header className="settings-pane-head">
-                  <h3>{l("Personal sources", "个人来源")}</h3>
-                  <p>{l("Personal sources stay separate from the normal Claude and Codex filters.", "个人来源会和普通 Claude/Codex 过滤项分开显示。")}</p>
+                  <h3>{l("Optional sources", "可选来源")}</h3>
+                  <p>{l("Choose which local agent data sources are monitored and indexed.", "选择要监测和索引的本地 agent 数据源。")}</p>
                 </header>
                 <label className="settings-field settings-toggle">
                   <div className="settings-field-text">
@@ -2247,6 +2291,71 @@ function SettingsDialog({
                     checked={Boolean(settings?.includeCodeBuddyCli)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ includeCodeBuddyCli: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include OpenClaw</span>
+                    <span className="settings-field-sub">{l("Indexes local OpenClaw session files.", "索引本地 OpenClaw 会话文件。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeOpenClaw)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeOpenClaw: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include Hermes</span>
+                    <span className="settings-field-sub">{l("Indexes local Hermes session database.", "索引本地 Hermes 会话数据库。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeHermes)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeHermes: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include OpenCode</span>
+                    <span className="settings-field-sub">{l("Indexes local OpenCode sessions.", "索引本地 OpenCode 会话。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeOpenCode)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeOpenCode: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include Cursor Agent</span>
+                    <span className="settings-field-sub">{l("Indexes local Cursor agent transcripts.", "索引本地 Cursor agent 记录。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeCursorAgent)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeCursorAgent: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include Trae</span>
+                    <span className="settings-field-sub">{l("Indexes local Trae session memory and enables open-state checks.", "索引本地 Trae 会话记忆，并支持打开状态检测。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeTrae)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeTrae: event.currentTarget.checked })}
                   />
                 </label>
               </section>
