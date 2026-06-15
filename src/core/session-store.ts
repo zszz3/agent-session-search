@@ -588,6 +588,13 @@ export class SessionStore {
     return row ? this.hydrateRow(row, null) : null;
   }
 
+  findByRawId(rawId: string): SessionSearchResult | null {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE raw_id = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(rawId) as SessionRow | undefined;
+    return row ? this.hydrateRow(row, null) : null;
+  }
+
   getMessages(sessionKey: string, offset = 0, limit = 120): SessionMessage[] {
     return (
       this.db

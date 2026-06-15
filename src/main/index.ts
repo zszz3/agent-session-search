@@ -7,6 +7,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   Tray,
   type MenuItemConstructorOptions,
@@ -39,6 +40,7 @@ import {
 import { loadUsageQuotaSnapshot } from "../core/quota";
 import { focusLiveSessionTerminal } from "../core/session-focus";
 import { loadLiveSessionSnapshot } from "../core/session-activity";
+import { type TrackedLiveSession, updateLiveTracker } from "../core/live-transitions";
 import { routeResumeSession } from "../core/resume-router";
 import { diagnoseRemoteEnvironment, preflightRemoteSessionResume } from "../core/remote-health";
 import { fetchRemoteSessionFilePayload, syncRemoteEnvironment } from "../core/remote-sync";
@@ -150,6 +152,8 @@ let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, total: 0, lastIndexedAt: null, error: null };
 let activeIndexRun: Promise<IndexStatus> | null = null;
 let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
+let liveNotifyTimer: ReturnType<typeof setInterval> | null = null;
+let liveTracker = new Map<string, TrackedLiveSession>();
 let registeredGlobalShortcut: string | null = null;
 let remoteWatchManager: RemoteWatchManager | null = null;
 let remoteEnvironmentLifecycle: RemoteEnvironmentLifecycle | null = null;
@@ -648,6 +652,71 @@ async function runIndexSync(): Promise<IndexStatus> {
   return activeIndexRun;
 }
 
+const LIVE_NOTIFY_INTERVAL_MS = 10_000;
+
+const LIVE_FAMILY_LABEL: Record<TrackedLiveSession["family"], string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  codebuddy: "CodeBuddy",
+  trae: "Trae",
+};
+
+async function pollLiveSessionsForNotifications(): Promise<void> {
+  const settings = getSettings();
+  if (!settings.notifyOnSessionComplete) {
+    // Reset so re-enabling does not retroactively report sessions that ended while off.
+    if (liveTracker.size > 0) liveTracker = new Map();
+    return;
+  }
+
+  let sessions;
+  try {
+    const snapshot = await loadLiveSessionSnapshot({ includeTrae: settings.includeTrae });
+    if (snapshot.error) return;
+    sessions = snapshot.sessions;
+  } catch {
+    return;
+  }
+
+  const { tracker, completed } = updateLiveTracker(liveTracker, sessions, Date.now());
+  liveTracker = tracker;
+  if (completed.length === 0 || !Notification.isSupported()) return;
+
+  const minDurationMs = settings.notifyMinDurationSeconds * 1000;
+  for (const session of completed) {
+    if (session.durationMs < minDurationMs) continue;
+    const familyLabel = LIVE_FAMILY_LABEL[session.family] ?? session.family;
+    const resolved = store?.findByRawId(session.rawId) ?? null;
+    const descriptor = resolved?.displayTitle || resolved?.firstQuestion || resolved?.projectPath || "";
+    const minutes = Math.max(1, Math.round(session.durationMs / 60_000));
+    const notification = new Notification({
+      title: `${familyLabel} session finished`,
+      body: descriptor ? truncateNotificationBody(descriptor) : `Ran for ~${minutes} min`,
+    });
+    notification.on("click", () => showWindow());
+    notification.show();
+  }
+}
+
+function truncateNotificationBody(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 119)}…` : trimmed;
+}
+
+function startLiveNotifyPolling(): void {
+  if (liveNotifyTimer) return;
+  liveNotifyTimer = setInterval(() => {
+    void pollLiveSessionsForNotifications();
+  }, LIVE_NOTIFY_INTERVAL_MS);
+}
+
+function stopLiveNotifyPolling(): void {
+  if (!liveNotifyTimer) return;
+  clearInterval(liveNotifyTimer);
+  liveNotifyTimer = null;
+  liveTracker = new Map();
+}
+
 function startAutoIndexRefresh(): void {
   if (autoIndexTimer) return;
   autoIndexTimer = setInterval(() => {
@@ -846,6 +915,7 @@ app.whenReady().then(() => {
   ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
   setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
   startAutoIndexRefresh();
+  startLiveNotifyPolling();
 });
 
 app.on("window-all-closed", () => {
@@ -858,6 +928,7 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   stopAutoIndexRefresh();
+  stopLiveNotifyPolling();
   remoteEnvironmentLifecycle?.stopAll();
   globalShortcut.unregisterAll();
   store?.close();

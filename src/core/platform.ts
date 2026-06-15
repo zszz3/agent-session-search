@@ -65,6 +65,8 @@ export interface AppSettings {
   includeTrae: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
+  notifyOnSessionComplete: boolean;
+  notifyMinDurationSeconds: number;
   apiConfig: ApiConfig;
   claudeApiConfig: ClaudeApiConfig;
 }
@@ -90,6 +92,8 @@ export const defaultSettings: AppSettings = {
   includeTrae: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
+  notifyOnSessionComplete: false,
+  notifyMinDurationSeconds: 30,
   apiConfig: defaultApiConfig,
   claudeApiConfig: defaultClaudeApiConfig,
 };
@@ -100,9 +104,15 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
     ...merged,
     defaultTerminal: normalizeTerminal(merged.defaultTerminal),
     globalShortcut: normalizeGlobalShortcut(merged.globalShortcut),
+    notifyMinDurationSeconds: normalizeNotifyDuration(merged.notifyMinDurationSeconds),
     apiConfig: normalizeApiConfig({ ...previous.apiConfig, ...(updates.apiConfig ?? {}) }),
     claudeApiConfig: normalizeClaudeApiConfig({ ...previous.claudeApiConfig, ...(updates.claudeApiConfig ?? {}) }),
   };
+}
+
+function normalizeNotifyDuration(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return defaultSettings.notifyMinDurationSeconds;
+  return Math.min(3600, Math.round(value));
 }
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
