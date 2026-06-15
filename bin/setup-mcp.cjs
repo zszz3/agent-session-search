@@ -101,7 +101,16 @@ function run(remove) {
   return messages;
 }
 
-module.exports = { applyClaudeConfig, applyCodexConfig, removeCodexBlock };
+function status(home = homeDir()) {
+  try {
+    const claude = readJson(path.join(home, ".claude.json"));
+    return Boolean(claude && claude.mcpServers && claude.mcpServers[SERVER_NAME]);
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { applyClaudeConfig, applyCodexConfig, removeCodexBlock, run, status };
 
 if (require.main === module) {
   const remove = process.argv.includes("uninstall") || process.argv.includes("--remove");

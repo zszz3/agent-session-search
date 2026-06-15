@@ -100,6 +100,15 @@ function loadSkillUsageHookSetup(): SkillUsageHookSetup {
   return requireCjs(SKILL_USAGE_HOOK_SETUP_PATH) as SkillUsageHookSetup;
 }
 
+const MCP_SETUP_PATH = path.join(__dirname, "../../bin/setup-mcp.cjs");
+interface McpSetup {
+  run(remove: boolean): string[];
+  status(): boolean;
+}
+function loadMcpSetup(): McpSetup {
+  return requireCjs(MCP_SETUP_PATH) as McpSetup;
+}
+
 // Merges skill-usage counts and hook-install state onto the scanned skill list
 // so the renderer can sort by most-used.
 function buildSkillsSnapshot(): InstalledSkillsSnapshot {
@@ -823,6 +832,18 @@ function registerIpc(): void {
       }
     }
     return { processed, total: candidates.length };
+  });
+  ipcMain.handle("mcp:status", () => {
+    try {
+      return loadMcpSetup().status();
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle("mcp:set-enabled", (_event, enabled: boolean) => {
+    const setup = loadMcpSetup();
+    setup.run(!enabled);
+    return setup.status();
   });
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
   ipcMain.handle("quota:get", () => {

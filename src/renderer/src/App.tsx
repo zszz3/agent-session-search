@@ -2098,6 +2098,26 @@ function SettingsDialog({
   const globalShortcut = settings?.globalShortcut ?? (RUNTIME_PLATFORM === "win32" ? "Ctrl+Alt+Space" : "Alt+Space");
   const saving = feedback?.kind === "running";
   const [summaryBatch, setSummaryBatch] = useState<{ running: boolean; message: string | null }>({ running: false, message: null });
+  const [mcpEnabled, setMcpEnabled] = useState<boolean | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+
+  useEffect(() => {
+    void window.sessionSearch
+      .getMcpStatus()
+      .then(setMcpEnabled)
+      .catch(() => setMcpEnabled(false));
+  }, []);
+
+  async function toggleMcp(next: boolean): Promise<void> {
+    setMcpBusy(true);
+    try {
+      setMcpEnabled(await window.sessionSearch.setMcpEnabled(next));
+    } catch {
+      // Leave the previous state; the toggle simply won't flip.
+    } finally {
+      setMcpBusy(false);
+    }
+  }
 
   async function runSummaryBatch(): Promise<void> {
     setSummaryBatch({ running: true, message: null });
@@ -2511,6 +2531,32 @@ function SettingsDialog({
                     {summaryBatch.running ? l("Summarizing...", "摘要中...") : l("Run", "运行")}
                   </button>
                 </div>
+                <header className="settings-pane-head" style={{ marginTop: 18 }}>
+                  <h3>{l("MCP server", "MCP 服务")}</h3>
+                  <p>
+                    {l(
+                      "Let Claude Code / Codex search your past sessions over MCP (search_sessions, get_session). Registers the server in their configs; restart them to apply.",
+                      "让 Claude Code / Codex 通过 MCP 检索你的历史会话(search_sessions、get_session)。会注册到它们的配置中，重启后生效。",
+                    )}
+                  </p>
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Enable session search MCP", "启用会话检索 MCP")}</span>
+                    <span className="settings-field-sub">
+                      {mcpEnabled === null
+                        ? l("Checking...", "检查中...")
+                        : l("Registers in ~/.claude.json and ~/.codex/config.toml.", "注册到 ~/.claude.json 和 ~/.codex/config.toml。")}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(mcpEnabled)}
+                    disabled={mcpEnabled === null || mcpBusy}
+                    onChange={(event) => void toggleMcp(event.currentTarget.checked)}
+                  />
+                </label>
               </section>
             ) : null}
             {activeSection === "skills" ? (
