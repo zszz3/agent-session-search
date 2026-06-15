@@ -79,7 +79,9 @@ function applyClaudeConfig(config, scriptPath, remove, command = "node") {
 // --- Codex (~/.codex/config.toml, TOML) ------------------------------------
 
 function applyCodexConfig(toml, scriptPath, remove, command = "node") {
-  const block = `[${CODEX_SECTION}]\ncommand = ${JSON.stringify(command)}\nargs = ["${scriptPath}"]\n`;
+  // JSON.stringify both values: TOML basic-string escapes (\\, \") match JSON, so
+  // Windows paths with backslashes stay valid.
+  const block = `[${CODEX_SECTION}]\ncommand = ${JSON.stringify(command)}\nargs = [${JSON.stringify(scriptPath)}]\n`;
   const stripped = removeCodexBlock(toml);
   if (remove) return stripped;
   const base = stripped.trim();

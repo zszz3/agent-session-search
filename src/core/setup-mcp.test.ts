@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const { applyClaudeConfig, applyCodexConfig, removeCodexBlock } = require(path.resolve("bin", "setup-mcp.cjs")) as {
   applyClaudeConfig: (config: unknown, scriptPath: string, remove: boolean) => Record<string, unknown>;
-  applyCodexConfig: (toml: string, scriptPath: string, remove: boolean) => string;
+  applyCodexConfig: (toml: string, scriptPath: string, remove: boolean, command?: string) => string;
   removeCodexBlock: (toml: string) => string;
 };
 
@@ -44,5 +44,11 @@ describe("setup-mcp Codex config", () => {
     expect(removed).not.toContain("mcp_servers.agent_session_search");
     expect(removed).toContain("[other]");
     expect(removeCodexBlock(removed)).toBe(removed);
+  });
+
+  it("escapes Windows backslash paths into valid TOML", () => {
+    const toml = applyCodexConfig("", "C:\\Users\\me\\bin\\server.mjs", false, "C:\\Program Files\\nodejs\\node.exe");
+    expect(toml).toContain('args = ["C:\\\\Users\\\\me\\\\bin\\\\server.mjs"]');
+    expect(toml).toContain('command = "C:\\\\Program Files\\\\nodejs\\\\node.exe"');
   });
 });
