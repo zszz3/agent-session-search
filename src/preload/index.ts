@@ -33,7 +33,18 @@ const api = {
     ipcRenderer.invoke("session:messages", sessionKey, offset, limit),
   getTraceEvents: (sessionKey: string): Promise<SessionTraceEvent[]> => ipcRenderer.invoke("session:trace-events", sessionKey),
   getLiveSessions: (): Promise<LiveSessionSnapshot> => ipcRenderer.invoke("sessions:live"),
+  summarizeSession: (sessionKey: string): Promise<SessionSearchResult | null> =>
+    ipcRenderer.invoke("session:summarize", sessionKey),
+  summarizeMissingSessions: (): Promise<{ processed: number; failed: number; total: number }> =>
+    ipcRenderer.invoke("session:summarize-missing"),
+  onSummaryProgress: (callback: (progress: { processed: number; failed: number; total: number }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: { processed: number; failed: number; total: number }) => callback(progress);
+    ipcRenderer.on("summary:progress", listener);
+    return () => ipcRenderer.removeListener("summary:progress", listener);
+  },
   getStats: (options?: SessionStatsOptions): Promise<SessionStats> => ipcRenderer.invoke("stats:get", options),
+  getMcpStatus: (): Promise<boolean> => ipcRenderer.invoke("mcp:status"),
+  setMcpEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke("mcp:set-enabled", enabled),
   getQuotas: (): Promise<UsageQuotaSnapshot> => ipcRenderer.invoke("quota:get"),
   listTags: (): Promise<string[]> => ipcRenderer.invoke("tags:list"),
   listProjects: (): Promise<ProjectSummary[]> => ipcRenderer.invoke("projects:list"),
@@ -58,7 +69,7 @@ const api = {
   setSettings: (settings: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke("settings:set", settings),
   applyCodexProfile: (apiConfig: ApiConfig): Promise<ApplyCodexProfileResult> => ipcRenderer.invoke("codex-profile:apply", apiConfig),
   applyClaudeProfile: (apiConfig: ClaudeApiConfig): Promise<ApplyClaudeProfileResult> => ipcRenderer.invoke("claude-profile:apply", apiConfig),
-  getApiProviderKey: (target: "codex" | "claude", providerId: string): Promise<string> =>
+  getApiProviderKey: (target: "codex" | "claude" | "summary", providerId: string): Promise<string> =>
     ipcRenderer.invoke("api-provider-key:get", target, providerId),
   listSkills: (): Promise<InstalledSkillsSnapshot> => ipcRenderer.invoke("skills:list"),
   refreshSkillUsage: (): Promise<SkillUsageRefreshStatus> => ipcRenderer.invoke("skills:refresh-usage"),

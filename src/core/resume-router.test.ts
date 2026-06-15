@@ -30,6 +30,8 @@ function session(overrides: Partial<SessionSearchResult> = {}): SessionSearchRes
     lastOpenedAt: null,
     lastResumedAt: null,
     messageCount: 0,
+    aiSummary: null,
+    aiSummaryStale: false,
     ...overrides,
   };
 }

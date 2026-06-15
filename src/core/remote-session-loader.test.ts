@@ -81,6 +81,8 @@ describe("remote session loader", () => {
       lastOpenedAt: null,
       lastResumedAt: null,
       messageCount: 0,
+      aiSummary: null,
+      aiSummaryStale: false,
     } satisfies SessionSearchResult;
 
     const loaded = loadRemoteSessionDetailPayload(

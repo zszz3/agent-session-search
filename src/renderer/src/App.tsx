@@ -31,6 +31,7 @@ import {
   Search,
   Server,
   Settings,
+  Sparkles,
   Star,
   Sun,
   Tag,
@@ -282,7 +283,7 @@ export function App(): ReactElement {
   const [projectPath, setProjectPath] = useState<string | undefined>();
   const [projectEnvironmentId, setProjectEnvironmentId] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<ViewMode>("default");
-  const [sortBy, setSortBy] = useState<SessionSortBy>("created");
+  const [sortBy, setSortBy] = useState<SessionSortBy>("activity");
   const [liveStatus, setLiveStatus] = useState<LiveStatusFilter>("all");
   const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_LIMIT);
   const [sessionTotalCount, setSessionTotalCount] = useState(0);
@@ -312,6 +313,7 @@ export function App(): ReactElement {
   const [deleteSessionCandidate, setDeleteSessionCandidate] = useState<SessionSearchResult | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
   const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
@@ -881,6 +883,24 @@ export function App(): ReactElement {
   async function toggleFavorite(session: SessionSearchResult): Promise<void> {
     await window.sessionSearch.setFavorited(session.sessionKey, !session.favorited);
     await refreshAfterAction();
+  }
+
+  async function summarizeDetail(session: SessionSearchResult): Promise<void> {
+    if (summarizing) return;
+    setSummarizing(true);
+    setActionStatus({ kind: "running", message: t("Generating AI summary...", "正在生成 AI 摘要...") });
+    try {
+      const updated = await window.sessionSearch.summarizeSession(session.sessionKey);
+      if (updated) setDetail(updated);
+      await refreshAfterAction();
+      const message = t("AI summary generated.", "AI 摘要已生成。");
+      setActionStatus({ kind: "success", message });
+      window.setTimeout(() => setActionStatus((current) => (current?.kind === "success" && current.message === message ? null : current)), 4000);
+    } catch (error) {
+      setActionStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setSummarizing(false);
+    }
   }
 
   async function deleteTagGlobally(tagName: string): Promise<void> {
@@ -1524,6 +1544,8 @@ export function App(): ReactElement {
           onAddTag={() => beginAddTag(detail)}
           onRemoveTag={(tagName) => void removeTag(detail, tagName)}
           onFavorite={() => void toggleFavorite(detail)}
+          onSummarize={() => void summarizeDetail(detail)}
+          summarizing={summarizing}
           canResume={supportsResumeSource(detail.source)}
           onResume={() =>
             void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(detail.sessionKey), (result) => resumeRouteMessage(result, language))
@@ -1672,6 +1694,10 @@ export function App(): ReactElement {
           onDiagnoseEnvironment={(environment) => void diagnoseEnvironment(environment)}
           onDeleteEnvironment={(environment) => void deleteEnvironment(environment)}
           onAddSsh={() => setSshDialogOpen(true)}
+          onOpenApiConfig={() => {
+            setSettingsOpen(false);
+            setApiConfigOpen(true);
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}
@@ -2050,6 +2076,7 @@ function SettingsDialog({
   onDiagnoseEnvironment,
   onDeleteEnvironment,
   onAddSsh,
+  onOpenApiConfig,
   onClose,
 }: {
   settings: AppSettings | null;
@@ -2071,13 +2098,65 @@ function SettingsDialog({
   onDiagnoseEnvironment: (environment: SessionEnvironment) => void;
   onDeleteEnvironment: (environment: SessionEnvironment) => void;
   onAddSsh: () => void;
+  onOpenApiConfig: () => void;
   onClose: () => void;
 }): ReactElement {
   const defaultTerminal = settings?.defaultTerminal ?? (RUNTIME_PLATFORM === "win32" ? "WindowsTerminal" : "Terminal");
   const globalShortcut = settings?.globalShortcut ?? (RUNTIME_PLATFORM === "win32" ? "Ctrl+Alt+Space" : "Alt+Space");
   const saving = feedback?.kind === "running";
+  const [summaryBatch, setSummaryBatch] = useState<{ running: boolean; message: string | null }>({ running: false, message: null });
+  const [mcpEnabled, setMcpEnabled] = useState<boolean | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+
+  useEffect(() => {
+    void window.sessionSearch
+      .getMcpStatus()
+      .then(setMcpEnabled)
+      .catch(() => setMcpEnabled(false));
+  }, []);
+
+  async function toggleMcp(next: boolean): Promise<void> {
+    setMcpBusy(true);
+    try {
+      setMcpEnabled(await window.sessionSearch.setMcpEnabled(next));
+    } catch {
+      // Leave the previous state; the toggle simply won't flip.
+    } finally {
+      setMcpBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    const off = window.sessionSearch.onSummaryProgress((progress) => {
+      setSummaryBatch((current) =>
+        current.running
+          ? {
+              running: true,
+              message: localize(
+                language,
+                `Summarizing ${progress.processed + progress.failed}/${progress.total}...`,
+                `摘要中 ${progress.processed + progress.failed}/${progress.total}...`,
+              ),
+            }
+          : current,
+      );
+    });
+    return off;
+  }, [language]);
+
+  async function runSummaryBatch(): Promise<void> {
+    setSummaryBatch({ running: true, message: localize(language, "Starting...", "开始...") });
+    try {
+      const result = await window.sessionSearch.summarizeMissingSessions();
+      const base = localize(language, `Summarized ${result.processed}/${result.total} sessions.`, `已摘要 ${result.processed}/${result.total} 个会话。`);
+      const failedNote = result.failed > 0 ? localize(language, ` ${result.failed} failed.`, ` ${result.failed} 个失败。`) : "";
+      setSummaryBatch({ running: false, message: base + failedNote });
+    } catch (error) {
+      setSummaryBatch({ running: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const l = (en: string, zh: string) => localize(language, en, zh);
-  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "connections" | "sources" | "usage" | "skills" | "appearance">("terminal");
+  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "connections" | "sources" | "usage" | "ai" | "skills" | "appearance">("terminal");
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -2109,6 +2188,10 @@ function SettingsDialog({
             <button className={activeSection === "usage" ? "active" : ""} onClick={() => setActiveSection("usage")}>
               <Gauge size={15} />
               <span>{l("Usage limits", "剩余额度")}</span>
+            </button>
+            <button className={activeSection === "ai" ? "active" : ""} onClick={() => setActiveSection("ai")}>
+              <Sparkles size={15} />
+              <span>{l("AI", "AI")}</span>
             </button>
             <button className={activeSection === "skills" ? "active" : ""} onClick={() => setActiveSection("skills")}>
               <PackageSearch size={15} />
@@ -2393,6 +2476,121 @@ function SettingsDialog({
                     checked={Boolean(settings?.hideClaudeQuota)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ hideClaudeQuota: event.currentTarget.checked })}
+                  />
+                </label>
+                <div className="settings-field settings-stack">
+                  <label className="settings-stack-row">
+                    <div className="settings-field-text">
+                      <span className="settings-field-title">{l("Notify when a session finishes", "会话完成时通知")}</span>
+                      <span className="settings-field-sub">
+                        {l(
+                          "Show a desktop notification when a running Claude Code / Codex session ends.",
+                          "运行中的 Claude Code / Codex 会话结束时弹出桌面通知。",
+                        )}
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="switch"
+                      checked={Boolean(settings?.notifyOnSessionComplete)}
+                      disabled={!settings || saving}
+                      onChange={(event) => onSettingsChange({ notifyOnSessionComplete: event.currentTarget.checked })}
+                    />
+                  </label>
+                  {settings?.notifyOnSessionComplete ? (
+                    <label className="settings-stack-row settings-stack-subrow">
+                      <span className="settings-field-sub">{l("Minimum duration (seconds)", "最短时长（秒）")}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        className="settings-number"
+                        value={settings?.notifyMinDurationSeconds ?? 30}
+                        disabled={!settings || saving}
+                        onChange={(event) => onSettingsChange({ notifyMinDurationSeconds: Number(event.currentTarget.value) })}
+                      />
+                    </label>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+            {activeSection === "ai" ? (
+              <section className="settings-pane">
+                <header className="settings-pane-head settings-pane-head-row">
+                  <div>
+                    <h3>{l("AI summaries", "AI 摘要")}</h3>
+                    <p>
+                      {l(
+                        "Generate a one-line searchable summary per session. Configure the provider and API key under the AI Summary tab of the API dialog (falls back to the Codex provider). Session content is sent to that provider.",
+                        "为每个会话生成一句可搜索的摘要。在 API 弹窗的「AI 摘要」标签里配置 provider 和 API key(未配则回落 Codex provider)。会话内容会发送给该 provider。",
+                      )}
+                    </p>
+                  </div>
+                  <button type="button" className="settings-action-button" onClick={onOpenApiConfig}>
+                    {l("Configure provider", "配置 provider")}
+                  </button>
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Auto-summarize new sessions", "自动摘要新会话")}</span>
+                    <span className="settings-field-sub">{l("After each index, summarize recent sessions that are missing or outdated.", "每次索引后，为缺失或已过期的近期会话生成摘要。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.summaryAutoBackfill)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ summaryAutoBackfill: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Only summarize sessions newer than (days)", "只摘要近 N 天内的会话")}</span>
+                    <span className="settings-field-sub">{l("Older inactive sessions are skipped by auto/batch summary.", "更久未更新的会话不会被自动/批量摘要。")}</span>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    className="settings-number"
+                    value={settings?.summaryMaxAgeDays ?? 30}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ summaryMaxAgeDays: Number(event.currentTarget.value) })}
+                  />
+                </label>
+                <div className="settings-field">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Backfill missing summaries now", "立即补全缺失摘要")}</span>
+                    <span className="settings-field-sub">{summaryBatch.message ?? l("Summarize recent sessions that have no summary yet.", "为还没有摘要的近期会话批量生成。")}</span>
+                  </div>
+                  <button className="settings-action-button" disabled={!settings || summaryBatch.running} onClick={() => void runSummaryBatch()}>
+                    {summaryBatch.running ? l("Summarizing...", "摘要中...") : l("Run", "运行")}
+                  </button>
+                </div>
+                <header className="settings-pane-head" style={{ marginTop: 18 }}>
+                  <h3>{l("MCP server", "MCP 服务")}</h3>
+                  <p>
+                    {l(
+                      "Let Claude Code / Codex search your past sessions over MCP (search_sessions, get_session). Registers the server in their configs; restart them to apply.",
+                      "让 Claude Code / Codex 通过 MCP 检索你的历史会话(search_sessions、get_session)。会注册到它们的配置中，重启后生效。",
+                    )}
+                  </p>
+                </header>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Enable session search MCP", "启用会话检索 MCP")}</span>
+                    <span className="settings-field-sub">
+                      {mcpEnabled === null
+                        ? l("Checking...", "检查中...")
+                        : l("Registers in Claude Code, Codex, and CodeBuddy configs.", "注册到 Claude Code、Codex、CodeBuddy 的配置中。")}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(mcpEnabled)}
+                    disabled={mcpEnabled === null || mcpBusy}
+                    onChange={(event) => void toggleMcp(event.currentTarget.checked)}
                   />
                 </label>
               </section>

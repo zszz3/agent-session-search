@@ -34,7 +34,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
 
 type Db = DatabaseSyncType;
-type ApiProviderKeyTarget = "codex" | "claude";
+type ApiProviderKeyTarget = "codex" | "claude" | "summary";
 
 const LIVE_SESSION_KEY_SQL = `
   CASE
@@ -78,6 +78,10 @@ interface SessionRow {
   cached_input_tokens: number;
   reasoning_output_tokens: number;
   total_tokens: number;
+  ai_summary: string | null;
+  ai_summary_model: string | null;
+  ai_summary_at: number | null;
+  ai_summary_basis: number | null;
 }
 
 interface EnvironmentRow {
@@ -588,6 +592,49 @@ export class SessionStore {
     return row ? this.hydrateRow(row, null) : null;
   }
 
+  findByRawId(rawId: string): SessionSearchResult | null {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE raw_id = ? ORDER BY file_mtime_ms DESC LIMIT 1")
+      .get(rawId) as SessionRow | undefined;
+    return row ? this.hydrateRow(row, null) : null;
+  }
+
+  setAiSummary(sessionKey: string, summary: string, model: string): boolean {
+    const row = this.db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = ?").get(sessionKey) as
+      | { file_mtime_ms: number }
+      | undefined;
+    if (!row) return false;
+    this.db
+      .prepare(
+        "UPDATE sessions SET ai_summary = ?, ai_summary_model = ?, ai_summary_at = ?, ai_summary_basis = ? WHERE session_key = ?",
+      )
+      .run(summary.trim(), model.trim(), Date.now(), row.file_mtime_ms, sessionKey);
+    this.refreshFtsForSession(sessionKey);
+    return true;
+  }
+
+  // Sessions eligible for batch/auto summary: recently active and missing or stale.
+  // Mirrors needsBackfill in session-summarizer (file_mtime_ms is the freshness signal).
+  listSessionsNeedingSummary(now: number, maxAgeMs: number, limit: number): SessionSearchResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM sessions
+         WHERE file_mtime_ms >= ?
+           AND (ai_summary IS NULL OR file_mtime_ms > COALESCE(ai_summary_basis, 0))
+         ORDER BY file_mtime_ms DESC
+         LIMIT ?`,
+      )
+      .all(now - maxAgeMs, limit) as unknown as SessionRow[];
+    return rows.map((row) => this.hydrateRow(row, null));
+  }
+
+  getMessageCount(sessionKey: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_key = ?").get(sessionKey) as
+      | { n: number }
+      | undefined;
+    return row?.n ?? 0;
+  }
+
   getMessages(sessionKey: string, offset = 0, limit = 120): SessionMessage[] {
     return (
       this.db
@@ -862,6 +909,13 @@ export class SessionStore {
 
   private migrate(): void {
     this.db.exec("PRAGMA foreign_keys = ON");
+    // WAL lets a read-only consumer (the MCP server) read concurrently while the app writes.
+    // Harmless for the in-memory test DB, which ignores the journal mode.
+    try {
+      this.db.exec("PRAGMA journal_mode = WAL");
+    } catch {
+      // Some environments (e.g. in-memory) reject WAL; fall back to the default journal.
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_key TEXT PRIMARY KEY,
@@ -1022,6 +1076,10 @@ export class SessionStore {
     this.addColumnIfMissing("sessions", "reasoning_output_tokens", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "total_tokens", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "environment_id", "TEXT NOT NULL DEFAULT 'local'");
+    this.addColumnIfMissing("sessions", "ai_summary", "TEXT");
+    this.addColumnIfMissing("sessions", "ai_summary_model", "TEXT");
+    this.addColumnIfMissing("sessions", "ai_summary_at", "INTEGER");
+    this.addColumnIfMissing("sessions", "ai_summary_basis", "INTEGER");
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_environment
         ON sessions(environment_id);
@@ -1058,12 +1116,15 @@ export class SessionStore {
       .map((message) => message.content)
       .join("\n\n");
     const title = row.custom_title || row.first_question || row.original_title || "Untitled Session";
+    // Prepend the AI summary so its normalized wording is searchable alongside the raw transcript.
+    const summary = row.ai_summary?.trim();
+    const ftsContent = summary ? `${summary}\n\n${contentText}` : contentText;
     this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(sessionKey);
     this.db
       .prepare(
         "INSERT INTO session_fts (session_key, title, first_question, content_text, project_path) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(sessionKey, title, row.first_question, contentText, row.project_path);
+      .run(sessionKey, title, row.first_question, ftsContent, row.project_path);
   }
 
   private deleteSessionSourceFile(filePath: string): void {
@@ -1516,6 +1577,8 @@ export class SessionStore {
       lastOpenedAt: row.last_opened_at,
       lastResumedAt: row.last_resumed_at,
       messageCount: row.message_count,
+      aiSummary: row.ai_summary?.trim() || null,
+      aiSummaryStale: Boolean(row.ai_summary) && row.file_mtime_ms > (row.ai_summary_basis ?? 0),
     };
   }
 

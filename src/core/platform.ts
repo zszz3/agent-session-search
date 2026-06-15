@@ -65,13 +65,19 @@ export interface AppSettings {
   includeTrae: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
+  notifyOnSessionComplete: boolean;
+  notifyMinDurationSeconds: number;
+  summaryAutoBackfill: boolean;
+  summaryMaxAgeDays: number;
   apiConfig: ApiConfig;
   claudeApiConfig: ClaudeApiConfig;
+  summaryApiConfig: ApiConfig;
 }
 
-export type AppSettingsUpdate = Partial<Omit<AppSettings, "apiConfig" | "claudeApiConfig">> & {
+export type AppSettingsUpdate = Partial<Omit<AppSettings, "apiConfig" | "claudeApiConfig" | "summaryApiConfig">> & {
   apiConfig?: Partial<ApiConfig>;
   claudeApiConfig?: Partial<ClaudeApiConfig>;
+  summaryApiConfig?: Partial<ApiConfig>;
 };
 
 export const defaultSettings: AppSettings = {
@@ -90,8 +96,13 @@ export const defaultSettings: AppSettings = {
   includeTrae: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
+  notifyOnSessionComplete: false,
+  notifyMinDurationSeconds: 30,
+  summaryAutoBackfill: false,
+  summaryMaxAgeDays: 30,
   apiConfig: defaultApiConfig,
   claudeApiConfig: defaultClaudeApiConfig,
+  summaryApiConfig: defaultApiConfig,
 };
 
 export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpdate): AppSettings {
@@ -100,9 +111,22 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
     ...merged,
     defaultTerminal: normalizeTerminal(merged.defaultTerminal),
     globalShortcut: normalizeGlobalShortcut(merged.globalShortcut),
+    notifyMinDurationSeconds: normalizeNotifyDuration(merged.notifyMinDurationSeconds),
+    summaryMaxAgeDays: normalizeSummaryMaxAgeDays(merged.summaryMaxAgeDays),
     apiConfig: normalizeApiConfig({ ...previous.apiConfig, ...(updates.apiConfig ?? {}) }),
     claudeApiConfig: normalizeClaudeApiConfig({ ...previous.claudeApiConfig, ...(updates.claudeApiConfig ?? {}) }),
+    summaryApiConfig: normalizeApiConfig({ ...previous.summaryApiConfig, ...(updates.summaryApiConfig ?? {}) }),
   };
+}
+
+function normalizeNotifyDuration(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return defaultSettings.notifyMinDurationSeconds;
+  return Math.min(3600, Math.round(value));
+}
+
+function normalizeSummaryMaxAgeDays(value: number): number {
+  if (!Number.isFinite(value) || value < 1) return defaultSettings.summaryMaxAgeDays;
+  return Math.min(3650, Math.round(value));
 }
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];

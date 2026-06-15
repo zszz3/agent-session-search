@@ -7,6 +7,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   Tray,
   type MenuItemConstructorOptions,
@@ -16,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
 import {
   mergeApiConfigWithProfileDefaults,
   mergeClaudeApiConfigWithProfileDefaults,
@@ -39,6 +41,9 @@ import {
 import { loadUsageQuotaSnapshot } from "../core/quota";
 import { focusLiveSessionTerminal } from "../core/session-focus";
 import { loadLiveSessionSnapshot } from "../core/session-activity";
+import { type TrackedLiveSession, updateLiveTracker } from "../core/live-transitions";
+import { resolveSummaryEndpoint, summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
+import { writeDbPointer } from "../core/app-paths";
 import { routeResumeSession } from "../core/resume-router";
 import { diagnoseRemoteEnvironment, preflightRemoteSessionResume } from "../core/remote-health";
 import { fetchRemoteSessionFilePayload, syncRemoteEnvironment } from "../core/remote-sync";
@@ -68,7 +73,7 @@ import type {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Agent-Session-Search";
-type ApiProviderKeyTarget = "codex" | "claude";
+type ApiProviderKeyTarget = "codex" | "claude" | "summary";
 
 const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeCodeBuddyCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae">; sources: SessionSource[] }> = [
   { key: "includeClaudeInternal", sources: ["claude-internal"] },
@@ -94,6 +99,15 @@ interface SkillUsageHookSetup {
 }
 function loadSkillUsageHookSetup(): SkillUsageHookSetup {
   return requireCjs(SKILL_USAGE_HOOK_SETUP_PATH) as SkillUsageHookSetup;
+}
+
+const MCP_SETUP_PATH = path.join(__dirname, "../../bin/setup-mcp.cjs");
+interface McpSetup {
+  run(remove: boolean): string[];
+  status(): boolean;
+}
+function loadMcpSetup(): McpSetup {
+  return requireCjs(MCP_SETUP_PATH) as McpSetup;
 }
 
 // Merges skill-usage counts and hook-install state onto the scanned skill list
@@ -150,6 +164,8 @@ let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, total: 0, lastIndexedAt: null, error: null };
 let activeIndexRun: Promise<IndexStatus> | null = null;
 let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
+let liveNotifyTimer: ReturnType<typeof setInterval> | null = null;
+let liveTracker = new Map<string, TrackedLiveSession>();
 let registeredGlobalShortcut: string | null = null;
 let remoteWatchManager: RemoteWatchManager | null = null;
 let remoteEnvironmentLifecycle: RemoteEnvironmentLifecycle | null = null;
@@ -204,6 +220,12 @@ function withStoredApiProviderKeys(settings: AppSettings): AppSettings {
       customApiKey: store.getApiProviderKey("claude", next.claudeApiConfig.customProviderId),
     };
   }
+  if (next.summaryApiConfig.activeProvider === "custom") {
+    next.summaryApiConfig = {
+      ...next.summaryApiConfig,
+      customApiKey: store.getApiProviderKey("summary", next.summaryApiConfig.customProviderId),
+    };
+  }
   return next;
 }
 
@@ -212,6 +234,7 @@ function withoutApiProviderKeys(settings: AppSettings): AppSettings {
     ...settings,
     apiConfig: { ...settings.apiConfig, customApiKey: "" },
     claudeApiConfig: { ...settings.claudeApiConfig, customApiKey: "" },
+    summaryApiConfig: { ...settings.summaryApiConfig, customApiKey: "" },
   };
 }
 
@@ -221,6 +244,9 @@ function persistApiProviderKeysFromUpdate(update: AppSettingsUpdate, next: AppSe
   }
   if (update.claudeApiConfig && next.claudeApiConfig.activeProvider === "custom") {
     store.setApiProviderKey("claude", next.claudeApiConfig.customProviderId, next.claudeApiConfig.customApiKey);
+  }
+  if (update.summaryApiConfig && next.summaryApiConfig.activeProvider === "custom") {
+    store.setApiProviderKey("summary", next.summaryApiConfig.customProviderId, next.summaryApiConfig.customApiKey);
   }
 }
 
@@ -245,7 +271,7 @@ function migrateLegacyApiProviderKeys(): void {
 }
 
 function normalizeApiProviderKeyTarget(target: unknown): ApiProviderKeyTarget {
-  if (target === "codex" || target === "claude") return target;
+  if (target === "codex" || target === "claude" || target === "summary") return target;
   throw new Error("Unknown API provider key target.");
 }
 
@@ -627,6 +653,7 @@ async function runIndexSync(): Promise<IndexStatus> {
     .then((status) => {
       indexStatus = status;
       mainWindow?.webContents.send("index-status", indexStatus);
+      void maybeAutoBackfillSummaries();
       return indexStatus;
     })
     .catch((error) => {
@@ -646,6 +673,140 @@ async function runIndexSync(): Promise<IndexStatus> {
     });
 
   return activeIndexRun;
+}
+
+const LIVE_NOTIFY_INTERVAL_MS = 10_000;
+
+const LIVE_FAMILY_LABEL: Record<TrackedLiveSession["family"], string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  codebuddy: "CodeBuddy",
+  trae: "Trae",
+};
+
+async function pollLiveSessionsForNotifications(): Promise<void> {
+  const settings = getSettings();
+  if (!settings.notifyOnSessionComplete) {
+    // Reset so re-enabling does not retroactively report sessions that ended while off.
+    if (liveTracker.size > 0) liveTracker = new Map();
+    return;
+  }
+
+  let sessions;
+  try {
+    const snapshot = await loadLiveSessionSnapshot({ includeTrae: settings.includeTrae });
+    if (snapshot.error) return;
+    sessions = snapshot.sessions;
+  } catch {
+    return;
+  }
+
+  const { tracker, completed } = updateLiveTracker(liveTracker, sessions, Date.now());
+  liveTracker = tracker;
+  if (completed.length === 0) return;
+
+  const minDurationMs = settings.notifyMinDurationSeconds * 1000;
+  for (const session of completed) {
+    if (session.durationMs < minDurationMs) continue;
+    const familyLabel = LIVE_FAMILY_LABEL[session.family] ?? session.family;
+    const resolved = store?.findByRawId(session.rawId) ?? null;
+    const descriptor = resolved?.displayTitle || resolved?.firstQuestion || resolved?.projectPath || "";
+    const minutes = Math.max(1, Math.round(session.durationMs / 60_000));
+    showDesktopNotification(`${familyLabel} session finished`, descriptor ? truncateNotificationBody(descriptor) : `Ran for ~${minutes} min`);
+  }
+}
+
+// The app runs as the unsigned Electron binary, so macOS denies UNUserNotification
+// (the native Notification fails silently). osascript shows a banner without
+// per-app authorization; other platforms use the native API.
+function showDesktopNotification(title: string, body: string): void {
+  if (process.platform === "darwin") {
+    const escape = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    execFile("osascript", ["-e", `display notification "${escape(body)}" with title "${escape(title)}"`], () => {
+      // Ignore failures (e.g. notifications disabled for the script runner).
+    });
+    return;
+  }
+  if (Notification.isSupported()) {
+    const notification = new Notification({ title, body });
+    notification.on("click", () => showWindow());
+    notification.show();
+  }
+}
+
+function truncateNotificationBody(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 119)}…` : trimmed;
+}
+
+function startLiveNotifyPolling(): void {
+  if (liveNotifyTimer) return;
+  liveNotifyTimer = setInterval(() => {
+    void pollLiveSessionsForNotifications();
+  }, LIVE_NOTIFY_INTERVAL_MS);
+}
+
+function stopLiveNotifyPolling(): void {
+  if (!liveNotifyTimer) return;
+  clearInterval(liveNotifyTimer);
+  liveNotifyTimer = null;
+  liveTracker = new Map();
+}
+
+let summaryBackfillRunning = false;
+
+// Candidate order matters: the dedicated summary provider wins, falling back to
+// the existing Codex API config when it is not configured.
+function resolveSummaryEndpointFromSettings(): SummaryEndpoint | null {
+  const settings = withStoredApiProviderKeys(getSettings());
+  // Dedicated summary provider first, then the Codex (OpenAI) provider, then the
+  // Claude (Anthropic) provider — so a coding-plan set up for Claude Code is reused.
+  return resolveSummaryEndpoint([settings.summaryApiConfig, settings.apiConfig, settings.claudeApiConfig]);
+}
+
+const SUMMARY_HEAD_MESSAGES = 24;
+const SUMMARY_TAIL_MESSAGES = 16;
+// Sessions at or below this many messages are summarized in full.
+const SUMMARY_FULL_THRESHOLD = SUMMARY_HEAD_MESSAGES + SUMMARY_TAIL_MESSAGES;
+
+// Short sessions are summarized in full; long ones use a head + tail excerpt so the
+// original problem and the final resolution both survive, fetching only a bounded slice.
+async function summarizeOneSession(sessionKey: string, endpoint: SummaryEndpoint): Promise<void> {
+  const count = store.getMessageCount(sessionKey);
+  let excerpt;
+  if (count <= SUMMARY_FULL_THRESHOLD) {
+    excerpt = { head: store.getMessages(sessionKey, 0, SUMMARY_FULL_THRESHOLD), tail: [], omittedCount: 0 };
+  } else {
+    excerpt = {
+      head: store.getMessages(sessionKey, 0, SUMMARY_HEAD_MESSAGES),
+      tail: store.getMessages(sessionKey, count - SUMMARY_TAIL_MESSAGES, SUMMARY_TAIL_MESSAGES),
+      omittedCount: count - SUMMARY_HEAD_MESSAGES - SUMMARY_TAIL_MESSAGES,
+    };
+  }
+  const result = await summarizeSession(excerpt, endpoint);
+  store.setAiSummary(sessionKey, result.summary, endpoint.model);
+}
+
+async function maybeAutoBackfillSummaries(): Promise<void> {
+  if (summaryBackfillRunning) return;
+  const settings = getSettings();
+  if (!settings.summaryAutoBackfill) return;
+  const endpoint = resolveSummaryEndpointFromSettings();
+  if (!endpoint) return;
+  summaryBackfillRunning = true;
+  try {
+    const maxAgeMs = settings.summaryMaxAgeDays * 86_400_000;
+    const candidates = store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 25);
+    for (const candidate of candidates) {
+      try {
+        await summarizeOneSession(candidate.sessionKey, endpoint);
+      } catch {
+        // Skip sessions the provider cannot summarize; keep going.
+      }
+    }
+  } finally {
+    summaryBackfillRunning = false;
+  }
 }
 
 function startAutoIndexRefresh(): void {
@@ -677,6 +838,62 @@ function registerIpc(): void {
     return store.getTraceEvents(sessionKey);
   });
   ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot({ includeTrae: getSettings().includeTrae }));
+  ipcMain.handle("session:summarize", async (_event, sessionKey: string) => {
+    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    const endpoint = resolveSummaryEndpointFromSettings();
+    if (!endpoint) {
+      throw new Error("No AI summary provider is configured. Set a custom provider in Settings.");
+    }
+    await summarizeOneSession(sessionKey, endpoint);
+    return store.getSession(sessionKey);
+  });
+  ipcMain.handle("session:summarize-missing", async (event) => {
+    const endpoint = resolveSummaryEndpointFromSettings();
+    if (!endpoint) {
+      throw new Error("No AI summary provider is configured. Set a custom provider in Settings.");
+    }
+    const settings = getSettings();
+    const maxAgeMs = settings.summaryMaxAgeDays * 86_400_000;
+    // Cover all missing/stale sessions in the age window in one run (bounded for
+    // safety). Failed ones stay missing and are retried on the next run.
+    const candidates = store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 500);
+    const total = candidates.length;
+    let processed = 0;
+    let failed = 0;
+    let next = 0;
+    const sendProgress = (): void => {
+      event.sender.send("summary:progress", { processed, failed, total });
+    };
+    sendProgress();
+    // A few in parallel so a large backlog finishes in reasonable wall time; each
+    // request is individually time-bounded, so one slow provider can't stall it.
+    const worker = async (): Promise<void> => {
+      while (next < candidates.length) {
+        const candidate = candidates[next++];
+        try {
+          await summarizeOneSession(candidate.sessionKey, endpoint);
+          processed += 1;
+        } catch {
+          failed += 1;
+        }
+        sendProgress();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, total) }, worker));
+    return { processed, failed, total };
+  });
+  ipcMain.handle("mcp:status", () => {
+    try {
+      return loadMcpSetup().status();
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle("mcp:set-enabled", (_event, enabled: boolean) => {
+    const setup = loadMcpSetup();
+    setup.run(!enabled);
+    return setup.status();
+  });
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(options));
   ipcMain.handle("quota:get", () => {
     const settings = getSettings();
@@ -833,6 +1050,12 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   const dbPath = path.join(app.getPath("userData"), "session-search.sqlite");
   store = new SessionStore(dbPath);
+  // Publish the live database path so the standalone MCP server can find it.
+  try {
+    writeDbPointer(dbPath);
+  } catch {
+    // Non-fatal: the MCP server can still be pointed at the DB via env var.
+  }
   migrateLegacyApiProviderKeys();
   pruneDisabledOptionalSources(getSettings());
   registerIpc();
@@ -846,6 +1069,7 @@ app.whenReady().then(() => {
   ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
   setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
   startAutoIndexRefresh();
+  startLiveNotifyPolling();
 });
 
 app.on("window-all-closed", () => {
@@ -858,6 +1082,7 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   stopAutoIndexRefresh();
+  stopLiveNotifyPolling();
   remoteEnvironmentLifecycle?.stopAll();
   globalShortcut.unregisterAll();
   store?.close();

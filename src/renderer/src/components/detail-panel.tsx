@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactElement } from "react";
-import { Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../core/format-session";
 import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../core/types";
 import { formatTokenCount } from "../format-count";
@@ -86,6 +86,8 @@ export function DetailPanel({
   onAddTag,
   onRemoveTag,
   onFavorite,
+  onSummarize,
+  summarizing,
   canResume,
   onResume,
   onResumeIterm,
@@ -114,6 +116,8 @@ export function DetailPanel({
   onAddTag: () => void;
   onRemoveTag: (tagName: string) => void;
   onFavorite: () => void;
+  onSummarize: () => void;
+  summarizing: boolean;
   canResume: boolean;
   onResume: () => void;
   onResumeIterm: () => void;
@@ -230,6 +234,14 @@ export function DetailPanel({
           <button onClick={onAddTag} disabled={actionRunning}>
             <Tag size={15} /> {l("Add Tag", "添加标签")}
           </button>
+          <button onClick={onSummarize} disabled={actionRunning || summarizing}>
+            <Sparkles size={15} />{" "}
+            {summarizing
+              ? l("Summarizing...", "摘要中...")
+              : session.aiSummary
+                ? l("Re-summarize", "重新摘要")
+                : l("AI Summary", "AI 摘要")}
+          </button>
           {canResume ? (
             <button onClick={onCopyResume} disabled={actionRunning}>
               <Copy size={15} /> {l("Copy Cmd", "复制命令")}
@@ -247,6 +259,15 @@ export function DetailPanel({
             <FolderOpen size={15} /> {revealLabel}
           </button>
         </div>
+        {session.aiSummary ? (
+          <div className="detail-summary">
+            <span className="detail-summary-label">
+              <Sparkles size={12} /> {l("AI summary", "AI 摘要")}
+              {session.aiSummaryStale ? ` · ${l("outdated", "已过期")}` : ""}
+            </span>
+            <p>{session.aiSummary}</p>
+          </div>
+        ) : null}
         <div className="detail-tags">
           {session.tags.map((tagName) => (
             <button key={tagName} className={`chip ${isBranchTag(tagName) ? "branch-tag" : ""}`} onClick={() => onRemoveTag(tagName)}>

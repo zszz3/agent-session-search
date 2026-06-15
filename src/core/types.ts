@@ -147,6 +147,8 @@ export interface SessionSearchResult extends IndexedSession {
   lastOpenedAt: number | null;
   lastResumedAt: number | null;
   messageCount: number;
+  aiSummary: string | null;
+  aiSummaryStale: boolean;
 }
 
 export interface SessionSearchPage {
