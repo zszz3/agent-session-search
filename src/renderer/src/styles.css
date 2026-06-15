@@ -2851,6 +2851,35 @@ select:focus-visible {
   cursor: pointer;
 }
 
+/* A single card that stacks a toggle row with a dependent sub-row (e.g. its threshold). */
+.settings-field.settings-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.settings-stack-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-stack-row .settings-field-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-stack-subrow {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-stack-subrow .settings-field-sub {
+  flex: 1;
+  min-width: 0;
+}
+
 .settings-field input.settings-number {
   flex: 0 0 auto;
   width: 92px;

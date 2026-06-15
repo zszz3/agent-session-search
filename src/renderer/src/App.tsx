@@ -2478,41 +2478,40 @@ function SettingsDialog({
                     onChange={(event) => onSettingsChange({ hideClaudeQuota: event.currentTarget.checked })}
                   />
                 </label>
-                <label className="settings-field settings-toggle">
-                  <div className="settings-field-text">
-                    <span className="settings-field-title">{l("Notify when a session finishes", "会话完成时通知")}</span>
-                    <span className="settings-field-sub">
-                      {l(
-                        "Show a desktop notification when a running Claude Code / Codex session ends.",
-                        "运行中的 Claude Code / Codex 会话结束时弹出桌面通知。",
-                      )}
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={Boolean(settings?.notifyOnSessionComplete)}
-                    disabled={!settings || saving}
-                    onChange={(event) => onSettingsChange({ notifyOnSessionComplete: event.currentTarget.checked })}
-                  />
-                </label>
-                {settings?.notifyOnSessionComplete ? (
-                  <label className="settings-field">
+                <div className="settings-field settings-stack">
+                  <label className="settings-stack-row">
                     <div className="settings-field-text">
-                      <span className="settings-field-title">{l("Minimum duration (seconds)", "最短时长（秒）")}</span>
-                      <span className="settings-field-sub">{l("Skip notifications for sessions shorter than this.", "短于此时长的会话不通知。")}</span>
+                      <span className="settings-field-title">{l("Notify when a session finishes", "会话完成时通知")}</span>
+                      <span className="settings-field-sub">
+                        {l(
+                          "Show a desktop notification when a running Claude Code / Codex session ends. On macOS, allow notifications for this app in System Settings → Notifications.",
+                          "运行中的 Claude Code / Codex 会话结束时弹出桌面通知。macOS 首次需在「系统设置 → 通知」里允许本应用。",
+                        )}
+                      </span>
                     </div>
                     <input
-                      type="number"
-                      min={0}
-                      max={3600}
-                      className="settings-number"
-                      value={settings?.notifyMinDurationSeconds ?? 30}
+                      type="checkbox"
+                      className="switch"
+                      checked={Boolean(settings?.notifyOnSessionComplete)}
                       disabled={!settings || saving}
-                      onChange={(event) => onSettingsChange({ notifyMinDurationSeconds: Number(event.currentTarget.value) })}
+                      onChange={(event) => onSettingsChange({ notifyOnSessionComplete: event.currentTarget.checked })}
                     />
                   </label>
-                ) : null}
+                  {settings?.notifyOnSessionComplete ? (
+                    <label className="settings-stack-row settings-stack-subrow">
+                      <span className="settings-field-sub">{l("Minimum duration (seconds)", "最短时长（秒）")}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        className="settings-number"
+                        value={settings?.notifyMinDurationSeconds ?? 30}
+                        disabled={!settings || saving}
+                        onChange={(event) => onSettingsChange({ notifyMinDurationSeconds: Number(event.currentTarget.value) })}
+                      />
+                    </label>
+                  ) : null}
+                </div>
               </section>
             ) : null}
             {activeSection === "ai" ? (
