@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
 import {
   mergeApiConfigWithProfileDefaults,
   mergeClaudeApiConfigWithProfileDefaults,
@@ -702,7 +703,7 @@ async function pollLiveSessionsForNotifications(): Promise<void> {
 
   const { tracker, completed } = updateLiveTracker(liveTracker, sessions, Date.now());
   liveTracker = tracker;
-  if (completed.length === 0 || !Notification.isSupported()) return;
+  if (completed.length === 0) return;
 
   const minDurationMs = settings.notifyMinDurationSeconds * 1000;
   for (const session of completed) {
@@ -711,10 +712,23 @@ async function pollLiveSessionsForNotifications(): Promise<void> {
     const resolved = store?.findByRawId(session.rawId) ?? null;
     const descriptor = resolved?.displayTitle || resolved?.firstQuestion || resolved?.projectPath || "";
     const minutes = Math.max(1, Math.round(session.durationMs / 60_000));
-    const notification = new Notification({
-      title: `${familyLabel} session finished`,
-      body: descriptor ? truncateNotificationBody(descriptor) : `Ran for ~${minutes} min`,
+    showDesktopNotification(`${familyLabel} session finished`, descriptor ? truncateNotificationBody(descriptor) : `Ran for ~${minutes} min`);
+  }
+}
+
+// The app runs as the unsigned Electron binary, so macOS denies UNUserNotification
+// (the native Notification fails silently). osascript shows a banner without
+// per-app authorization; other platforms use the native API.
+function showDesktopNotification(title: string, body: string): void {
+  if (process.platform === "darwin") {
+    const escape = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    execFile("osascript", ["-e", `display notification "${escape(body)}" with title "${escape(title)}"`], () => {
+      // Ignore failures (e.g. notifications disabled for the script runner).
     });
+    return;
+  }
+  if (Notification.isSupported()) {
+    const notification = new Notification({ title, body });
     notification.on("click", () => showWindow());
     notification.show();
   }

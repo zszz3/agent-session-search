@@ -2484,8 +2484,8 @@ function SettingsDialog({
                       <span className="settings-field-title">{l("Notify when a session finishes", "会话完成时通知")}</span>
                       <span className="settings-field-sub">
                         {l(
-                          "Show a desktop notification when a running Claude Code / Codex session ends. On macOS, allow notifications for this app in System Settings → Notifications.",
-                          "运行中的 Claude Code / Codex 会话结束时弹出桌面通知。macOS 首次需在「系统设置 → 通知」里允许本应用。",
+                          "Show a desktop notification when a running Claude Code / Codex session ends.",
+                          "运行中的 Claude Code / Codex 会话结束时弹出桌面通知。",
                         )}
                       </span>
                     </div>
