@@ -10,7 +10,10 @@ import * as mcp from "../../bin/agent-session-search-mcp.mjs";
 type Db = import("node:sqlite").DatabaseSync;
 type SearchResult = { sessionKey: string; project: string; title: string; summary: string | null };
 const searchSessions = mcp.searchSessions as (db: Db, args?: Record<string, unknown>) => SearchResult[];
-const getSession = mcp.getSession as (db: Db, args: Record<string, unknown>) => (SearchResult & { messages: Array<{ content: string }> }) | null;
+const getSession = mcp.getSession as (
+  db: Db,
+  args: Record<string, unknown>,
+) => (SearchResult & { messages: Array<{ content: string }>; totalMessages: number; returned: number; nextOffset: number | null }) | null;
 const listProjects = mcp.listProjects as (db: Db) => Array<{ project: string; sessions: number }>;
 const listTags = mcp.listTags as (db: Db) => string[];
 
@@ -46,6 +49,16 @@ function seedStore(): { db: import("node:sqlite").DatabaseSync; store: SessionSt
     [],
   );
   store.addTag("codex:abc", "auth");
+
+  // A 60-message session for paging tests.
+  const manyMessages: SessionMessage[] = Array.from({ length: 60 }, (_, i) => ({
+    role: i % 2 === 0 ? "user" : "assistant",
+    content: `msg-${i}`,
+    timestamp: "2026-06-01T10:00:00Z",
+    index: i,
+  }));
+  store.upsertIndexedSession(session({ sessionKey: "codex:multi", rawId: "multi", projectPath: "/multi", fileMtimeMs: 30 }), manyMessages, [], []);
+
   return { db, store };
 }
 
@@ -60,8 +73,8 @@ describe("MCP query functions", () => {
   it("returns recent sessions when no query is given", () => {
     const { db } = seedStore();
     const results = searchSessions(db, {});
-    // Ordered by file_mtime_ms DESC, so the newer session comes first.
-    expect(results[0].sessionKey).toBe("codex:def");
+    // Ordered by file_mtime_ms DESC, so the newest session comes first.
+    expect(results[0].sessionKey).toBe("codex:multi");
   });
 
   it("filters by project substring", () => {
@@ -84,9 +97,22 @@ describe("MCP query functions", () => {
     expect(getSession(db, { sessionKey: "missing" })).toBeNull();
   });
 
+  it("pages through messages via offset and reports nextOffset", () => {
+    const { db } = seedStore();
+    const first = getSession(db, { sessionKey: "codex:multi", maxMessages: 40 });
+    // Seeded with 60 messages below; first page returns 40 with more remaining.
+    expect(first?.totalMessages).toBe(60);
+    expect(first?.returned).toBe(40);
+    expect(first?.nextOffset).toBe(40);
+    const second = getSession(db, { sessionKey: "codex:multi", maxMessages: 40, offset: first!.nextOffset });
+    expect(second?.returned).toBe(20);
+    expect(second?.nextOffset).toBeNull();
+    expect(second?.messages[19].content).toBe("msg-59");
+  });
+
   it("lists projects and tags", () => {
     const { db } = seedStore();
-    expect(listProjects(db).map((p) => p.project).sort()).toEqual(["/other", "/repo"]);
+    expect(listProjects(db).map((p) => p.project).sort()).toEqual(["/multi", "/other", "/repo"]);
     expect(listTags(db)).toContain("auth");
   });
 });

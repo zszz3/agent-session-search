@@ -104,16 +104,25 @@ export function searchSessions(db, { query = "", source = "", project = "", limi
   return rows.map(toResult);
 }
 
-export function getSession(db, { sessionKey, maxMessages = 40 } = {}) {
+export function getSession(db, { sessionKey, maxMessages = 40, offset = 0 } = {}) {
   if (!sessionKey) return null;
   const row = db.prepare("SELECT * FROM sessions WHERE session_key = ?").get(sessionKey);
   if (!row) return null;
   const cap = clamp(maxMessages, 40, MAX_MESSAGES);
+  const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
+  const totalRow = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_key = ?").get(sessionKey);
+  const totalMessages = totalRow?.n ?? 0;
   const messages = db
-    .prepare("SELECT role, content, timestamp FROM messages WHERE session_key = ? ORDER BY message_index LIMIT ?")
-    .all(sessionKey, cap);
+    .prepare("SELECT role, content FROM messages WHERE session_key = ? ORDER BY message_index LIMIT ? OFFSET ?")
+    .all(sessionKey, cap, start);
+  const nextOffset = start + messages.length < totalMessages ? start + messages.length : null;
   return {
     ...toResult(row),
+    totalMessages,
+    offset: start,
+    returned: messages.length,
+    // Non-null when the session has more messages; pass it back as `offset` to continue.
+    nextOffset,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
   };
 }
@@ -170,10 +179,12 @@ async function runServer() {
   server.registerTool(
     "get_session",
     {
-      description: "Fetch a single session's metadata, AI summary, and messages by sessionKey.",
+      description:
+        "Fetch a single session's metadata, AI summary, and messages by sessionKey. Returns messages from `offset` (default 0); for long sessions use the returned `nextOffset` as the next `offset` to page through the rest.",
       inputSchema: {
         sessionKey: z.string().describe("The sessionKey from search_sessions."),
         maxMessages: z.number().describe("Max messages to return (1-200, default 40).").optional(),
+        offset: z.number().describe("Message index to start from (default 0). Use nextOffset from a previous call to continue.").optional(),
       },
     },
     async (args) => {
