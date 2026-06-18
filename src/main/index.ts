@@ -62,7 +62,12 @@ import {
   type SkillUsageRefreshStatus,
 } from "../core/skill-usage";
 import { buildSshArgs, readUserSshConfig } from "../core/ssh-config";
-import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
+import {
+  AUTO_INDEX_REFRESH_INTERVAL_MS,
+  AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS,
+  INITIAL_INDEX_DELAY_MS,
+  INITIAL_SKILL_USAGE_REFRESH_DELAY_MS,
+} from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import type {
@@ -166,6 +171,14 @@ function refreshSkillUsageIndex(): SkillUsageRefreshStatus {
   };
 }
 
+function refreshSkillUsageIndexSafely(): void {
+  try {
+    refreshSkillUsageIndex();
+  } catch (error) {
+    console.error(`Failed to refresh skill usage: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 app.setName(PRODUCT_NAME);
 app.setAppUserModelId("dev.zszz3.agent-session-search");
 
@@ -175,6 +188,8 @@ let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, total: 0, lastIndexedAt: null, error: null };
 let activeIndexRun: Promise<IndexStatus> | null = null;
 let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
+let initialSkillUsageTimer: ReturnType<typeof setTimeout> | null = null;
+let autoSkillUsageTimer: ReturnType<typeof setInterval> | null = null;
 let liveNotifyTimer: ReturnType<typeof setInterval> | null = null;
 let liveTracker = new Map<string, TrackedLiveSession>();
 let registeredGlobalShortcut: string | null = null;
@@ -922,6 +937,29 @@ function stopAutoIndexRefresh(): void {
   autoIndexTimer = null;
 }
 
+function startAutoSkillUsageRefresh(): void {
+  if (!initialSkillUsageTimer) {
+    initialSkillUsageTimer = setTimeout(() => {
+      initialSkillUsageTimer = null;
+      refreshSkillUsageIndexSafely();
+    }, INITIAL_SKILL_USAGE_REFRESH_DELAY_MS);
+  }
+  if (autoSkillUsageTimer) return;
+  autoSkillUsageTimer = setInterval(() => {
+    refreshSkillUsageIndexSafely();
+  }, AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS);
+}
+
+function stopAutoSkillUsageRefresh(): void {
+  if (initialSkillUsageTimer) {
+    clearTimeout(initialSkillUsageTimer);
+    initialSkillUsageTimer = null;
+  }
+  if (!autoSkillUsageTimer) return;
+  clearInterval(autoSkillUsageTimer);
+  autoSkillUsageTimer = null;
+}
+
 function registerIpc(): void {
   ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(options));
   ipcMain.handle("search:session-page", (_event, options: SearchOptions) => store.searchSessionPage(options));
@@ -1181,6 +1219,7 @@ app.whenReady().then(() => {
   void restoreCodexChatProxyFromSettings();
   setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
   startAutoIndexRefresh();
+  startAutoSkillUsageRefresh();
   startLiveNotifyPolling();
 });
 
@@ -1194,6 +1233,7 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   stopAutoIndexRefresh();
+  stopAutoSkillUsageRefresh();
   stopLiveNotifyPolling();
   remoteEnvironmentLifecycle?.stopAll();
   void stopCodexChatProxy();

@@ -38,7 +38,7 @@ It indexes existing local Claude and Codex sessions by default, and can also rea
 - Show Codex subscription quota; Claude Code quota can be shown through a statusline snapshot bridge.
 - Refresh the local index and usage stats from the tray menu or in-app controls.
 - Manage installed Skills: list Codex / Claude Code skills, search, preview, filter by source, copy paths, reveal folders, and delete user skills.
-- Track Skill usage: Claude Code uses a PostToolUse hook; Codex usage is inferred from local session function calls that read `SKILL.md`. Usage is indexed in local SQLite and refreshed incrementally from the Skills panel.
+- Track Skill usage: Claude Code uses a PostToolUse hook; Codex usage is inferred from local session function calls that read `SKILL.md`. Usage is indexed in local SQLite and refreshed incrementally after app startup, when the Skills panel opens, and from the manual refresh button.
 - Switch Codex / Claude Code API providers with presets for CodexZH, DeepSeek, GLM, LongCat, Kimi, MiMo, plus custom base URL, model, and API key fields.
 - Switch between light/dark themes and English/Chinese UI.
 - Toggle the app with `Option+Space` on macOS by default; the shortcut can be changed or disabled in Settings.

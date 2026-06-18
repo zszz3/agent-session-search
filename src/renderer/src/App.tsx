@@ -437,13 +437,27 @@ export function App(): ReactElement {
     }
   }, [t]);
 
-  const loadSkills = useCallback(async (refreshUsage = false) => {
+  const loadSkills = useCallback(async (options: { refreshUsage?: boolean; silent?: boolean } = {}) => {
+    const refreshUsage = options.refreshUsage ?? false;
+    const silent = options.silent ?? false;
     setSkillsLoading(true);
-    setSkillsFeedback(refreshUsage ? { kind: "running", message: t("Refreshing skill usage...", "正在刷新 Skill 使用统计...") } : null);
+    setSkillsFeedback(refreshUsage && !silent ? { kind: "running", message: t("Refreshing skill usage...", "正在刷新 Skill 使用统计...") } : null);
     try {
-      const usageStatus = refreshUsage ? await window.sessionSearch.refreshSkillUsage() : null;
+      let usageStatus = null;
+      let usageError: unknown = null;
+      if (refreshUsage) {
+        try {
+          usageStatus = await window.sessionSearch.refreshSkillUsage();
+        } catch (error) {
+          usageError = error;
+        }
+      }
       setInstalledSkills(await window.sessionSearch.listSkills());
-      if (usageStatus) {
+      if (usageError) {
+        if (!silent) setSkillsFeedback({ kind: "error", message: usageError instanceof Error ? usageError.message : String(usageError) });
+        return;
+      }
+      if (usageStatus && !silent) {
         const message = t(
           `Skill usage refreshed. ${usageStatus.refreshed} changed, ${usageStatus.skipped} skipped.`,
           `Skill 使用统计已刷新：${usageStatus.refreshed} 个文件有变化，${usageStatus.skipped} 个未变化。`,
@@ -518,7 +532,7 @@ export function App(): ReactElement {
   }, [loadQuotas]);
 
   useEffect(() => {
-    if (skillsOpen) void loadSkills();
+    if (skillsOpen) void loadSkills({ refreshUsage: true, silent: true });
   }, [skillsOpen, loadSkills]);
 
   useEffect(() => {
@@ -533,7 +547,7 @@ export function App(): ReactElement {
       if (enabled) await window.sessionSearch.installSkillUsageHook();
       else await window.sessionSearch.uninstallSkillUsageHook();
       setSkillHookInstalled(await window.sessionSearch.getSkillUsageHookStatus());
-      if (skillsOpen) void loadSkills();
+      if (skillsOpen) void loadSkills({ refreshUsage: true, silent: true });
       const message = enabled ? t("Skill usage tracking on.", "已开启 Skill 使用统计。") : t("Skill usage tracking off.", "已关闭 Skill 使用统计。");
       setSettingsFeedback({ kind: "success", message });
       window.setTimeout(() => setSettingsFeedback((current) => (current?.kind === "success" && current.message === message ? null : current)), 1600);
@@ -1719,7 +1733,7 @@ export function App(): ReactElement {
           feedback={skillsFeedback}
           language={language}
           revealLabel={FILE_MANAGER_LABEL}
-          onRefresh={() => void loadSkills(true)}
+          onRefresh={() => void loadSkills({ refreshUsage: true })}
           onCopyPath={(skillPath) =>
             void runUtilityAction(t("Copying skill path", "正在复制 Skill 路径"), () => window.sessionSearch.copySkillPath(skillPath), t("Skill path copied.", "Skill 路径已复制。"))
           }

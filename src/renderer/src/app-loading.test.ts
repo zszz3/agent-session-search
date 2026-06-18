@@ -26,4 +26,21 @@ describe("app loading performance", () => {
     expect(loadSessionsBlock).not.toContain("window.sessionSearch.listProjects()");
     expect(loadSessionsBlock).not.toContain("window.sessionSearch.getStats");
   });
+
+  it("refreshes skill usage when the Skills dialog is opened before listing skills", () => {
+    const loadSkillsBlock = sourceBlock("const loadSkills = useCallback(async (options:", [
+      "const deleteSkill = useCallback",
+      "useEffect(() => {",
+    ]);
+    const skillsOpenEffect = sourceBlock("useEffect(() => {\n    if (skillsOpen)", [
+      "useEffect(() => {\n    if (!settingsOpen)",
+      "const toggleSkillUsageHook = useCallback",
+    ]);
+
+    expect(loadSkillsBlock).toContain("window.sessionSearch.refreshSkillUsage()");
+    expect(loadSkillsBlock.indexOf("window.sessionSearch.refreshSkillUsage()")).toBeLessThan(
+      loadSkillsBlock.indexOf("window.sessionSearch.listSkills()"),
+    );
+    expect(skillsOpenEffect).toContain("loadSkills({ refreshUsage: true, silent: true })");
+  });
 });
