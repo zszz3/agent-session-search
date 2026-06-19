@@ -77,4 +77,43 @@ describe("Claude statusline snapshot bridge", () => {
       rmSync(outputPath, { force: true });
     }
   });
+
+  it("keeps the last known percentage when a render sends a window without one", () => {
+    const outputPath = path.join(tmpdir(), `claude-statusline-${process.pid}-${Date.now()}-partial.json`);
+    const run = (input: unknown): void => {
+      execFileSync(process.execPath, [SCRIPT_PATH], {
+        input: JSON.stringify(input),
+        env: { ...process.env, AGENT_SESSION_SEARCH_CLAUDE_STATUSLINE: outputPath },
+        encoding: "utf8",
+      });
+    };
+    try {
+      // Full quota data captured first.
+      run({
+        plan: "max",
+        rate_limits: {
+          five_hour: { used_percentage: 26, resets_at: 1_807_000_000 },
+          seven_day: { used_percentage: 36, resets_at: 1_807_400_000 },
+        },
+      });
+      // A bypass-permissions render reports the windows but omits the usage percentages.
+      // The percentage-less window must not erase the last known value.
+      run({
+        rate_limits: {
+          five_hour: { resets_at: 1_807_999_999 },
+          seven_day: {},
+        },
+      });
+
+      const snapshot = JSON.parse(readFileSync(outputPath, "utf8")) as Record<string, unknown>;
+      expect(snapshot).toMatchObject({
+        rate_limits: {
+          five_hour: { used_percentage: 26 },
+          seven_day: { used_percentage: 36 },
+        },
+      });
+    } finally {
+      rmSync(outputPath, { force: true });
+    }
+  });
 });

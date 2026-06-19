@@ -45,11 +45,9 @@ function buildSnapshot(input, previous) {
   if (plan) snapshot.plan = plan;
 
   const rateLimits = objectField(input, "rate_limits");
-  const fiveHour = normalizeWindow(objectField(rateLimits, "five_hour"));
-  const sevenDay = normalizeWindow(objectField(rateLimits, "seven_day"));
   const prevRateLimits = objectField(previous, "rate_limits");
-  const five = fiveHour || normalizeWindow(objectField(prevRateLimits, "five_hour"));
-  const seven = sevenDay || normalizeWindow(objectField(prevRateLimits, "seven_day"));
+  const five = mergeWindow(objectField(rateLimits, "five_hour"), objectField(prevRateLimits, "five_hour"));
+  const seven = mergeWindow(objectField(rateLimits, "seven_day"), objectField(prevRateLimits, "seven_day"));
   if (five || seven) {
     snapshot.rate_limits = {};
     if (five) snapshot.rate_limits.five_hour = five;
@@ -76,6 +74,23 @@ function normalizeWindow(value) {
   copyNumber(value, window, "remaining_percentage");
   copyNumber(value, window, "resets_at");
   return Object.keys(window).length > 0 ? window : null;
+}
+
+// Pick the window to persist. A render can report a window without its usage percentage
+// (early renders and bypass-permissions sessions do this); such a window is not actionable —
+// quota.ts drops a percentage-less window and the panel goes blank. So a percentage-less
+// incoming window must never overwrite the last known good value: the incoming window only
+// wins when it actually carries a percentage; otherwise we keep the previous one.
+function mergeWindow(incoming, previous) {
+  const current = normalizeWindow(incoming);
+  if (windowHasPercentage(current)) return current;
+  const prev = normalizeWindow(previous);
+  if (windowHasPercentage(prev)) return prev;
+  return current || prev;
+}
+
+function windowHasPercentage(window) {
+  return Boolean(window && (typeof window.used_percentage === "number" || typeof window.remaining_percentage === "number"));
 }
 
 function copyNumber(source, target, key) {
