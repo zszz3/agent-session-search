@@ -2365,7 +2365,8 @@ select:focus-visible {
 }
 
 .skill-source-badge.codex-user,
-.skill-source-badge.codex-system {
+.skill-source-badge.codex-system,
+.skill-source-badge.codex-project {
   background: var(--codex-badge-bg);
   color: var(--codex-badge-text);
 }

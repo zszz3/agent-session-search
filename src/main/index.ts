@@ -54,7 +54,7 @@ import { loadRemoteSessionDetailPayload } from "../core/remote-session-loader";
 import { RemoteEnvironmentLifecycle } from "../core/remote-environment-lifecycle";
 import { RemoteWatchManager } from "../core/remote-watch";
 import { SessionStore } from "../core/session-store";
-import { deleteInstalledSkill, listInstalledSkills, type InstalledSkillsSnapshot } from "../core/skill-manager";
+import { deleteInstalledSkill, listInstalledSkills, skillProjectDirsFromIndexedProjects, type InstalledSkillsSnapshot } from "../core/skill-manager";
 import {
   listSkillUsageSources,
   readSkillUsageSourceEvents,
@@ -129,7 +129,8 @@ function ensureSessionSearchMcpPreference(): boolean {
 // Merges skill-usage counts and hook-install state onto the scanned skill list
 // so the renderer can sort by most-used.
 function buildSkillsSnapshot(): InstalledSkillsSnapshot {
-  const snapshot = listInstalledSkills({ projectDirs: [process.cwd()] });
+  const projectDirs = skillProjectDirsFromIndexedProjects(store.listProjects());
+  const snapshot = listInstalledSkills({ projectDirs });
   const usage = store.getSkillUsageSnapshot();
   const skills = snapshot.skills.map((skill) => {
     const stat = usageForSkill(usage, skill.name, skill.agent);
@@ -1099,7 +1100,7 @@ function registerIpc(): void {
   ipcMain.handle("skills:reveal", async (_event, targetPath: string) => {
     await revealInFileManager(targetPath);
   });
-  ipcMain.handle("skills:delete", (_event, skillPath: string) => deleteInstalledSkill(skillPath, { projectDirs: [process.cwd()] }));
+  ipcMain.handle("skills:delete", (_event, skillPath: string) => deleteInstalledSkill(skillPath, { projectDirs: skillProjectDirsFromIndexedProjects(store.listProjects()) }));
   ipcMain.handle("skills:usage-hook-status", () => {
     try {
       return loadSkillUsageHookSetup().skillUsageHookStatus().installed;

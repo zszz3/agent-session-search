@@ -3,7 +3,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export type SkillAgent = "codex" | "claude";
-export type SkillSource = "codex-user" | "codex-system" | "codex-shared" | "claude-user" | "claude-project" | "claude-plugin";
+export type SkillSource =
+  | "codex-user"
+  | "codex-system"
+  | "codex-shared"
+  | "codex-project"
+  | "claude-user"
+  | "claude-project"
+  | "claude-plugin";
 
 export interface InstalledSkill {
   id: string;
@@ -51,6 +58,11 @@ export interface SkillManagerOptions {
   claudePluginsDir?: string;
 }
 
+export interface SkillProjectSource {
+  path: string;
+  environmentId: string;
+}
+
 export interface DeleteInstalledSkillResult {
   deletedPath: string;
   skillName: string;
@@ -71,6 +83,11 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
     { agent: "codex", source: "codex-system", path: path.join(codexHome, "skills", ".system") },
     { agent: "codex", source: "codex-shared", path: path.join(homeDir, ".agents", "skills") },
     { agent: "claude", source: "claude-user", path: path.join(homeDir, ".claude", "skills") },
+    ...projectDirs.map((projectDir): SkillRootConfig => ({
+      agent: "codex",
+      source: "codex-project",
+      path: path.join(projectDir, ".codex", "skills"),
+    })),
     ...projectDirs.map((projectDir): SkillRootConfig => ({
       agent: "claude",
       source: "claude-project",
@@ -102,7 +119,7 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
     agent: "claude",
     source: "claude-plugin",
     path: pluginsDir,
-    exists: fs.existsSync(path.join(pluginsDir, "installed_plugins.json")),
+    exists: fs.existsSync(pluginsDir),
     skillCount: dedupeSkills(pluginSkills).length,
   });
   skills.push(...pluginSkills);
@@ -112,6 +129,26 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
     roots: rootStatuses,
     scannedAt: Date.now(),
   };
+}
+
+export function skillProjectDirsFromIndexedProjects(projects: SkillProjectSource[], fallbackDirs: string[] = [process.cwd()], homeDir = os.homedir()): string[] {
+  const localProjectDirs = projects
+    .filter((project) => project.environmentId === "local")
+    .map((project) => project.path)
+    .filter((projectPath) => projectPath.trim() !== "" && isCandidateProjectDir(projectPath, homeDir));
+  return dedupePaths([
+    ...fallbackDirs,
+    ...localProjectDirs,
+    ...discoverAncestorSkillProjectDirs(localProjectDirs),
+    ...discoverNestedSkillProjectDirs(localProjectDirs),
+  ]);
+}
+
+function isCandidateProjectDir(projectDir: string, homeDir: string): boolean {
+  const normalized = normalizePathKey(projectDir);
+  const normalizedHome = normalizePathKey(homeDir);
+  if (normalized === normalizedHome) return false;
+  return ![".codex", ".claude", ".agents"].some((dirName) => normalized === path.join(normalizedHome, dirName) || normalized.startsWith(`${path.join(normalizedHome, dirName)}${path.sep}`));
 }
 
 export function deleteInstalledSkill(skillPath: string, options: SkillManagerOptions = {}): DeleteInstalledSkillResult {
@@ -132,24 +169,24 @@ export function deleteInstalledSkill(skillPath: string, options: SkillManagerOpt
 }
 
 function collectClaudePluginRoots(pluginsDir: string): SkillRootConfig[] {
+  const roots: SkillRootConfig[] = [];
   let raw: string;
   try {
     raw = fs.readFileSync(path.join(pluginsDir, "installed_plugins.json"), "utf8");
   } catch {
-    return [];
+    return collectClaudeMarketplacePluginRoots(pluginsDir);
   }
 
   let parsed: { plugins?: Record<string, Array<{ installPath?: string }>> };
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return collectClaudeMarketplacePluginRoots(pluginsDir);
   }
 
   const plugins = parsed.plugins;
-  if (!plugins || typeof plugins !== "object") return [];
+  if (!plugins || typeof plugins !== "object") return collectClaudeMarketplacePluginRoots(pluginsDir);
 
-  const roots: SkillRootConfig[] = [];
   for (const installs of Object.values(plugins)) {
     if (!Array.isArray(installs)) continue;
     for (const install of installs) {
@@ -158,7 +195,41 @@ function collectClaudePluginRoots(pluginsDir: string): SkillRootConfig[] {
       roots.push({ agent: "claude", source: "claude-plugin", path: path.join(installPath, "skills") });
     }
   }
-  return roots;
+  roots.push(...collectClaudeMarketplacePluginRoots(pluginsDir));
+  return dedupeRootConfigs(roots);
+}
+
+function collectClaudeMarketplacePluginRoots(pluginsDir: string): SkillRootConfig[] {
+  const marketplacesDir = path.join(pluginsDir, "marketplaces");
+  let marketplaces: fs.Dirent[];
+  try {
+    marketplaces = fs.readdirSync(marketplacesDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const roots: SkillRootConfig[] = [];
+  for (const marketplace of marketplaces) {
+    if (!marketplace.isDirectory()) continue;
+    const marketplaceDir = path.join(marketplacesDir, marketplace.name);
+    for (const collectionName of ["plugins", "external_plugins"]) {
+      roots.push(...collectClaudePluginCollectionRoots(path.join(marketplaceDir, collectionName)));
+    }
+  }
+  return dedupeRootConfigs(roots);
+}
+
+function collectClaudePluginCollectionRoots(collectionDir: string): SkillRootConfig[] {
+  let pluginEntries: fs.Dirent[];
+  try {
+    pluginEntries = fs.readdirSync(collectionDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return pluginEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry): SkillRootConfig => ({ agent: "claude", source: "claude-plugin", path: path.join(collectionDir, entry.name, "skills") }));
 }
 
 function readSkillsFromRoot(root: SkillRootConfig): InstalledSkill[] {
@@ -235,6 +306,68 @@ function dedupeSkills(skills: InstalledSkill[]): InstalledSkill[] {
     byPath.set(normalizePathKey(skill.path), skill);
   }
   return [...byPath.values()];
+}
+
+function dedupeRootConfigs(roots: SkillRootConfig[]): SkillRootConfig[] {
+  const byPath = new Map<string, SkillRootConfig>();
+  for (const root of roots) {
+    byPath.set(normalizePathKey(root.path), root);
+  }
+  return [...byPath.values()];
+}
+
+function discoverNestedSkillProjectDirs(projectDirs: string[]): string[] {
+  const discovered: string[] = [];
+  for (const projectDir of projectDirs) {
+    discovered.push(...walkForNestedSkillProjectDirs(projectDir, 3));
+  }
+  return discovered;
+}
+
+function discoverAncestorSkillProjectDirs(projectDirs: string[]): string[] {
+  const discovered: string[] = [];
+  const homeDir = normalizePathKey(os.homedir());
+  for (const projectDir of projectDirs) {
+    let current = path.dirname(normalizePathKey(projectDir));
+    while (current && current !== path.dirname(current)) {
+      if (current === homeDir) break;
+      if (hasProjectSkillRoot(current)) discovered.push(current);
+      current = path.dirname(current);
+    }
+  }
+  return discovered;
+}
+
+function walkForNestedSkillProjectDirs(rootDir: string, maxDepth: number): string[] {
+  const result: string[] = [];
+  const rootKey = normalizePathKey(rootDir);
+  const visit = (dir: string, depth: number): void => {
+    if (depth > maxDepth) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    if (normalizePathKey(dir) !== rootKey && hasProjectSkillRoot(dir)) result.push(dir);
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || shouldSkipProjectSkillSearchDir(entry.name)) continue;
+      visit(path.join(dir, entry.name), depth + 1);
+    }
+  };
+
+  visit(rootDir, 0);
+  return result;
+}
+
+function hasProjectSkillRoot(projectDir: string): boolean {
+  return [".claude", ".codex"].some((agentDir) => fs.existsSync(path.join(projectDir, agentDir, "skills")));
+}
+
+function shouldSkipProjectSkillSearchDir(name: string): boolean {
+  return name.startsWith(".") || name === "node_modules" || name === "vendor" || name === "out" || name === "dist" || name === "build";
 }
 
 function dedupePaths(paths: string[]): string[] {

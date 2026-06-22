@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { deleteInstalledSkill, listInstalledSkills } from "./skill-manager";
+import { deleteInstalledSkill, listInstalledSkills, skillProjectDirsFromIndexedProjects } from "./skill-manager";
 
 function writeSkill(root: string, directoryName: string, content: string): string {
   const skillDir = path.join(root, directoryName);
@@ -37,10 +37,15 @@ describe("skill manager", () => {
       "project-guide",
       ["---", "name: project-guide", "description: Project conventions", "---", "", "# Project"].join("\n"),
     );
-
+    writeSkill(
+      path.join(projectDir, ".codex", "skills"),
+      "codex-project-guide",
+      ["---", "name: codex-project-guide", "description: Codex project conventions", "---", "", "# Codex Project"].join("\n"),
+    );
     const snapshot = listInstalledSkills({ homeDir, codexHome, projectDirs: [projectDir] });
 
     expect(snapshot.skills.map((skill) => ({ name: skill.name, description: skill.description, agent: skill.agent, source: skill.source }))).toEqual([
+      { name: "codex-project-guide", description: "Codex project conventions", agent: "codex", source: "codex-project" },
       { name: "deploy-helper", description: "Deploy safely", agent: "claude", source: "claude-user" },
       { name: "find-skills", description: "Discover available skills", agent: "codex", source: "codex-shared" },
       { name: "project-guide", description: "Project conventions", agent: "claude", source: "claude-project" },
@@ -55,6 +60,7 @@ describe("skill manager", () => {
       expect.arrayContaining([
         expect.objectContaining({ source: "codex-user", exists: true, skillCount: 1 }),
         expect.objectContaining({ source: "codex-shared", exists: true, skillCount: 1 }),
+        expect.objectContaining({ source: "codex-project", exists: true, skillCount: 1 }),
         expect.objectContaining({ source: "claude-user", exists: true, skillCount: 1 }),
         expect.objectContaining({ source: "claude-project", exists: true, skillCount: 1 }),
       ]),
@@ -103,6 +109,115 @@ describe("skill manager", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
+  it("includes Claude Code plugin skills from marketplace cache", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-marketplace-"));
+    const pluginsDir = path.join(homeDir, ".claude", "plugins");
+    writeSkill(
+      path.join(pluginsDir, "marketplaces", "official", "plugins", "plugin-dev", "skills"),
+      "skill-development",
+      ["---", "name: skill-development", "description: Build Claude skills", "---", "", "# Skill Development"].join("\n"),
+    );
+    writeSkill(
+      path.join(pluginsDir, "marketplaces", "official", "external_plugins", "discord", "skills"),
+      "configure",
+      ["---", "name: discord-configure", "description: Configure Discord", "---", "", "# Configure"].join("\n"),
+    );
+
+    const snapshot = listInstalledSkills({ homeDir, codexHome: path.join(homeDir, ".codex"), projectDirs: [] });
+
+    expect(snapshot.skills.map((skill) => ({ name: skill.name, agent: skill.agent, source: skill.source }))).toEqual([
+      { name: "discord-configure", agent: "claude", source: "claude-plugin" },
+      { name: "skill-development", agent: "claude", source: "claude-plugin" },
+    ]);
+    expect(snapshot.roots).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "claude-plugin", exists: true, skillCount: 2 })]),
+    );
+
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("derives skill project directories from indexed local projects", () => {
+    const dirs = skillProjectDirsFromIndexedProjects(
+      [
+        { path: "/repo/app", environmentId: "local" },
+        { path: "/repo/app", environmentId: "local" },
+        { path: "/remote/app", environmentId: "ssh-prod" },
+        { path: "  ", environmentId: "local" },
+      ],
+      ["/app/cwd"],
+    );
+
+    expect(dirs).toEqual(["/app/cwd", "/repo/app"]);
+  });
+
+  it("does not treat agent home directories as project skill roots", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-home-project-"));
+    writeSkill(
+      path.join(homeDir, ".codex", "skills"),
+      "global-codex",
+      ["---", "name: global-codex", "description: Global Codex", "---", "", "# Global"].join("\n"),
+    );
+
+    const dirs = skillProjectDirsFromIndexedProjects(
+      [
+        { path: homeDir, environmentId: "local" },
+        { path: path.join(homeDir, ".codex"), environmentId: "local" },
+      ],
+      [],
+      homeDir,
+    );
+    const snapshot = listInstalledSkills({ homeDir, codexHome: path.join(homeDir, ".codex"), projectDirs: dirs });
+
+    expect(dirs).toEqual([]);
+    expect(snapshot.skills.map((skill) => ({ name: skill.name, source: skill.source }))).toEqual([
+      { name: "global-codex", source: "codex-user" },
+    ]);
+
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("discovers nested project directories that contain skills", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-nested-project-"));
+    const projectDir = path.join(homeDir, "project");
+    writeSkill(
+      path.join(projectDir, "packages", "agent-tools", ".claude", "skills"),
+      "nested-guide",
+      ["---", "name: nested-guide", "description: Nested conventions", "---", "", "# Nested"].join("\n"),
+    );
+
+    const dirs = skillProjectDirsFromIndexedProjects([{ path: projectDir, environmentId: "local" }], []);
+    const snapshot = listInstalledSkills({ homeDir, codexHome: path.join(homeDir, ".codex"), projectDirs: dirs });
+
+    expect(dirs).toEqual([projectDir, path.join(projectDir, "packages", "agent-tools")]);
+    expect(snapshot.skills.map((skill) => ({ name: skill.name, source: skill.source }))).toEqual([
+      { name: "nested-guide", source: "claude-project" },
+    ]);
+
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("discovers ancestor project directories that contain skills", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-ancestor-project-"));
+    const projectDir = path.join(homeDir, "project");
+    const serviceDir = path.join(projectDir, "services", "api");
+    fs.mkdirSync(serviceDir, { recursive: true });
+    writeSkill(
+      path.join(projectDir, ".codex", "skills"),
+      "repo-guide",
+      ["---", "name: repo-guide", "description: Repository conventions", "---", "", "# Repo"].join("\n"),
+    );
+
+    const dirs = skillProjectDirsFromIndexedProjects([{ path: serviceDir, environmentId: "local" }], []);
+    const snapshot = listInstalledSkills({ homeDir, codexHome: path.join(homeDir, ".codex"), projectDirs: dirs });
+
+    expect(dirs).toEqual([serviceDir, projectDir]);
+    expect(snapshot.skills.map((skill) => ({ name: skill.name, source: skill.source }))).toEqual([
+      { name: "repo-guide", source: "codex-project" },
+    ]);
+
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
   it("falls back to directory names and reports missing roots", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-skills-fallback-"));
     const codexHome = path.join(homeDir, ".codex");
@@ -115,6 +230,7 @@ describe("skill manager", () => {
     expect(snapshot.roots).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ source: "claude-user", exists: false, skillCount: 0 }),
+        expect.objectContaining({ source: "codex-project", exists: false, skillCount: 0 }),
         expect.objectContaining({ source: "claude-project", exists: false, skillCount: 0 }),
       ]),
     );

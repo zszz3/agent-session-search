@@ -31,6 +31,7 @@ export function skillSourceLabel(source: SkillSource): string {
   if (source === "codex-user") return "Codex";
   if (source === "codex-system") return "Codex System";
   if (source === "codex-shared") return "Shared";
+  if (source === "codex-project") return "Codex Project";
   if (source === "claude-project") return "Project";
   if (source === "claude-plugin") return "Claude Plugin";
   return "Claude Code";
@@ -41,7 +42,7 @@ function matchesSourceFilter(skill: InstalledSkill, sourceFilter: SkillSourceFil
   if (sourceFilter === "codex") return skill.agent === "codex";
   if (sourceFilter === "claude") return skill.agent === "claude";
   if (sourceFilter === "shared") return skill.source === "codex-shared";
-  return skill.source === "claude-project";
+  return skill.source === "claude-project" || skill.source === "codex-project";
 }
 
 function matchesSkillQuery(skill: InstalledSkill, normalizedQuery: string): boolean {

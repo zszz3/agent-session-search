@@ -20,14 +20,15 @@ describe("skill manager renderer data", () => {
     const skills = [
       skill({ name: "codex-user-skill", agent: "codex", source: "codex-user" }),
       skill({ name: "shared-skill", agent: "codex", source: "codex-shared" }),
+      skill({ name: "codex-project-skill", agent: "codex", source: "codex-project" }),
       skill({ name: "claude-user-skill", agent: "claude", source: "claude-user" }),
       skill({ name: "project-skill", agent: "claude", source: "claude-project" }),
     ];
 
-    expect(filterInstalledSkills(skills, "", "codex").map((item) => item.name)).toEqual(["codex-user-skill", "shared-skill"]);
+    expect(filterInstalledSkills(skills, "", "codex").map((item) => item.name)).toEqual(["codex-user-skill", "shared-skill", "codex-project-skill"]);
     expect(filterInstalledSkills(skills, "", "claude").map((item) => item.name)).toEqual(["claude-user-skill", "project-skill"]);
     expect(filterInstalledSkills(skills, "", "shared").map((item) => item.name)).toEqual(["shared-skill"]);
-    expect(filterInstalledSkills(skills, "", "project").map((item) => item.name)).toEqual(["project-skill"]);
+    expect(filterInstalledSkills(skills, "", "project").map((item) => item.name)).toEqual(["codex-project-skill", "project-skill"]);
   });
 
   it("searches skill name, description, and path", () => {

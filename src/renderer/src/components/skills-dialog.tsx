@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactElement } from "react";
 import { Copy, FolderOpen, RefreshCw, Search, Trash2, X } from "lucide-react";
-import type { InstalledSkill, InstalledSkillsSnapshot, SkillSource } from "../../../core/skill-manager";
+import type { InstalledSkill, InstalledSkillsSnapshot, SkillRootStatus, SkillSource } from "../../../core/skill-manager";
 import { formatCompactNumber } from "../format-count";
 import { localize, type LanguageMode } from "../language";
 import { filterInstalledSkills, sortInstalledSkills, skillSourceLabel, type SkillSortKey, type SkillSourceFilter } from "../skill-manager";
@@ -43,6 +43,7 @@ export function SkillsDialog({
     const filtered = filterInstalledSkills(snapshot.skills, query, sourceFilter);
     return sortInstalledSkills(filtered, sortKey);
   }, [snapshot.skills, query, sourceFilter, sortKey]);
+  const visibleRoots = useMemo(() => summarizeSkillRoots(snapshot.roots), [snapshot.roots]);
   const selectedSkill =
     filteredSkills.find((skill) => skill.id === selectedSkillId) ??
     filteredSkills[0] ??
@@ -142,7 +143,7 @@ export function SkillsDialog({
         </div>
 
         <div className="skills-roots">
-          {snapshot.roots.map((root) => (
+          {visibleRoots.map((root) => (
             <span key={`${root.source}:${root.path}`} className={root.exists ? "" : "missing"} title={root.path}>
               <strong>{skillSourceUiLabel(root.source, language)}</strong>
               {root.exists ? l(`${root.skillCount} skills`, `${root.skillCount} 个`) : l("Missing", "未找到")}
@@ -255,6 +256,37 @@ export function SkillsDialog({
 }
 
 const SKILL_SOURCE_FILTERS: SkillSourceFilter[] = ["all", "codex", "claude", "shared", "project"];
+const PROJECT_SKILL_SOURCES = new Set<SkillSource>(["codex-project", "claude-project"]);
+
+export function summarizeSkillRoots(roots: SkillRootStatus[]): SkillRootStatus[] {
+  const visible: SkillRootStatus[] = [];
+  const projectRoots = new Map<SkillSource, SkillRootStatus[]>();
+
+  for (const root of roots) {
+    if (!PROJECT_SKILL_SOURCES.has(root.source)) {
+      visible.push(root);
+      continue;
+    }
+    const group = projectRoots.get(root.source) ?? [];
+    group.push(root);
+    projectRoots.set(root.source, group);
+  }
+
+  for (const [source, group] of projectRoots) {
+    const skillCount = group.reduce((sum, root) => sum + root.skillCount, 0);
+    const existingRoots = group.filter((root) => root.exists);
+    if (skillCount === 0 && existingRoots.length === 0) continue;
+    visible.push({
+      agent: group[0].agent,
+      source,
+      path: existingRoots.map((root) => root.path).join("\n") || group.map((root) => root.path).join("\n"),
+      exists: existingRoots.length > 0,
+      skillCount,
+    });
+  }
+
+  return visible;
+}
 
 function skillFilterLabel(filter: SkillSourceFilter, language: LanguageMode): string {
   if (filter === "codex") return "Codex";
@@ -267,6 +299,7 @@ function skillFilterLabel(filter: SkillSourceFilter, language: LanguageMode): st
 function skillSourceUiLabel(source: SkillSource, language: LanguageMode): string {
   if (source === "codex-shared") return localize(language, "Shared", "共享");
   if (source === "codex-system") return localize(language, "Codex System", "Codex 系统");
+  if (source === "codex-project") return localize(language, "Codex Project", "Codex 项目");
   if (source === "claude-project") return localize(language, "Project", "项目");
   if (source === "claude-plugin") return localize(language, "Claude Plugin", "Claude 插件");
   return skillSourceLabel(source);
