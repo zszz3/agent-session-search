@@ -440,74 +440,109 @@ describe("SessionStore", () => {
 
   it("records duplicate session migrations and lists them in descending creation order", () => {
     const store = createInMemoryStore();
-    store.recordSessionMigration(migrationRecord({ id: "migration-a", createdAt: 100 }));
-    store.recordSessionMigration(migrationRecord({ id: "migration-b", createdAt: 200 }));
-    store.recordSessionMigration(migrationRecord({ id: "migration-c", createdAt: 200, targetSessionId: "claude-session-3" }));
-    store.recordSessionMigration(migrationRecord({ id: "migration-d", createdAt: 200, sourceSessionKey: "codex:other" }));
+    try {
+      store.recordSessionMigration(migrationRecord({ id: "migration-a", createdAt: 100 }));
+      store.recordSessionMigration(migrationRecord({ id: "migration-b", createdAt: 200 }));
+      store.recordSessionMigration(migrationRecord({ id: "migration-c", createdAt: 200, targetSessionId: "claude-session-3" }));
+      store.recordSessionMigration(migrationRecord({ id: "migration-d", createdAt: 200, sourceSessionKey: "codex:other" }));
 
-    expect(store.listSessionMigrations("codex:abc")).toEqual([
-      migrationRecord({ id: "migration-c", createdAt: 200, targetSessionId: "claude-session-3" }),
-      migrationRecord({ id: "migration-b", createdAt: 200 }),
-      migrationRecord({ id: "migration-a", createdAt: 100 }),
-    ]);
-    expect(store.listSessionMigrations("codex:other")).toEqual([
-      migrationRecord({ id: "migration-d", createdAt: 200, sourceSessionKey: "codex:other" }),
-    ]);
+      expect(store.listSessionMigrations("codex:abc")).toEqual([
+        migrationRecord({ id: "migration-c", createdAt: 200, targetSessionId: "claude-session-3" }),
+        migrationRecord({ id: "migration-b", createdAt: 200 }),
+        migrationRecord({ id: "migration-a", createdAt: 100 }),
+      ]);
+      expect(store.listSessionMigrations("codex:other")).toEqual([
+        migrationRecord({ id: "migration-d", createdAt: 200, sourceSessionKey: "codex:other" }),
+      ]);
+    } finally {
+      store.close();
+    }
   });
 
   it("persists session migrations across database reopen with unicode paths and all strategy values", () => {
-    const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "session-store-migration-")), "store.sqlite");
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-store-migration-"));
+    const dbPath = path.join(tempDir, "store.sqlite");
     const firstStore = new SessionStore(dbPath);
-    firstStore.recordSessionMigration(
-      migrationRecord({
-        id: "migration-unicode",
-        sourceSessionKey: "claude:一二三",
-        sourceAgent: "claude",
-        targetAgent: "codebuddy",
-        targetSessionId: "codebuddy-session-😀",
-        targetFilePath: "/tmp/迁移/会话.jsonl",
-        strategy: "complete",
-        createdAt: 300,
-      }),
-    );
-    firstStore.recordSessionMigration(
-      migrationRecord({
-        id: "migration-truncated",
-        sourceSessionKey: "claude:一二三",
-        sourceAgent: "claude",
-        targetAgent: "claude",
-        targetSessionId: "claude-session-2",
-        targetFilePath: "/tmp/迁移/截断.jsonl",
-        strategy: "locally-truncated",
-        createdAt: 200,
-      }),
-    );
-    firstStore.close();
-
     const reopenedStore = new SessionStore(dbPath);
+    try {
+      firstStore.recordSessionMigration(
+        migrationRecord({
+          id: "migration-unicode",
+          sourceSessionKey: "claude:一二三",
+          sourceAgent: "claude",
+          targetAgent: "codebuddy",
+          targetSessionId: "codebuddy-session-😀",
+          targetFilePath: "/tmp/迁移/会话.jsonl",
+          strategy: "complete",
+          createdAt: 300,
+        }),
+      );
+      firstStore.recordSessionMigration(
+        migrationRecord({
+          id: "migration-truncated",
+          sourceSessionKey: "claude:一二三",
+          sourceAgent: "claude",
+          targetAgent: "claude",
+          targetSessionId: "claude-session-2",
+          targetFilePath: "/tmp/迁移/截断.jsonl",
+          strategy: "locally-truncated",
+          createdAt: 200,
+        }),
+      );
 
-    expect(reopenedStore.listSessionMigrations("claude:一二三")).toEqual([
-      migrationRecord({
-        id: "migration-unicode",
-        sourceSessionKey: "claude:一二三",
-        sourceAgent: "claude",
-        targetAgent: "codebuddy",
-        targetSessionId: "codebuddy-session-😀",
-        targetFilePath: "/tmp/迁移/会话.jsonl",
-        strategy: "complete",
-        createdAt: 300,
-      }),
-      migrationRecord({
-        id: "migration-truncated",
-        sourceSessionKey: "claude:一二三",
-        sourceAgent: "claude",
-        targetAgent: "claude",
-        targetSessionId: "claude-session-2",
-        targetFilePath: "/tmp/迁移/截断.jsonl",
-        strategy: "locally-truncated",
-        createdAt: 200,
-      }),
-    ]);
+      expect(reopenedStore.listSessionMigrations("claude:一二三")).toEqual([
+        migrationRecord({
+          id: "migration-unicode",
+          sourceSessionKey: "claude:一二三",
+          sourceAgent: "claude",
+          targetAgent: "codebuddy",
+          targetSessionId: "codebuddy-session-😀",
+          targetFilePath: "/tmp/迁移/会话.jsonl",
+          strategy: "complete",
+          createdAt: 300,
+        }),
+        migrationRecord({
+          id: "migration-truncated",
+          sourceSessionKey: "claude:一二三",
+          sourceAgent: "claude",
+          targetAgent: "claude",
+          targetSessionId: "claude-session-2",
+          targetFilePath: "/tmp/迁移/截断.jsonl",
+          strategy: "locally-truncated",
+          createdAt: 200,
+        }),
+      ]);
+    } finally {
+      firstStore.close();
+      reopenedStore.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the composite session migration index for ordered lookups", () => {
+    const store = createInMemoryStore();
+    try {
+      store.recordSessionMigration(migrationRecord({ id: "migration-a", createdAt: 100 }));
+      store.recordSessionMigration(migrationRecord({ id: "migration-b", createdAt: 200 }));
+
+      const db = store as unknown as { db: import("node:sqlite").DatabaseSync };
+      const plan = db.db
+        .prepare(
+          `
+          EXPLAIN QUERY PLAN
+          SELECT id, source_session_key, source_agent, target_agent, target_session_id, target_file_path, strategy, created_at
+          FROM session_migrations
+          WHERE source_session_key = ?
+          ORDER BY created_at DESC, id DESC
+        `,
+        )
+        .all("codex:abc") as Array<{ detail: string }>;
+
+      expect(plan.map((row) => row.detail).join("\n")).toContain("USING INDEX idx_session_migrations_source_session_key_created_at_id");
+      expect(plan.map((row) => row.detail).join("\n")).not.toContain("USE TEMP B-TREE FOR ORDER BY");
+    } finally {
+      store.close();
+    }
   });
 
   it("dedupes token events after applying the selected stats range", () => {

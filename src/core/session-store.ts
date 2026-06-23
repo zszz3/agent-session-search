@@ -1153,10 +1153,8 @@ export class SessionStore {
         ON skill_usage_events(agent, skill);
       CREATE INDEX IF NOT EXISTS idx_skill_usage_events_timestamp
         ON skill_usage_events(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_session_migrations_source_session_key
-        ON session_migrations(source_session_key);
-      CREATE INDEX IF NOT EXISTS idx_session_migrations_created_at_desc
-        ON session_migrations(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_session_migrations_source_session_key_created_at_id
+        ON session_migrations(source_session_key, created_at DESC, id DESC);
     `);
     this.addColumnIfMissing("sessions", "favorited", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
@@ -1174,6 +1172,8 @@ export class SessionStore {
         ON sessions(environment_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_environment_source
         ON sessions(environment_id, source);
+      DROP INDEX IF EXISTS idx_session_migrations_source_session_key;
+      DROP INDEX IF EXISTS idx_session_migrations_created_at_desc;
     `);
     this.ensureLocalEnvironment();
   }
