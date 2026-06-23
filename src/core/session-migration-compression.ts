@@ -173,10 +173,11 @@ function clippedTranscriptMessage(message: SessionMessage): string {
 }
 
 function boundedTranscript(session: PortableSession): string {
-  const head = session.messages.slice(0, PROMPT_HEAD_MESSAGES);
-  const tailStart = Math.max(PROMPT_HEAD_MESSAGES, session.messages.length - PROMPT_TAIL_MESSAGES);
+  const headEnd = Math.min(PROMPT_HEAD_MESSAGES, session.messages.length);
+  const head = session.messages.slice(0, headEnd);
+  const tailStart = Math.max(headEnd, session.messages.length - PROMPT_TAIL_MESSAGES);
   const tail = session.messages.slice(tailStart);
-  const omittedCount = Math.max(0, tailStart - head.length);
+  const omittedCount = tailStart - headEnd;
   const lines = head.map(clippedTranscriptMessage);
   if (omittedCount > 0) {
     lines.push(`[... ${omittedCount} messages omitted ...]`);
