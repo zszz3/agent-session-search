@@ -189,6 +189,8 @@ function defaultChatCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[
     : openaiChatCompletion(endpoint, messages, signal);
 }
 
+export const requestSummaryCompletion: ChatCompletionFn = defaultChatCompletion;
+
 const REQUEST_TIMEOUT_MS = 60_000;
 
 // Always bounds the request so a hung provider cannot block the (sequential) batch
