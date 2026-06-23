@@ -74,6 +74,7 @@ function serializeCodex(session: PortableSession, sessionId: string): unknown[] 
         id: sessionId,
         timestamp: session.startedAt,
         cwd: session.projectPath,
+        title: session.title,
         originator: "agent-session-search",
         cli_version: "migration",
       },

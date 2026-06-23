@@ -322,6 +322,7 @@ export interface CodexConversationLine {
     content?: Array<{ type?: string; text?: string }>;
     id?: string;
     cwd?: string;
+    title?: string;
     git?: {
       branch?: string;
       commit_hash?: string;

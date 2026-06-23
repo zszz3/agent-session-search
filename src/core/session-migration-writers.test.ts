@@ -66,6 +66,7 @@ function expectRoundTrip(
   expect(loaded?.session).toMatchObject({
     rawId: sessionId,
     projectPath: portable().projectPath,
+    originalTitle: portable().title,
     source: target === "codex" ? "codex-cli" : target === "claude" ? "claude-cli" : "codebuddy-cli",
   });
   expect(loaded?.messages.map(({ role, content, timestamp }) => ({ role, content, timestamp }))).toEqual(
@@ -109,6 +110,7 @@ describe("writeMigratedSession", () => {
         id: SESSION_ID,
         timestamp: portable().startedAt,
         cwd: portable().projectPath,
+        title: portable().title,
         originator: "agent-session-search",
         cli_version: "migration",
       },

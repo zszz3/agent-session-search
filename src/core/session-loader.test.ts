@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  loadClaudeCliSessionRows,
   loadClaudeCliSessions,
   loadCodeBuddyCliSessionFile,
   loadCodeBuddyCliSessions,
@@ -473,9 +474,14 @@ describe("Codex session loading", () => {
       parseCodexSessionMetaLine({
         type: "session_meta",
         timestamp: "2026-06-01T10:00:00Z",
-        payload: { id: "new-id", cwd: "/new", git: { branch: "feat/session-tags" } },
+        payload: { id: "new-id", cwd: "/new", title: "内嵌标题 🚀", git: { branch: "feat/session-tags" } },
       }),
-    ).toMatchObject({ id: "new-id", projectPath: "/new", gitBranch: "feat/session-tags" });
+    ).toMatchObject({
+      id: "new-id",
+      projectPath: "/new",
+      title: "内嵌标题 🚀",
+      gitBranch: "feat/session-tags",
+    });
 
     expect(
       parseCodexSessionMetaLine({
@@ -485,6 +491,31 @@ describe("Codex session loading", () => {
         git: { cwd: "/old" },
       }),
     ).toMatchObject({ id: "old-id", projectPath: "/old" });
+  });
+
+  it("prefers an explicit Codex title over the embedded metadata title", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codex-title-"));
+    const filePath = path.join(dir, "rollout.jsonl");
+    fs.writeFileSync(
+      filePath,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-06-01T10:00:00Z",
+          payload: { id: "codex-title", cwd: "/repo", title: "内嵌标题" },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-01T10:01:00Z",
+          payload: { type: "message", role: "user", content: [{ type: "input_text", text: "首问标题" }] },
+        }),
+      ].join("\n"),
+    );
+
+    expect(loadCodexSessionFile(filePath)?.session.originalTitle).toBe("内嵌标题");
+    expect(loadCodexSessionFile(filePath, "显式标题")?.session.originalTitle).toBe("显式标题");
+
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("loads Codex internal sessions with a separate source and session key namespace", () => {
@@ -523,6 +554,28 @@ describe("Codex session loading", () => {
 });
 
 describe("Claude session loading", () => {
+  it("reads ai-title metadata without exposing it as a message or changing the explicit source", () => {
+    const loaded = loadClaudeCliSessionRows(
+      "/tmp/claude-title.jsonl",
+      [
+        { type: "ai-title", aiTitle: "Claude 标题 ✨", sessionId: "claude-title" },
+        {
+          type: "user",
+          timestamp: "2026-06-01T10:00:00Z",
+          cwd: "/repo",
+          message: { role: "user", content: "真实问题" },
+        },
+      ],
+      { rawId: "claude-title", source: "claude-internal" },
+    );
+
+    expect(loaded?.session).toMatchObject({
+      source: "claude-internal",
+      originalTitle: "Claude 标题 ✨",
+    });
+    expect(loaded?.messages.map((message) => message.content)).toEqual(["真实问题"]);
+  });
+
   it("extracts branch metadata from Claude Code jsonl rows", () => {
     const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-"));
     const projectDir = path.join(claudeDir, "projects", "-repo");
