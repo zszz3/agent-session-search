@@ -1,4 +1,5 @@
-import type { ProjectSummary, SearchOptions, SessionSearchResult, SessionSortBy, SessionSource, SessionStatsPeriod } from "../../core/types";
+import type { MigrationAgent, ProjectSummary, SearchOptions, SessionSearchResult, SessionSortBy, SessionSource, SessionStatsPeriod } from "../../core/types";
+import { migrationAgentForSource, supportedMigrationTargets } from "../../core/session-migration";
 import type { AppSettings } from "../../core/platform";
 import type { ResumeRouteResult } from "../../core/resume-router";
 import { localize, type LanguageMode } from "./language";
@@ -52,6 +53,24 @@ export function sourceUiFamily(source: SessionSource): "claude" | "codex" | "cod
 
 export function supportsResumeSource(source: SessionSource): boolean {
   return source.startsWith("claude") || source.startsWith("codex") || source === "codebuddy-cli";
+}
+
+export function supportsMigrationSource(source: SessionSource): boolean {
+  return supportedMigrationTargets(source).length > 0;
+}
+
+export function migrationTargetsForSource(source: SessionSource): MigrationAgent[] {
+  return supportedMigrationTargets(source);
+}
+
+export function migrationAgentLabel(agent: MigrationAgent): string {
+  if (agent === "claude") return "Claude Code";
+  if (agent === "codex") return "Codex";
+  return "CodeBuddy";
+}
+
+export function sourceMigrationAgent(source: SessionSource): MigrationAgent | null {
+  return migrationAgentForSource(source);
 }
 
 export function sessionSortOptions(): Array<{ label: string; value: SessionSortBy }> {
@@ -129,4 +148,12 @@ export function remoteRevealTitle(language: LanguageMode): string {
 
 export function remoteOpenAppTitle(language: LanguageMode): string {
   return localize(language, "remote sessions do not open local native apps.", "远程会话不能打开本机原生应用。");
+}
+
+export function remoteMigrationTitle(language: LanguageMode): string {
+  return localize(language, "Remote session migration is not supported yet.", "首版仅支持本地会话迁移。");
+}
+
+export function unsupportedMigrationTitle(language: LanguageMode): string {
+  return localize(language, "This source cannot be migrated yet.", "暂不支持迁移这个来源。");
 }
