@@ -1,4 +1,4 @@
-import type { SessionSearchResult } from "../../core/types";
+import type { SessionMigrationResult, SessionSearchResult } from "../../core/types";
 
 export type ActionStatus = {
   kind: "running" | "success" | "error";
@@ -22,5 +22,14 @@ export type DialogState =
       kind: "rename" | "tag";
       session: SessionSearchResult;
       value: string;
+    }
+  | null;
+
+export type SessionMigrationDialogState =
+  | { kind: "select"; session: SessionSearchResult }
+  | {
+      kind: "launch-failed";
+      session: SessionSearchResult;
+      result: SessionMigrationResult;
     }
   | null;

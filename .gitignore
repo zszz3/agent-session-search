@@ -7,3 +7,4 @@ dist/
 *.sqlite-shm
 *.sqlite-wal
 *.db
+.worktrees/

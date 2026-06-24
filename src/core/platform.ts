@@ -15,7 +15,7 @@ import {
   normalizeTerminal,
   terminalOptionsFor,
 } from "./terminal-options";
-import type { SessionSearchResult, SessionSource } from "./types";
+import type { MigrationAgent, SessionSearchResult, SessionSource } from "./types";
 
 export { type TerminalChoice, defaultTerminalFor, normalizeTerminal, terminalOptionsFor } from "./terminal-options";
 export {
@@ -156,6 +156,46 @@ export function sourceFamily(source: SessionSource): SourceFamily {
   return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
 }
 
+export function migrationBinary(target: MigrationAgent, settings: AppSettings): string {
+  if (target === "claude") return settings.claudeBinary;
+  if (target === "codebuddy") return settings.codeBuddyBinary;
+  return settings.codexBinary;
+}
+
+function migrationTargetDisplayName(target: MigrationAgent): string {
+  if (target === "claude") return "Claude";
+  if (target === "codebuddy") return "CodeBuddy";
+  return "Codex";
+}
+
+function migrationResumeArgs(target: MigrationAgent, sessionId: string): string[] {
+  return target === "codex" ? ["resume", sessionId] : ["--resume", sessionId];
+}
+
+interface ShellCommands {
+  posix: string;
+  cmd: string;
+  powershell: string;
+}
+
+interface CommandBuildOptions {
+  shell: ShellKind;
+  withCwd: boolean;
+}
+
+interface MigrationCliVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  text: string;
+}
+
+const MIN_MIGRATION_CLI_VERSIONS: Record<MigrationAgent, MigrationCliVersion> = {
+  claude: { major: 2, minor: 1, patch: 186, text: "2.1.186" },
+  codex: { major: 0, minor: 141, patch: 0, text: "0.141.0" },
+  codebuddy: { major: 2, minor: 109, patch: 1, text: "2.109.1" },
+};
+
 function buildResumeProcessArgs(
   session: SessionSearchResult,
   settings: AppSettings,
@@ -203,21 +243,58 @@ function buildCdPrefix(projectPath: string, shell: ShellKind): string {
   return `cd ${shellQuote(projectPath)} && `;
 }
 
+function buildShellCommand(
+  command: string,
+  args: string[],
+  projectPath: string | null | undefined,
+  opts: CommandBuildOptions,
+): string {
+  const quotedCommand = shellTokenQuote(command, opts.shell);
+  // PowerShell treats a quoted leading token as a string literal, so the call
+  // operator `&` is required to actually run a quoted executable path.
+  const invocation = opts.shell === "powershell" && quotedCommand !== command ? `& ${quotedCommand}` : quotedCommand;
+  let cmd = [invocation, ...args.map((token) => shellTokenQuote(token, opts.shell))].join(" ");
+  if (opts.withCwd && projectPath) {
+    cmd = `${buildCdPrefix(projectPath, opts.shell)}${cmd}`;
+  }
+  return cmd;
+}
+
 function buildResumeShellCommand(
   session: SessionSearchResult,
   settings: AppSettings,
   opts: Required<Pick<ResumeOptions, "withCwd" | "skipPermissions">> & { shell: ShellKind },
 ): string {
   const { command, args } = buildResumeProcessArgs(session, settings, opts.skipPermissions);
-  const quotedCommand = shellTokenQuote(command, opts.shell);
-  // PowerShell treats a quoted leading token as a string literal, so the call
-  // operator `&` is required to actually run a quoted executable path.
-  const invocation = opts.shell === "powershell" && quotedCommand !== command ? `& ${quotedCommand}` : quotedCommand;
-  let cmd = [invocation, ...args.map((token) => shellTokenQuote(token, opts.shell))].join(" ");
-  if (opts.withCwd && session.projectPath) {
-    cmd = `${buildCdPrefix(session.projectPath, opts.shell)}${cmd}`;
-  }
-  return cmd;
+  return buildShellCommand(command, args, session.projectPath, opts);
+}
+
+function buildMigrationResumeShellCommand(
+  target: MigrationAgent,
+  sessionId: string,
+  projectPath: string,
+  settings: AppSettings,
+  shell: ShellKind,
+  withCwd = true,
+): string {
+  return buildShellCommand(migrationBinary(target, settings), migrationResumeArgs(target, sessionId), projectPath, {
+    shell,
+    withCwd,
+  });
+}
+
+function buildMigrationResumeCommands(
+  target: MigrationAgent,
+  sessionId: string,
+  projectPath: string,
+  settings: AppSettings,
+  withCwd = true,
+): ShellCommands {
+  return {
+    posix: buildMigrationResumeShellCommand(target, sessionId, projectPath, settings, "posix", withCwd),
+    cmd: buildMigrationResumeShellCommand(target, sessionId, projectPath, settings, "cmd", withCwd),
+    powershell: buildMigrationResumeShellCommand(target, sessionId, projectPath, settings, "powershell", withCwd),
+  };
 }
 
 export function getResumeCommand(
@@ -423,17 +500,55 @@ export function getResumeProcessSpec(
   };
 }
 
+export function getMigrationResumeProcessSpec(
+  target: MigrationAgent,
+  sessionId: string,
+  projectPath: string,
+  settings: AppSettings = defaultSettings,
+): ResumeProcessSpec {
+  const platform = process.platform;
+  const shell = localShellKind(platform, settings);
+  const commands = buildMigrationResumeCommands(target, sessionId, projectPath, settings, true);
+  const displayCommand = shell === "powershell" ? commands.powershell : shell === "cmd" ? commands.cmd : commands.posix;
+
+  return {
+    command: migrationBinary(target, settings),
+    args: migrationResumeArgs(target, sessionId),
+    cwd: projectPath || undefined,
+    displayCommand,
+  };
+}
+
 // Ghostty has no `--initial-command` option, so the previous flag was silently
 // ignored and the window opened without resuming. The documented way to run a
 // command is the special `-e <command>` argument; run it through the user's
 // shell so the `cd … &&` chain plus PATH/aliases resolve, mirroring WezTerm.
+function buildGhosttyOpenArgsForCommand(command: string): string[] {
+  const shell = process.env.SHELL || "/bin/zsh";
+  return ["-na", "Ghostty.app", "--args", "-e", shell, "-ic", command];
+}
+
+function buildWezTermOpenArgsForCommand(command: string, cwd?: string): string[] {
+  const args = ["-na", "WezTerm.app", "--args", "start"];
+  if (cwd) args.push("--cwd", cwd);
+  args.push("--", process.env.SHELL || "/bin/zsh", "-ic", command);
+  return args;
+}
+
+async function runWarpCommand(command: string, runner: ProcessRunner = runProcess): Promise<void> {
+  await runAppleScript(`tell application "Warp"
+  activate
+  delay 0.2
+  tell application "System Events" to keystroke "${escapeAppleScript(command)}" & return
+end tell`, runner);
+}
+
 export function buildGhosttyOpenArgs(
   session: SessionSearchResult,
   settings: AppSettings,
   opts: ResumeOpenOptions = {},
 ): string[] {
-  const shell = process.env.SHELL || "/bin/zsh";
-  return ["-na", "Ghostty.app", "--args", "-e", shell, "-ic", getResumeCommand(session, settings, { ...opts, withCwd: true })];
+  return buildGhosttyOpenArgsForCommand(getResumeCommand(session, settings, { ...opts, withCwd: true }));
 }
 
 export async function openResumeInTerminal(
@@ -500,11 +615,7 @@ end tell`);
 
   if (settings.defaultTerminal === "Warp") {
     if (sshArgs) {
-      await runAppleScript(`tell application "Warp"
-  activate
-  delay 0.2
-  tell application "System Events" to keystroke "${escapeAppleScript(command)}" & return
-end tell`);
+      await runWarpCommand(command);
     } else {
       await runProcess("/usr/bin/open", session.projectPath ? ["-a", "Warp", session.projectPath] : ["-a", "Warp"]);
     }
@@ -524,6 +635,126 @@ export async function openResumeInSpecificTerminal(
   opts: ResumeOpenOptions = {},
 ): Promise<void> {
   await openResumeInTerminal(session, { ...settings, defaultTerminal: terminal }, opts);
+}
+
+async function launchWindowsPlan(plan: WindowsLaunch[], runner: typeof spawnDetached = spawnDetached): Promise<void> {
+  let lastError: Error | null = null;
+  for (const launch of plan) {
+    try {
+      await runner(launch.file, launch.args, launch.cwd);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (code === "ENOENT") continue;
+      throw lastError;
+    }
+  }
+  throw new Error(`No Windows terminal could be launched. ${lastError?.message ?? ""}`.trim());
+}
+
+async function runAppleScript(script: string, runner: ProcessRunner = runProcess): Promise<void> {
+  await runner("/usr/bin/osascript", ["-e", script]);
+}
+
+async function openCommandInTerminal(
+  commands: ShellCommands,
+  projectPath: string,
+  settings: AppSettings,
+  deps: {
+    platform?: NodeJS.Platform;
+    runProcess?: ProcessRunner;
+    spawnDetached?: typeof spawnDetached;
+    resolveMacApplicationName?: typeof resolveMacApplicationName;
+  } = {},
+): Promise<void> {
+  const platform = deps.platform ?? process.platform;
+  const run = deps.runProcess ?? runProcess;
+  const spawnRunner = deps.spawnDetached ?? spawnDetached;
+  const resolveAppName = deps.resolveMacApplicationName ?? resolveMacApplicationName;
+
+  if (platform === "win32") {
+    const terminal = normalizeTerminal(settings.defaultTerminal, "win32");
+    const cwd = existingDirectory(projectPath);
+    await launchWindowsPlan(buildWindowsLaunchPlan(terminal, commands.cmd, cwd, commands.powershell), spawnRunner);
+    return;
+  }
+
+  if (platform !== "darwin") {
+    await run("sh", ["-lc", commands.posix]);
+    return;
+  }
+
+  if (settings.defaultTerminal === "iTerm") {
+    const appName = await resolveAppName(ITERM_APPLICATION_NAMES, run);
+    if (!appName) {
+      throw new Error("iTerm is not installed or is not registered with macOS. Install iTerm2 or use Resume in Terminal.");
+    }
+
+    await runAppleScript(`set wasRunning to application "${escapeAppleScript(appName)}" is running
+tell application "${escapeAppleScript(appName)}"
+  activate
+  if wasRunning then
+    if (count of windows) = 0 then
+      create window with default profile
+    else
+      tell current window
+        create tab with default profile
+      end tell
+    end if
+  else
+    delay 0.3
+  end if
+  tell current session of current window
+    write text "${escapeAppleScript(commands.posix)}"
+  end tell
+end tell`, run);
+    return;
+  }
+
+  if (settings.defaultTerminal === "Ghostty") {
+    await run("/usr/bin/open", buildGhosttyOpenArgsForCommand(commands.posix));
+    return;
+  }
+
+  if (settings.defaultTerminal === "WezTerm") {
+    await run("/usr/bin/open", buildWezTermOpenArgsForCommand(commands.posix, existingDirectory(projectPath) || undefined));
+    return;
+  }
+
+  if (settings.defaultTerminal === "Warp") {
+    await run("/usr/bin/open", existingDirectory(projectPath) ? ["-a", "Warp", existingDirectory(projectPath)] : ["-a", "Warp"]);
+    return;
+  }
+
+  await runAppleScript(`tell application "Terminal"
+  activate
+  do script "${escapeAppleScript(commands.posix)}"
+end tell`, run);
+}
+
+export async function openMigrationResumeInTerminal(
+  target: MigrationAgent,
+  sessionId: string,
+  projectPath: string,
+  settings: AppSettings,
+  deps: {
+    platform?: NodeJS.Platform;
+    runProcess?: ProcessRunner;
+    spawnDetached?: typeof spawnDetached;
+    resolveMacApplicationName?: typeof resolveMacApplicationName;
+  } = {},
+): Promise<void> {
+  const platform = deps.platform ?? process.platform;
+  const commands = buildMigrationResumeCommands(target, sessionId, projectPath, settings, platform !== "win32");
+  const run = deps.runProcess ?? runProcess;
+
+  if (platform === "darwin" && settings.defaultTerminal === "Warp") {
+    await runWarpCommand(commands.posix, run);
+    return;
+  }
+
+  await openCommandInTerminal(commands, projectPath, settings, deps);
 }
 
 export async function resolveMacApplicationName(names: string[], runner: ProcessRunner = runProcess): Promise<string | null> {
@@ -636,10 +867,6 @@ function escapeAppleScript(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function runAppleScript(script: string): Promise<void> {
-  return runProcess("/usr/bin/osascript", ["-e", script]);
-}
-
 function runProcess(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(command, args, (error, stdout, stderr) => {
@@ -657,4 +884,79 @@ function runProcessIgnoringExit(command: string, args: string[]): Promise<void> 
     child.once("error", reject);
     child.once("spawn", () => resolve());
   });
+}
+
+type CliVersionRunner = (command: string, args: string[]) => Promise<string>;
+
+function runCliVersion(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, (error, stdout, stderr) => {
+      if (!error) {
+        resolve(stdout);
+        return;
+      }
+      const failure = error instanceof Error ? error : new Error(String(error));
+      reject(Object.assign(failure, { stdout, stderr }));
+    });
+  });
+}
+
+function parseMigrationCliVersion(output: string): MigrationCliVersion | null {
+  const match = output.match(/(?:^|[^\d])(\d+)\.(\d+)(?:\.(\d+))?(?:[^\d]|$)/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3] ?? "0"),
+    text: `${Number(match[1])}.${Number(match[2])}.${Number(match[3] ?? "0")}`,
+  };
+}
+
+function compareMigrationCliVersions(left: MigrationCliVersion, right: MigrationCliVersion): number {
+  if (left.major !== right.major) return left.major - right.major;
+  if (left.minor !== right.minor) return left.minor - right.minor;
+  return left.patch - right.patch;
+}
+
+function migrationCliVersionPrefix(target: MigrationAgent): string {
+  return `${migrationTargetDisplayName(target)} CLI`;
+}
+
+function migrationCliVersionErrorMessage(target: MigrationAgent, binary: string, error: unknown): string {
+  const prefix = migrationCliVersionPrefix(target);
+  const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+  const detail = [err.stderr?.trim(), err.stdout?.trim(), err.message].find((value) => Boolean(value)) ?? "unknown error";
+  if (err.code === "ENOENT") return `${prefix} binary not found: ${binary}`;
+  return `${prefix} --version failed for ${binary}: ${detail}`;
+}
+
+export async function inspectMigrationCli(
+  target: MigrationAgent,
+  settings: AppSettings,
+  runner: CliVersionRunner = runCliVersion,
+): Promise<void> {
+  const binary = migrationBinary(target, settings);
+  let versionOutput: string;
+  try {
+    versionOutput = await runner(binary, ["--version"]);
+  } catch (error) {
+    throw new Error(migrationCliVersionErrorMessage(target, binary, error));
+  }
+
+  const trimmed = versionOutput.trim();
+  if (!trimmed) {
+    throw new Error(`${migrationCliVersionPrefix(target)} returned no version information from ${binary} --version.`);
+  }
+
+  const parsed = parseMigrationCliVersion(trimmed);
+  if (!parsed) {
+    throw new Error(`${migrationCliVersionPrefix(target)} returned an unparseable version from ${binary} --version: ${trimmed}`);
+  }
+
+  const minimum = MIN_MIGRATION_CLI_VERSIONS[target];
+  if (compareMigrationCliVersions(parsed, minimum) < 0) {
+    throw new Error(
+      `${migrationCliVersionPrefix(target)} ${parsed.text} is too old for ${binary}; require at least ${minimum.text}.`,
+    );
+  }
 }

@@ -59,6 +59,7 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
   id: string;
   projectPath: string;
   ts: number;
+  title?: string;
   gitBranch?: string;
   originator?: string;
 } | null {
@@ -70,6 +71,7 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
       id: line.payload.id,
       projectPath: line.payload.cwd || "",
       ts: line.timestamp ? new Date(line.timestamp).getTime() : 0,
+      title: line.payload.title,
       gitBranch: line.payload.git?.branch,
       originator: line.payload.originator,
     };
@@ -746,11 +748,9 @@ function firstCodeBuddySessionMeta(rows: unknown[], fallbackRawId: string): { ra
   return { rawId, projectPath, timestamp };
 }
 
-// CodeBuddy writes its AI-generated session title as a dedicated `ai-title` row
-// (e.g. `{ type: "ai-title", aiTitle: "..." }`). Prefer it over the first user
-// message, which is often a slash command like "/model" that CodeBuddy stores as
-// plain text rather than wrapping in a <command-name> tag we could filter.
-function firstCodeBuddyAiTitle(rows: unknown[]): string {
+// Claude and CodeBuddy write their AI-generated session title as a dedicated
+// `ai-title` row. The row is metadata and is not exposed as a visible message.
+function firstAiTitle(rows: unknown[]): string {
   for (const row of rows) {
     if (!isRecord(row) || row.type !== "ai-title") continue;
     const title = stringField(row, "aiTitle").trim();
@@ -781,7 +781,7 @@ export function loadCodexSessionRows(
     source,
     projectPath: meta.projectPath,
     filePath,
-    originalTitle: options.title || cleanTitle(question) || "Untitled Session",
+    originalTitle: options.title || meta.title || cleanTitle(question) || "Untitled Session",
     firstQuestion: question ? cleanTitle(question) : "",
     timestamp: options.updatedAt ? new Date(options.updatedAt).getTime() : meta.ts,
     gitBranch: meta.gitBranch,
@@ -862,6 +862,7 @@ export function loadClaudeCliSessionRows(
   const traceEvents = extractTraceEvents(rows, "claude");
   const tokenUsage = tokenUsageFromEvents(tokenEvents);
   const question = firstQuestion(messages);
+  const aiTitle = firstAiTitle(rows);
   const embeddedCwd = (rows.find((row) => row && typeof row === "object" && "cwd" in row) as ClaudeConversationLine | undefined)?.cwd;
   const gitBranch = firstClaudeGitBranch(rows);
   return {
@@ -871,7 +872,7 @@ export function loadClaudeCliSessionRows(
       source: options.source ?? "claude-cli",
       projectPath: options.cwd || embeddedCwd || "",
       filePath,
-      originalTitle: cleanTitle(question) || "Untitled Session",
+      originalTitle: aiTitle || cleanTitle(question) || "Untitled Session",
       firstQuestion: cleanTitle(question),
       timestamp: options.startedAt || 0,
       gitBranch,
@@ -996,39 +997,44 @@ export function loadCodeBuddyCliSessions(codeBuddyDir = path.join(os.homedir(), 
   return [...loadCodeBuddyCliSessionsIterator(codeBuddyDir)];
 }
 
+export function loadCodeBuddyCliSessionFile(filePath: string): LoadedSession | null {
+  const rows = readJsonl(filePath);
+  if (rows.length === 0) return null;
+
+  const fallbackRawId = path.basename(filePath, ".jsonl");
+  const meta = firstCodeBuddySessionMeta(rows, fallbackRawId);
+  const messages = extractMessages(rows, "codebuddy");
+  const tokenEvents = extractCodeBuddyTokenEvents(rows);
+  const traceEvents = extractTraceEvents(rows, "codebuddy");
+  const tokenUsage = tokenUsageFromEvents(tokenEvents);
+  const question = firstQuestion(messages);
+  const aiTitle = firstAiTitle(rows);
+
+  return {
+    session: createIndexedSession({
+      keyPrefix: "codebuddy",
+      rawId: meta.rawId,
+      source: "codebuddy-cli",
+      projectPath: meta.projectPath,
+      filePath,
+      originalTitle: aiTitle || cleanTitle(question) || "Untitled Session",
+      firstQuestion: cleanTitle(question),
+      timestamp: meta.timestamp,
+      tokenUsage,
+    }),
+    messages,
+    tokenEvents,
+    traceEvents,
+  };
+}
+
 export function* loadCodeBuddyCliSessionsIterator(codeBuddyDir = path.join(os.homedir(), CODEBUDDY_DIR)): Generator<LoadedSession> {
   const projectsDir = path.join(codeBuddyDir, "projects");
   if (!fs.existsSync(projectsDir)) return;
 
   for (const filePath of walkJsonlFiles(projectsDir)) {
-    const rows = readJsonl(filePath);
-    if (rows.length === 0) continue;
-
-    const fallbackRawId = path.basename(filePath, ".jsonl");
-    const meta = firstCodeBuddySessionMeta(rows, fallbackRawId);
-    const messages = extractMessages(rows, "codebuddy");
-    const tokenEvents = extractCodeBuddyTokenEvents(rows);
-    const traceEvents = extractTraceEvents(rows, "codebuddy");
-    const tokenUsage = tokenUsageFromEvents(tokenEvents);
-    const question = firstQuestion(messages);
-    const aiTitle = firstCodeBuddyAiTitle(rows);
-
-    yield {
-      session: createIndexedSession({
-        keyPrefix: "codebuddy",
-        rawId: meta.rawId,
-        source: "codebuddy-cli",
-        projectPath: meta.projectPath,
-        filePath,
-        originalTitle: aiTitle || cleanTitle(question) || "Untitled Session",
-        firstQuestion: cleanTitle(question),
-        timestamp: meta.timestamp,
-        tokenUsage,
-      }),
-      messages,
-      tokenEvents,
-      traceEvents,
-    };
+    const loaded = loadCodeBuddyCliSessionFile(filePath);
+    if (loaded) yield loaded;
   }
 }
 

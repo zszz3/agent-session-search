@@ -15,6 +15,7 @@ import type {
   IndexedSession,
   ProjectSummary,
   SearchOptions,
+  SessionMigrationRecord,
   SessionEnvironment,
   SessionMessage,
   SessionSearchPage,
@@ -119,6 +120,17 @@ interface SkillUsageEventRow {
   agent: SkillUsageEvent["agent"];
   skill: string;
   timestamp: number;
+}
+
+interface SessionMigrationRow {
+  id: string;
+  source_session_key: string;
+  source_agent: SessionMigrationRecord["sourceAgent"];
+  target_agent: SessionMigrationRecord["targetAgent"];
+  target_session_id: string;
+  target_file_path: string;
+  strategy: SessionMigrationRecord["strategy"];
+  created_at: number;
 }
 
 export class SessionStore {
@@ -789,6 +801,52 @@ export class SessionStore {
       .run(target, normalizedProviderId, apiKey.trim(), Date.now());
   }
 
+  recordSessionMigration(record: SessionMigrationRecord): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO session_migrations (
+          id, source_session_key, source_agent, target_agent, target_session_id, target_file_path, strategy, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        record.id,
+        record.sourceSessionKey,
+        record.sourceAgent,
+        record.targetAgent,
+        record.targetSessionId,
+        record.targetFilePath,
+        record.strategy,
+        record.createdAt,
+      );
+  }
+
+  listSessionMigrations(sourceSessionKey: string): SessionMigrationRecord[] {
+    return (
+      this.db
+        .prepare(
+          `
+          SELECT id, source_session_key, source_agent, target_agent, target_session_id, target_file_path, strategy, created_at
+          FROM session_migrations
+          WHERE source_session_key = ?
+          ORDER BY created_at DESC, id DESC
+        `,
+        )
+        .all(sourceSessionKey) as unknown as SessionMigrationRow[]
+    ).map((row) => ({
+      id: row.id,
+      sourceSessionKey: row.source_session_key,
+      sourceAgent: row.source_agent,
+      targetAgent: row.target_agent,
+      targetSessionId: row.target_session_id,
+      targetFilePath: row.target_file_path,
+      strategy: row.strategy,
+      createdAt: row.created_at,
+    }));
+  }
+
   getStats(options: SessionStatsOptions = {}, now = Date.now()): SessionStats {
     const range = resolveStatsRange(options, now);
     const summariesBySource = new Map<SessionSource, SessionStatsSummary>();
@@ -1057,6 +1115,17 @@ export class SessionStore {
         PRIMARY KEY (target, provider_id)
       );
 
+      CREATE TABLE IF NOT EXISTS session_migrations (
+        id TEXT PRIMARY KEY,
+        source_session_key TEXT NOT NULL,
+        source_agent TEXT NOT NULL,
+        target_agent TEXT NOT NULL,
+        target_session_id TEXT NOT NULL,
+        target_file_path TEXT NOT NULL,
+        strategy TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
       CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
         session_key UNINDEXED,
         title,
@@ -1084,6 +1153,8 @@ export class SessionStore {
         ON skill_usage_events(agent, skill);
       CREATE INDEX IF NOT EXISTS idx_skill_usage_events_timestamp
         ON skill_usage_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_session_migrations_source_session_key_created_at_id
+        ON session_migrations(source_session_key, created_at DESC, id DESC);
     `);
     this.addColumnIfMissing("sessions", "favorited", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
@@ -1101,6 +1172,8 @@ export class SessionStore {
         ON sessions(environment_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_environment_source
         ON sessions(environment_id, source);
+      DROP INDEX IF EXISTS idx_session_migrations_source_session_key;
+      DROP INDEX IF EXISTS idx_session_migrations_created_at_desc;
     `);
     this.ensureLocalEnvironment();
   }

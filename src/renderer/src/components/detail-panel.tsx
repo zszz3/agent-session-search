@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactElement } from "react";
-import { Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../core/format-session";
 import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../core/types";
 import { formatTokenCount } from "../format-count";
@@ -89,8 +89,11 @@ export function DetailPanel({
   onSummarize,
   summarizing,
   canResume,
+  canMigrate,
+  migrationTitle,
   onResume,
   onResumeIterm,
+  onMigrate,
   onCopyResume,
   onCopyMarkdown,
   onExportMarkdown,
@@ -119,8 +122,11 @@ export function DetailPanel({
   onSummarize: () => void;
   summarizing: boolean;
   canResume: boolean;
+  canMigrate: boolean;
+  migrationTitle: string;
   onResume: () => void;
   onResumeIterm: () => void;
+  onMigrate: () => void;
   onCopyResume: () => void;
   onCopyMarkdown: () => void;
   onExportMarkdown: () => void;
@@ -241,6 +247,9 @@ export function DetailPanel({
               : session.aiSummary
                 ? l("Re-summarize", "重新摘要")
                 : l("AI Summary", "AI 摘要")}
+          </button>
+          <button onClick={onMigrate} disabled={actionRunning || !canMigrate} title={migrationTitle}>
+            <ArrowRightLeft size={15} /> {l("Migrate to…", "迁移到…")}
           </button>
           {canResume ? (
             <button onClick={onCopyResume} disabled={actionRunning}>

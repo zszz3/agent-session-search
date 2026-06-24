@@ -55,6 +55,47 @@ export interface SessionMessage {
   index: number;
 }
 
+export type MigrationAgent = "claude" | "codex" | "codebuddy";
+export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";
+export type SessionMigrationStage = "reading" | "compressing" | "writing" | "indexing" | "launching";
+
+export interface PortableSession {
+  sourceSessionKey: string;
+  sourceAgent: MigrationAgent;
+  title: string;
+  projectPath: string;
+  startedAt: string;
+  messages: SessionMessage[];
+}
+
+export interface SessionMigrationProgress {
+  sessionKey: string;
+  target: MigrationAgent;
+  stage: SessionMigrationStage;
+}
+
+export interface SessionMigrationResult {
+  target: MigrationAgent;
+  targetSessionId: string;
+  targetFilePath: string;
+  strategy: SessionMigrationStrategy;
+  resumeCommand: string;
+  indexed: boolean;
+  launched: boolean;
+  warning?: string;
+}
+
+export interface SessionMigrationRecord {
+  id: string;
+  sourceSessionKey: string;
+  sourceAgent: MigrationAgent;
+  targetAgent: MigrationAgent;
+  targetSessionId: string;
+  targetFilePath: string;
+  strategy: SessionMigrationStrategy;
+  createdAt: number;
+}
+
 export type SessionTraceKind = "tool_call" | "tool_result" | "event";
 
 export interface SessionTraceEvent {
@@ -281,6 +322,7 @@ export interface CodexConversationLine {
     content?: Array<{ type?: string; text?: string }>;
     id?: string;
     cwd?: string;
+    title?: string;
     git?: {
       branch?: string;
       commit_hash?: string;

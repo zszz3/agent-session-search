@@ -33,6 +33,7 @@ It indexes existing local Claude and Codex sessions by default, and can also rea
 - Add local and SSH environments; SSH environments can be refreshed manually or kept in sync through remote file watching.
 - Resume a session in Terminal, iTerm, Ghostty, WezTerm, or Warp. If a local session is already open, Resume brings the existing terminal window/tab to front instead of starting another `codex resume` / `claude --resume`.
 - Copy resume commands or export Markdown.
+- Migrate local Claude Code / Codex / CodeBuddy sessions into each other: choose a target agent from details or the context menu, create a new native target session, and open it in the default terminal. Long sessions are compressed first and safely truncated when compression is unavailable.
 - Read details with Markdown / code block rendering, collapsed tool traces, and user / assistant / tool message filters.
 - Track message and token usage for Today / 7D / 30D / All time.
 - Show Codex subscription quota; Claude Code quota can be shown through a statusline snapshot bridge.
@@ -71,6 +72,20 @@ When you click Resume or press `Cmd/Ctrl+Enter`, the app first checks whether th
 - If it is not open, the app starts a new restore command in the configured default terminal, such as `codex resume <session-id>` or `claude --resume <session-id>`.
 - SSH remote sessions run a remote project-path and CLI preflight first, then execute the remote restore command through `ssh` in the local default terminal.
 
+## Cross-Agent Session Migration
+
+From a local Claude Code, Codex, or CodeBuddy session's detail panel or context menu, click **Migrate to…** to convert the session into another agent's native session file. After migration, the app opens the target session in your configured default terminal.
+
+The first version supports all six local migration paths:
+
+- Claude Code → Codex / CodeBuddy
+- Codex → Claude Code / CodeBuddy
+- CodeBuddy → Claude Code / Codex
+
+Migration preserves the title, project path, user/assistant messages, and working context where possible. Agent-private state, internal tool-call structures, reasoning details, and provider-specific metadata are not force-translated. If a session exceeds the length limit, the app first uses the configured AI summary provider to create a migration handoff; if that provider is unavailable or compression fails, it falls back to deterministic local truncation and reports that in the result. If the target CLI or terminal launch fails, the target session file is still kept and the UI shows a copyable resume command.
+
+Migration is local-only in this version. SSH remote sessions remain read-only indexed sessions with remote Resume support, and are not migrated or written back to the remote host.
+
 ## SSH Remote Sessions
 
 SSH environments do not require Agent-Session-Search to be installed on the remote machine, and the app does not create a remote database. The local app uses the system `ssh` command, runs a temporary Python collector on the remote host, reads session summaries from remote `~/.codex` and `~/.claude`, then stores those summaries in the local SQLite index.
@@ -107,6 +122,7 @@ Agent-Session-Search keeps two kinds of data separate:
 
 - Upstream session data stays in the original agent files or databases and is treated as read-only input while indexing, searching, and tagging. Confirmed deletion removes independent session files, but Hermes and OpenCode use shared SQLite databases, so the app does not delete an entire database for one session.
 - SSH remote session files are also treated as read-only input and fetched over SSH only for summaries and on-demand details.
+- Cross-agent migration creates a new session file under the target agent's local session directory and records the source/target relationship in the local database; it does not rewrite the source session file.
 - App metadata, including custom titles, tags, favorites, pinned state, hidden state, the search index, remote environment configuration, Skill usage index, and API provider keys, is stored in a local SQLite database under Electron's `userData` directory.
 - Applying Codex / Claude Code provider settings edits the local `~/.codex/config.toml` or `~/.claude/settings.json` using the CLI's native configuration format and writes backups first.
 

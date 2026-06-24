@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEventHandler, ReactElement } from "react";
 import {
   AppWindow,
   Archive,
+  ArrowRightLeft,
   Activity,
   ChevronDown,
   ChevronRight,
@@ -56,6 +57,8 @@ import type {
   ProjectSummary,
   SearchOptions,
   SessionEnvironment,
+  SessionMigrationProgress,
+  SessionMigrationResult,
   SessionMessage,
   SessionSearchResult,
   SessionSortBy,
@@ -89,11 +92,13 @@ import type {
   QuotaFeedback,
   RefreshFeedback,
   SettingsFeedback,
+  SessionMigrationDialogState,
   SkillsFeedback,
   StatsFeedback,
 } from "./app-types";
 import { ApiConfigDialog } from "./components/api-config-dialog";
 import { DetailPanel } from "./components/detail-panel";
+import { SessionMigrationDialog, SessionMigrationLaunchFailedDialog } from "./components/session-migration-dialog";
 import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./components/session-dialogs";
 import { SkillsDialog } from "./components/skills-dialog";
 import { useClampedContextMenuStyle } from "./context-menu-position";
@@ -107,6 +112,7 @@ import {
   localizedLiveStateLabel,
   projectSortTimestamp,
   remoteOpenAppTitle,
+  remoteMigrationTitle,
   remoteRevealTitle,
   resumeRouteMessage,
   sessionSortOptions,
@@ -114,8 +120,11 @@ import {
   sourceFilterLabel,
   sourceFilters,
   sourceUiFamily,
+  supportsMigrationSource,
   statsPeriodLabel,
   supportsResumeSource,
+  unsupportedMigrationTitle,
+  migrationAgentLabel,
 } from "./session-ui";
 
 const STATS_PERIOD_OPTIONS: Array<{ label: string; value: SessionStatsPeriod }> = [
@@ -305,6 +314,8 @@ export function App(): ReactElement {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [migrationDialog, setMigrationDialog] = useState<SessionMigrationDialogState>(null);
+  const [, setMigrationProgress] = useState<SessionMigrationProgress | null>(null);
   const [deleteTagName, setDeleteTagName] = useState<string | null>(null);
   const [deleteSessionCandidate, setDeleteSessionCandidate] = useState<SessionSearchResult | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
@@ -633,6 +644,13 @@ export function App(): ReactElement {
     };
   }, [load, loadSidebarMetadata, loadStats]);
 
+  useEffect(() => {
+    return window.sessionSearch.onMigrationProgress((progress) => {
+      setMigrationProgress(progress);
+      setActionStatus({ kind: "running", message: migrationProgressMessage(progress, language) });
+    });
+  }, [language]);
+
   const displayedResults = useMemo(
     () => filterSessionsByLiveStatus(results, liveSessionKeys, liveStatus, liveDetectionFailed),
     [results, liveSessionKeys, liveStatus, liveDetectionFailed],
@@ -663,6 +681,7 @@ export function App(): ReactElement {
       // Esc backs out of the frontmost layer, one at a time.
       if (event.key === "Escape") {
         if (sshDialogOpen) setSshDialogOpen(false);
+        else if (migrationDialog) setMigrationDialog(null);
         else if (dialog) setDialog(null);
         else if (deleteSessionCandidate && !deletingSession) setDeleteSessionCandidate(null);
         else if (deleteTagName) setDeleteTagName(null);
@@ -677,7 +696,7 @@ export function App(): ReactElement {
       }
 
       // Leave list navigation alone while an overlay or menu is in front.
-      if (detail || dialog || deleteSessionCandidate || deleteTagName || contextMenu || skillsOpen || apiConfigOpen || settingsOpen || sshDialogOpen) return;
+      if (detail || dialog || migrationDialog || deleteSessionCandidate || deleteTagName || contextMenu || skillsOpen || apiConfigOpen || settingsOpen || sshDialogOpen) return;
 
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
@@ -717,7 +736,7 @@ export function App(): ReactElement {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [displayedResults, selectedKey, detail, dialog, deleteSessionCandidate, deletingSession, deleteTagName, contextMenu, skillsOpen, apiConfigOpen, settingsOpen, sshDialogOpen, actionStatus, t]);
+  }, [displayedResults, selectedKey, detail, dialog, migrationDialog, deleteSessionCandidate, deletingSession, deleteTagName, contextMenu, skillsOpen, apiConfigOpen, settingsOpen, sshDialogOpen, actionStatus, t]);
 
   useEffect(() => {
     if (!selectedKey) return;
@@ -1006,6 +1025,38 @@ export function App(): ReactElement {
       }, 1800);
     } catch (error) {
       setActionStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  function beginMigrate(session: SessionSearchResult): void {
+    setContextMenu(null);
+    setMigrationDialog({ kind: "select", session });
+  }
+
+  async function runMigration(target: SessionMigrationProgress["target"]): Promise<void> {
+    if (!migrationDialog || migrationDialog.kind !== "select") return;
+    const session = migrationDialog.session;
+    setContextMenu(null);
+    setMigrationProgress(null);
+    setActionStatus({ kind: "running", message: t("Preparing migration...", "正在准备迁移...") });
+    try {
+      const result: SessionMigrationResult = await window.sessionSearch.migrateSession(session.sessionKey, target);
+      await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
+      await refreshLiveSessions();
+      const strategyLabel = migrationStrategyLabel(result.strategy, language);
+      const message = t(
+        `Migrated to ${migrationAgentLabel(result.target)} (${strategyLabel}): ${result.targetSessionId}`,
+        `已迁移到 ${migrationAgentLabel(result.target)}（${strategyLabel}）：${result.targetSessionId}`,
+      );
+      setActionStatus({ kind: "success", message: result.warning ? `${message}\n${result.warning}` : message });
+      setMigrationDialog(result.launched ? null : { kind: "launch-failed", session, result });
+      window.setTimeout(() => {
+        setActionStatus((current) => (current?.kind === "success" && current.message.startsWith(message) ? null : current));
+      }, 2200);
+    } catch (error) {
+      setActionStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setMigrationProgress(null);
     }
   }
 
@@ -1561,12 +1612,21 @@ export function App(): ReactElement {
           onSummarize={() => void summarizeDetail(detail)}
           summarizing={summarizing}
           canResume={supportsResumeSource(detail.source)}
+          canMigrate={!isRemoteSession(detail) && supportsMigrationSource(detail.source)}
+          migrationTitle={
+            isRemoteSession(detail)
+              ? remoteMigrationTitle(language)
+              : supportsMigrationSource(detail.source)
+                ? t("Migrate to another agent", "迁移到另一个 Agent")
+                : unsupportedMigrationTitle(language)
+          }
           onResume={() =>
             void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(detail.sessionKey), (result) => resumeRouteMessage(result, language))
           }
           onResumeIterm={() =>
             void runAction(t("Opening iTerm", "正在打开 iTerm"), () => window.sessionSearch.resumeSessionInIterm(detail.sessionKey), t("Resume command sent to iTerm.", "Resume 命令已发送到 iTerm。"))
           }
+          onMigrate={() => beginMigrate(detail)}
           onCopyResume={() =>
             void runAction(t("Copying resume command", "正在复制 Resume 命令"), () => window.sessionSearch.copyResumeCommand(detail.sessionKey), t("Resume command copied.", "Resume 命令已复制。"))
           }
@@ -1595,6 +1655,7 @@ export function App(): ReactElement {
           revealLabel={FILE_MANAGER_LABEL}
           showMacActions={IS_MAC}
           canResume={supportsResumeSource(contextMenu.session.source)}
+          canMigrate={!isRemoteSession(contextMenu.session) && supportsMigrationSource(contextMenu.session.source)}
           onRename={() => beginRename(contextMenu.session)}
           onAddTag={() => beginAddTag(contextMenu.session)}
           onFavorite={() =>
@@ -1623,6 +1684,7 @@ export function App(): ReactElement {
           onOpenApp={() =>
             void runAction(t("Opening native app", "正在打开原生应用"), () => window.sessionSearch.openNativeApp(contextMenu.session.sessionKey), t("Native app opened.", "原生应用已打开。"))
           }
+          onMigrate={() => beginMigrate(contextMenu.session)}
           onCopyResume={() =>
             void runAction(t("Copying resume command", "正在复制 Resume 命令"), () => window.sessionSearch.copyResumeCommand(contextMenu.session.sessionKey), t("Resume command copied.", "Resume 命令已复制。"))
           }
@@ -1638,6 +1700,25 @@ export function App(): ReactElement {
               `${FILE_MANAGER_LABEL} opened.`,
             )
           }
+        />
+      ) : null}
+
+      {migrationDialog?.kind === "select" ? (
+        <SessionMigrationDialog
+          session={migrationDialog.session}
+          language={language}
+          busy={actionStatus?.kind === "running"}
+          onSelect={(target) => void runMigration(target)}
+          onClose={() => setMigrationDialog(null)}
+        />
+      ) : null}
+
+      {migrationDialog?.kind === "launch-failed" ? (
+        <SessionMigrationLaunchFailedDialog
+          session={migrationDialog.session}
+          result={migrationDialog.result}
+          language={language}
+          onClose={() => setMigrationDialog(null)}
         />
       ) : null}
 
@@ -1976,12 +2057,28 @@ function formatQuotaReset(resetsAt: string | undefined, language: LanguageMode):
   return localize(language, `resets in ${days}d`, `${days} 天后重置`);
 }
 
+function migrationStrategyLabel(strategy: SessionMigrationResult["strategy"], language: LanguageMode): string {
+  if (strategy === "complete") return localize(language, "complete", "完整迁移");
+  if (strategy === "ai-compressed") return localize(language, "AI compressed", "AI 压缩");
+  return localize(language, "locally truncated", "本地截断");
+}
+
+function migrationProgressMessage(progress: SessionMigrationProgress, language: LanguageMode): string {
+  const target = migrationAgentLabel(progress.target);
+  if (progress.stage === "reading") return localize(language, `Reading session for ${target}...`, `正在读取会话，准备迁移到 ${target}...`);
+  if (progress.stage === "compressing") return localize(language, `Compressing long session for ${target}...`, `正在压缩长会话，准备迁移到 ${target}...`);
+  if (progress.stage === "writing") return localize(language, `Writing ${target} session...`, `正在写入 ${target} 会话...`);
+  if (progress.stage === "indexing") return localize(language, "Refreshing index...", "正在刷新索引...");
+  return localize(language, `Opening ${target}...`, `正在打开 ${target}...`);
+}
+
 function ContextMenu({
   state,
   language,
   revealLabel,
   showMacActions,
   canResume,
+  canMigrate,
   onRename,
   onAddTag,
   onFavorite,
@@ -1990,6 +2087,7 @@ function ContextMenu({
   onResume,
   onResumeIterm,
   onOpenApp,
+  onMigrate,
   onCopyResume,
   onCopyMarkdown,
   onExportMarkdown,
@@ -2001,6 +2099,7 @@ function ContextMenu({
   revealLabel: string;
   showMacActions: boolean;
   canResume: boolean;
+  canMigrate: boolean;
   onRename: () => void;
   onAddTag: () => void;
   onFavorite: () => void;
@@ -2009,6 +2108,7 @@ function ContextMenu({
   onResume: () => void;
   onResumeIterm: () => void;
   onOpenApp: () => void;
+  onMigrate: () => void;
   onCopyResume: () => void;
   onCopyMarkdown: () => void;
   onExportMarkdown: () => void;
@@ -2020,6 +2120,11 @@ function ContextMenu({
   const localOnlyDisabled = isRemoteSession(state.session);
   const revealTitle = localOnlyDisabled ? remoteRevealTitle(language) : l(`Show in ${revealLabel}`, `在${revealLabel}中显示`);
   const openAppTitle = localOnlyDisabled ? remoteOpenAppTitle(language) : l("Open native app", "打开原生应用");
+  const migrateTitle = localOnlyDisabled
+    ? remoteMigrationTitle(language)
+    : canMigrate
+      ? l("Migrate to another agent", "迁移到另一个 Agent")
+      : unsupportedMigrationTitle(language);
   return (
     <div ref={menu.ref} className="context-menu" style={menu.style} onClick={(event) => event.stopPropagation()}>
       <button onClick={onRename}>
@@ -2052,6 +2157,9 @@ function ContextMenu({
           <AppWindow size={14} /> Open App
         </button>
       ) : null}
+      <button onClick={onMigrate} disabled={!canMigrate || localOnlyDisabled} title={migrateTitle}>
+        <ArrowRightLeft size={14} /> {l("Migrate to…", "迁移到…")}
+      </button>
       {canResume ? (
         <button onClick={onCopyResume}>
           <Copy size={14} /> {l("Copy Resume Cmd", "复制 Resume 命令")}

@@ -2063,6 +2063,52 @@ select:focus-visible {
   box-shadow: var(--shadow-dialog);
 }
 
+.migration-dialog {
+  width: min(520px, calc(100vw - 40px));
+}
+
+.migration-targets {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.migration-targets button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--text);
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.migration-targets button:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: var(--panel-hover);
+}
+
+.migration-targets button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.migration-resume-command {
+  overflow: auto;
+  max-height: 160px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--panel-subtle);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .dialog-title {
   display: flex;
   align-items: center;
