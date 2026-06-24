@@ -142,6 +142,17 @@ describe("detail panel actions", () => {
     expect(mainHandlerSource("command:copy-resume")).toContain("async (_event, sessionKey: string)");
   });
 
+  it("exposes cross-agent session migration through IPC", () => {
+    expect(preloadSource).toContain("migrateSession");
+    expect(preloadSource).toContain("session:migrate");
+    expect(preloadSource).toContain("onMigrationProgress");
+    expect(preloadSource).toContain("session:migration-progress");
+    expect(mainSource).toContain('ipcMain.handle("session:migrate"');
+    expect(mainSource).toContain('event.sender.send("session:migration-progress"');
+    expect(mainHandlerSource("session:migrate")).not.toContain("ensureRemoteSessionDetailsLoaded");
+    expect(mainHandlerSource("session:migrate")).toContain("fallbackMigrationResumeDisplayCommand");
+  });
+
   it("preflights remote resume before opening terminals", () => {
     expect(mainSource).toContain("preflightRemoteSessionResume");
     expect(mainSource).toContain("ensureRemoteResumePreflight");

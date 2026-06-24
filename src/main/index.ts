@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   apiProviderPreset,
@@ -33,10 +34,13 @@ import { syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer"
 import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-session";
 import {
   defaultSettings,
+  getMigrationResumeProcessSpec,
   getResumeCommand,
+  inspectMigrationCli,
   mergeAppSettings,
   normalizeTerminal,
   openNativeApp,
+  openMigrationResumeInTerminal,
   openResumeInSpecificTerminal,
   openResumeInTerminal,
   revealInFileManager,
@@ -46,6 +50,9 @@ import { focusLiveSessionTerminal } from "../core/session-focus";
 import { loadLiveSessionSnapshot } from "../core/session-activity";
 import { type TrackedLiveSession, updateLiveTracker } from "../core/live-transitions";
 import { resolveSummaryEndpoint, summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
+import { applyMigrationLengthPolicy, createMigrationCompressor } from "../core/session-migration-compression";
+import { migrateSession } from "../core/session-migration";
+import { writeMigratedSession } from "../core/session-migration-writers";
 import { writeDbPointer } from "../core/app-paths";
 import { routeResumeSession } from "../core/resume-router";
 import { diagnoseRemoteEnvironment, preflightRemoteSessionResume } from "../core/remote-health";
@@ -72,6 +79,7 @@ import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts"
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import type {
   EnvironmentUpsertInput,
+  MigrationAgent,
   SearchOptions,
   SessionEnvironment,
   SessionSearchResult,
@@ -902,6 +910,39 @@ async function summarizeOneSession(sessionKey: string, endpoint: SummaryEndpoint
   store.setAiSummary(sessionKey, result.summary, endpoint.model);
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathIsDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(targetPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function migrationResumeDisplayCommand(target: MigrationAgent, sessionId: string, projectPath: string): string {
+  return getMigrationResumeProcessSpec(target, sessionId, projectPath, getSettings()).displayCommand;
+}
+
+function quotePosixToken(value: string): string {
+  return /^[A-Za-z0-9_\-./]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function fallbackMigrationResumeDisplayCommand(target: MigrationAgent, sessionId: string, projectPath: string): string {
+  const settings = getSettings();
+  const binary =
+    target === "claude" ? settings.claudeBinary : target === "codex" ? settings.codexBinary : settings.codeBuddyBinary;
+  const args = target === "codex" ? ["resume", sessionId] : ["--resume", sessionId];
+  return `cd ${quotePosixToken(projectPath)} && ${[binary, ...args].map(quotePosixToken).join(" ")}`;
+}
+
 async function maybeAutoBackfillSummaries(): Promise<void> {
   if (summaryBackfillRunning) return;
   const settings = getSettings();
@@ -1153,6 +1194,38 @@ function registerIpc(): void {
     await ensureRemoteResumePreflight(session);
     await openResumeInSpecificTerminal(session, getSettings(), "iTerm", { sshArgs });
     store.markResumed(sessionKey);
+  });
+  ipcMain.handle("session:migrate", async (event, sessionKey: string, target: MigrationAgent) => {
+    const session = store.getSession(sessionKey);
+    if (!session) throw new Error("Session not found.");
+
+    const endpoint = resolveSummaryEndpointFromSettings();
+    const compressor = endpoint ? createMigrationCompressor(endpoint) : null;
+    const result = await migrateSession({
+      source: session,
+      messages: store.getAllMessages(sessionKey),
+      target,
+      deps: {
+        inspectCli: (migrationTarget) => inspectMigrationCli(migrationTarget, getSettings()),
+        prepare: (portable) => applyMigrationLengthPolicy(portable, compressor),
+        write: (migrationTarget, portable) => writeMigratedSession({ target: migrationTarget, session: portable }),
+        record: (record) => store.recordSessionMigration(record),
+        refreshIndex: async () => {
+          const status = await runIndexSync();
+          if (status.error) throw new Error(status.error);
+        },
+        launch: (migrationTarget, targetSessionId, projectPath) =>
+          openMigrationResumeInTerminal(migrationTarget, targetSessionId, projectPath, getSettings()),
+        resumeCommand: migrationResumeDisplayCommand,
+        fallbackResumeCommand: fallbackMigrationResumeDisplayCommand,
+        onProgress: (progress) => event.sender.send("session:migration-progress", progress),
+        idFactory: () => randomUUID(),
+        now: () => Date.now(),
+        projectPathExists: pathExists,
+        projectPathIsDirectory: pathIsDirectory,
+      },
+    });
+    return result;
   });
   ipcMain.handle("command:open-app", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);

@@ -13,10 +13,13 @@ import type { SshConfigHost } from "../core/ssh-config";
 import type {
   EnvironmentUpsertInput,
   LiveSessionSnapshot,
+  MigrationAgent,
   ProjectSummary,
   SearchOptions,
   SessionEnvironment,
   SessionMessage,
+  SessionMigrationProgress,
+  SessionMigrationResult,
   SessionSearchPage,
   SessionSearchResult,
   SessionStats,
@@ -85,6 +88,8 @@ const api = {
   copyResumeCommand: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-resume", sessionKey),
   resumeSession: (sessionKey: string): Promise<ResumeRouteResult> => ipcRenderer.invoke("command:resume", sessionKey),
   resumeSessionInIterm: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:resume-iterm", sessionKey),
+  migrateSession: (sessionKey: string, target: MigrationAgent): Promise<SessionMigrationResult> =>
+    ipcRenderer.invoke("session:migrate", sessionKey, target),
   openNativeApp: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:open-app", sessionKey),
   revealSession: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:reveal", sessionKey),
   copyMarkdown: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-markdown", sessionKey),
@@ -94,6 +99,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: IndexStatus) => callback(status);
     ipcRenderer.on("index-status", listener);
     return () => ipcRenderer.removeListener("index-status", listener);
+  },
+  onMigrationProgress: (callback: (progress: SessionMigrationProgress) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: SessionMigrationProgress) => callback(progress);
+    ipcRenderer.on("session:migration-progress", listener);
+    return () => ipcRenderer.removeListener("session:migration-progress", listener);
   },
   onEnvironmentsUpdated: (callback: (environments: SessionEnvironment[]) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, environments: SessionEnvironment[]) => callback(environments);
