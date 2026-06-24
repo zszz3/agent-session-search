@@ -280,7 +280,7 @@ describe("migrateSession", () => {
       launched: true,
     });
     expect(write).toHaveBeenCalledOnce();
-    expect(refreshIndex).toHaveBeenCalledOnce();
+    expect(refreshIndex).toHaveBeenCalledWith(target, "/tmp/target-session-1.jsonl");
     expect(launch).toHaveBeenCalledOnce();
     expect(seenRecords).toEqual([
       {

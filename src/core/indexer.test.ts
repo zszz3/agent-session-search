@@ -1,7 +1,11 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { syncLoadedSessionsInBatches } from "./indexer";
+import { indexMigratedSessionFile, syncLoadedSessionsInBatches } from "./indexer";
 import { createInMemoryStore } from "./session-store";
-import type { IndexedSession, LoadedSession } from "./types";
+import { writeMigratedSession } from "./session-migration-writers";
+import type { IndexedSession, LoadedSession, MigrationAgent, PortableSession } from "./types";
 
 function session(index: number): LoadedSession {
   const id = `session-${index}`;
@@ -45,4 +49,38 @@ describe("indexer", () => {
     expect(status).toMatchObject({ running: false, indexed: 3, total: 3, error: null });
     expect(store.searchSessions({ query: "Question", limit: 10 })).toHaveLength(3);
   });
+
+  it.each(["claude", "codex", "codebuddy"] as const)("indexes one migrated %s session file without a full scan", async (target: MigrationAgent) => {
+    const store = createInMemoryStore();
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-session-search-index-migration-"));
+    try {
+      const written = await writeMigratedSession({
+        target,
+        homeDir,
+        now: new Date("2026-06-24T10:00:00.000Z"),
+        session: portableSession(),
+      });
+
+      const status = indexMigratedSessionFile(store, target, written.filePath);
+
+      expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
+      expect(store.searchSessions({ query: "migrated question", limit: 10 })).toHaveLength(1);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
 });
+
+function portableSession(): PortableSession {
+  return {
+    sourceSessionKey: "codex:source",
+    sourceAgent: "codex",
+    title: "Migrated session",
+    projectPath: "/tmp/migrated-project",
+    startedAt: "2026-06-24T09:00:00.000Z",
+    messages: [
+      { role: "user", content: "migrated question", timestamp: "2026-06-24T09:00:00.000Z", index: 0 },
+      { role: "assistant", content: "migrated answer", timestamp: "2026-06-24T09:00:01.000Z", index: 1 },
+    ],
+  };
+}

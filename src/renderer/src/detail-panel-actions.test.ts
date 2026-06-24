@@ -150,6 +150,8 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain('ipcMain.handle("session:migrate"');
     expect(mainSource).toContain('event.sender.send("session:migration-progress"');
     expect(mainHandlerSource("session:migrate")).not.toContain("ensureRemoteSessionDetailsLoaded");
+    expect(mainHandlerSource("session:migrate")).not.toContain("runIndexSync");
+    expect(mainHandlerSource("session:migrate")).toContain("indexMigratedSessionFile");
     expect(mainHandlerSource("session:migrate")).toContain("fallbackMigrationResumeDisplayCommand");
   });
 

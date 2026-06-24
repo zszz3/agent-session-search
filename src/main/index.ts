@@ -30,7 +30,7 @@ import {
 import { CodexChatProxy, type CodexChatProxyStatus } from "../core/codex-chat-proxy";
 import { applyClaudeApiConfig, loadClaudeApiConfigDefaults } from "../core/claude-profile";
 import { applyCodexApiConfig, loadCodexProfileDefaults } from "../core/codex-profile";
-import { syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
+import { indexMigratedSessionFile, syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
 import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-session";
 import {
   defaultSettings,
@@ -1210,9 +1210,10 @@ function registerIpc(): void {
         prepare: (portable) => applyMigrationLengthPolicy(portable, compressor),
         write: (migrationTarget, portable) => writeMigratedSession({ target: migrationTarget, session: portable }),
         record: (record) => store.recordSessionMigration(record),
-        refreshIndex: async () => {
-          const status = await runIndexSync();
-          if (status.error) throw new Error(status.error);
+        refreshIndex: async (migrationTarget, writtenFilePath) => {
+          const status = indexMigratedSessionFile(store, migrationTarget, writtenFilePath);
+          indexStatus = status;
+          mainWindow?.webContents.send("index-status", indexStatus);
         },
         launch: (migrationTarget, targetSessionId, projectPath) =>
           openMigrationResumeInTerminal(migrationTarget, targetSessionId, projectPath, getSettings()),

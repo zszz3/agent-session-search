@@ -1,6 +1,15 @@
-import { loadDefaultSessions, loadDefaultSessionsIterator, type SessionLoadOptions } from "./session-loader";
+import * as fs from "node:fs";
+import {
+  loadClaudeCliSessionRows,
+  loadCodeBuddyCliSessionFile,
+  loadCodexSessionFile,
+  loadDefaultSessions,
+  loadDefaultSessionsIterator,
+  parseJsonlText,
+  type SessionLoadOptions,
+} from "./session-loader";
 import type { SessionStore } from "./session-store";
-import type { LoadedSession } from "./types";
+import type { LoadedSession, MigrationAgent } from "./types";
 
 export interface IndexStatus {
   running: boolean;
@@ -73,4 +82,29 @@ export async function syncLoadedSessionsInBatches(
 
 export function syncDefaultSessionsInBatches(store: SessionStore, options: BatchIndexOptions = {}): Promise<IndexStatus> {
   return syncLoadedSessionsInBatches(store, loadDefaultSessionsIterator(options.loadOptions), options);
+}
+
+export function indexMigratedSessionFile(
+  store: SessionStore,
+  target: MigrationAgent,
+  filePath: string,
+): IndexStatus {
+  const loaded = loadMigratedSessionFile(target, filePath);
+  if (!loaded) {
+    throw new Error(`Migrated ${target} session could not be loaded from ${filePath}.`);
+  }
+  store.upsertIndexedSession(loaded.session, loaded.messages, loaded.tokenEvents, loaded.traceEvents);
+  return {
+    running: false,
+    indexed: 1,
+    total: 1,
+    lastIndexedAt: Date.now(),
+    error: null,
+  };
+}
+
+function loadMigratedSessionFile(target: MigrationAgent, filePath: string): LoadedSession | null {
+  if (target === "codex") return loadCodexSessionFile(filePath);
+  if (target === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
+  return loadClaudeCliSessionRows(filePath, parseJsonlText(fs.readFileSync(filePath, "utf8")));
 }
