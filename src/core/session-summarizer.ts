@@ -283,8 +283,11 @@ function spawnCli(command: string, args: string[], options: { cwd: string; signa
   if (process.platform !== "win32") {
     return spawn(command, args, { cwd: options.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
   }
-  const quoted = args.map(quoteWindowsArg);
-  return spawn(quoteWindowsArg(command), quoted, {
+  // On Windows with shell: true, we need to join command and args into a single string.
+  // Only quote the arguments, not the command itself (the shell resolves the command).
+  const quotedArgs = args.map(quoteWindowsArg);
+  const cmdString = [command, ...quotedArgs].join(" ");
+  return spawn(cmdString, [], {
     cwd: options.cwd,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
