@@ -17,25 +17,25 @@
   <img src="./assets/show.png" alt="Agent-Session-Search 界面预览" width="860">
 </p>
 
-Agent-Session-Search 是一个本地桌面工具，用来搜索、整理、分析和恢复 AI Coding Agent 的历史会话。
+Agent-Session-Search 是一个本地桌面工具，用来搜索、整理、快速启动和分析 AI Coding Agent 的历史会话。
 
-它默认读取本机已有的 Claude / Codex session，也可以通过 SSH 读取远程机器上的 Claude / Codex session；CodeBuddy CLI、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等本地来源可在 Settings 的 Optional sources 中开启。应用会建立本地搜索索引，并允许你给每个 session 添加自定义标题、标签、置顶和隐藏状态。这些额外信息都存放在独立的本地 SQLite 数据库里；索引和整理默认不会修改原始 session 数据。只有用户确认删除独立 session 文件时才会删除对应源文件；Hermes / OpenCode 这类共享 SQLite 数据库不会被整库删除。
+它支持本机和 SSH 远程机器上的 Claude Code / Codex 会话，也支持 CodeBuddy CLI、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等来源。你可以在本地建立搜索索引，并为 session 添加自定义标题、标签、收藏、置顶和隐藏状态；这些额外信息存放在独立的本地 SQLite 数据库里，索引和整理默认不会修改原始 session 数据。
 
 ## 功能
 
 ### 核心功能
 
-- **统一搜索和管理多种 AI Coding Agent 会话**
-  搜索、过滤、查看、整理和恢复 Claude Code、Codex，以及可选的 CodeBuddy、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等会话；支持自定义标题、标签、收藏、置顶、隐藏和一键 resume；也支持本地环境和 SSH 远程环境，远程机器无需安装本应用。
-- **完整查看会话上下文**
+- **统一搜索和管理多种 AI Coding Agent 会话**：
+  搜索、过滤、查看、整理和快速启动 Claude Code、Codex，以及可选的 CodeBuddy、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等会话；支持自定义标题、标签、收藏、置顶、隐藏和一键快速启动；也支持本地环境和 SSH 远程环境，远程机器无需安装本应用。
+- **完整查看会话上下文**：
   详情页展示完整消息、tool call、Markdown / code block 和 AI 摘要，并支持导出 Markdown。
-- **AI / Agent 辅助检索历史会话**
+- **AI / Agent 辅助检索历史会话**：
   支持 AI 摘要和自然语言找会话；同时开放只读 MCP 能力，让 Claude Code / Codex / CodeBuddy 可以在对话里直接搜索和读取历史会话。
-- **跨 Agent 迁移会话**
+- **跨 Agent 迁移会话**：
   支持把 Claude / Codex / CodeBuddy 会话迁移到另一个 Agent，并在迁移后继续工作。
-- **统一查看 Agent 用量和额度**
+- **统一查看 Agent 用量和额度**：
   统计今日、近 7 天、近 30 天和全部时间的各 Agent token 使用量；同时查看 Claude Code / Codex 的当前额度状态。
-- **统一管理 Skills 和 API Provider**
+- **统一管理 Skills 和 API Provider**：
   查看和管理 Claude Code / Codex skills，统计 skill 使用情况；在界面里切换 Codex / Claude Code 的官方账号或第三方 API Provider。
 
 ## 支持的数据源
