@@ -274,6 +274,37 @@ async function openaiResponsesCompletion(endpoint: SummaryEndpoint, messages: Ch
   return content;
 }
 
+// Spawns a CLI binary cross-platform. On Windows the `codex` / `claude` commands
+// are usually npm `.cmd` shims, which Node's spawn cannot execute directly unless
+// it goes through a shell. We therefore set `shell: true` on win32 and quote the
+// arguments ourselves (cmd.exe needs each arg wrapped and embedded quotes/specials
+// escaped), so multi-line prompts survive. POSIX keeps the safe no-shell path.
+function spawnCli(command: string, args: string[], options: { cwd: string; signal: AbortSignal }) {
+  if (process.platform !== "win32") {
+    return spawn(command, args, { cwd: options.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
+  }
+  // On Windows with shell: true, we need to join command and args into a single string.
+  // Only quote the arguments, not the command itself (the shell resolves the command).
+  const quotedArgs = args.map(quoteWindowsArg);
+  const cmdString = [command, ...quotedArgs].join(" ");
+  return spawn(cmdString, [], {
+    cwd: options.cwd,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    signal: options.signal,
+    shell: true,
+  });
+}
+
+// Quote a single argument for cmd.exe. Inside double quotes cmd does NOT interpret
+// & | < > ( ) ^, so we only need to: wrap in quotes, double embedded quotes, and
+// neutralize % to avoid environment-variable expansion. Newlines inside the quoted
+// span are passed through as part of the argument.
+export function quoteWindowsArg(arg: string): string {
+  const escaped = arg.replace(/"/g, '""').replace(/%/g, "%%");
+  return `"${escaped}"`;
+}
+
 async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
   const command = endpoint.command?.trim() || "codex";
   const cwd = endpoint.cwd || process.cwd();
@@ -285,10 +316,8 @@ async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMess
   const mergedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(command, ["exec", "--ephemeral", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt], {
+    const proc = spawnCli(command, ["exec", "--ephemeral", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt], {
       cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
       signal: mergedSignal,
     });
     let stderr = "";
@@ -311,8 +340,16 @@ async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMess
       stderr += chunk.toString();
     });
     proc.on("error", (error) => {
-      if (error.name === "AbortError") reject(new Error(`AI summary request timed out after ${(REQUEST_TIMEOUT_MS * 2) / 1000}s.`));
-      else reject(error);
+      if (error.name === "AbortError") {
+        reject(new Error(`AI summary request timed out after ${(REQUEST_TIMEOUT_MS * 2) / 1000}s.`));
+        return;
+      }
+      // If codex is not found, fall back to claude exec
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        resolve(claudeExecCompletion(endpoint, messages, signal));
+        return;
+      }
+      reject(error);
     });
     proc.on("close", (code, signalName) => {
       if (stdoutBuffer.trim()) {
@@ -326,6 +363,19 @@ async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMess
         }
       }
       if (code !== 0) {
+        // If codex exited with error, try falling back to claude exec
+        // This handles cases where codex command doesn't exist or fails to run
+        // We check for ENOENT-like patterns in stderr, and also fallback when
+        // exit code is 1 with minimal/no content (typical of "command not found" on Windows)
+        const hasNotFoundError = stderr.toLowerCase().includes("not found") ||
+                                  stderr.toLowerCase().includes("not recognized") ||
+                                  stderr.toLowerCase().includes("no such file") ||
+                                  stderr.toLowerCase().includes("cannot find");
+        const isEmptyError = code === 1 && (!content.trim() || stdoutBuffer.length < 100);
+        if (hasNotFoundError || isEmptyError || code === null) {
+          resolve(claudeExecCompletion(endpoint, messages, signal));
+          return;
+        }
         const status = code === null ? `unknown${signalName ? ` (${signalName})` : ""}` : String(code);
         reject(new Error(`Codex summary exited with ${status}. ${stderr.trim().slice(-1000)}`.trim()));
         return;
@@ -361,12 +411,7 @@ async function claudeExecCompletion(endpoint: SummaryEndpoint, messages: ChatMes
   ];
 
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(command, args, {
-      cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      signal: mergedSignal,
-    });
+    const proc = spawnCli(command, args, { cwd, signal: mergedSignal });
     const sessionIds = new Set<string>();
     let stderr = "";
     let streamedContent = "";
