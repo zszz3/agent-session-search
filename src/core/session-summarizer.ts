@@ -274,6 +274,34 @@ async function openaiResponsesCompletion(endpoint: SummaryEndpoint, messages: Ch
   return content;
 }
 
+// Spawns a CLI binary cross-platform. On Windows the `codex` / `claude` commands
+// are usually npm `.cmd` shims, which Node's spawn cannot execute directly unless
+// it goes through a shell. We therefore set `shell: true` on win32 and quote the
+// arguments ourselves (cmd.exe needs each arg wrapped and embedded quotes/specials
+// escaped), so multi-line prompts survive. POSIX keeps the safe no-shell path.
+function spawnCli(command: string, args: string[], options: { cwd: string; signal: AbortSignal }) {
+  if (process.platform !== "win32") {
+    return spawn(command, args, { cwd: options.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
+  }
+  const quoted = args.map(quoteWindowsArg);
+  return spawn(quoteWindowsArg(command), quoted, {
+    cwd: options.cwd,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    signal: options.signal,
+    shell: true,
+  });
+}
+
+// Quote a single argument for cmd.exe. Inside double quotes cmd does NOT interpret
+// & | < > ( ) ^, so we only need to: wrap in quotes, double embedded quotes, and
+// neutralize % to avoid environment-variable expansion. Newlines inside the quoted
+// span are passed through as part of the argument.
+export function quoteWindowsArg(arg: string): string {
+  const escaped = arg.replace(/"/g, '""').replace(/%/g, "%%");
+  return `"${escaped}"`;
+}
+
 async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
   const command = endpoint.command?.trim() || "codex";
   const cwd = endpoint.cwd || process.cwd();
@@ -285,10 +313,8 @@ async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMess
   const mergedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(command, ["exec", "--ephemeral", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt], {
+    const proc = spawnCli(command, ["exec", "--ephemeral", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt], {
       cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
       signal: mergedSignal,
     });
     let stderr = "";
@@ -361,12 +387,7 @@ async function claudeExecCompletion(endpoint: SummaryEndpoint, messages: ChatMes
   ];
 
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(command, args, {
-      cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      signal: mergedSignal,
-    });
+    const proc = spawnCli(command, args, { cwd, signal: mergedSignal });
     const sessionIds = new Set<string>();
     let stderr = "";
     let streamedContent = "";
