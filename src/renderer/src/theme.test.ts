@@ -96,6 +96,13 @@ describe("theme controls", () => {
     expect(apiDialog).toMatch(/Save/);
   });
 
+  it("omits CodexZH from direct AI summary API providers", () => {
+    const summarySection = apiConfigDialogSource.slice(apiConfigDialogSource.indexOf("AI summary source"));
+
+    expect(summarySection).toContain("SUMMARY_API_PROVIDER_PRESETS.map");
+    expect(summarySection).not.toMatch(/CodexZH/);
+  });
+
   it("lets API keys be revealed without changing the saved value", () => {
     const apiDialog = apiConfigDialogSource;
 

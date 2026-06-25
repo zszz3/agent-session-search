@@ -879,13 +879,46 @@ function stopLiveNotifyPolling(): void {
 
 let summaryBackfillRunning = false;
 
-// Candidate order matters: the dedicated summary provider wins, falling back to
-// the existing Codex API config when it is not configured.
-function resolveSummaryEndpointFromSettings(): SummaryEndpoint | null {
-  const settings = withStoredApiProviderKeys(getSettings());
-  // Dedicated summary provider first, then the Codex (OpenAI) provider, then the
-  // Claude (Anthropic) provider — so a coding-plan set up for Claude Code is reused.
-  return resolveSummaryEndpoint([settings.summaryApiConfig, settings.apiConfig, settings.claudeApiConfig]);
+const SUMMARY_PROVIDER_ERROR =
+  "AI summary has no usable provider. Select Codex, Claude Code, or configure a direct summary API provider in Settings.";
+
+async function resolveSummaryEndpointFromSettings(): Promise<SummaryEndpoint | null> {
+  const settings = await getHydratedSettings();
+  if (settings.summarySource === "custom") {
+    return resolveSummaryEndpoint([settings.summaryApiConfig]);
+  }
+  if (settings.summarySource === "claude") {
+    return {
+      baseUrl: "",
+      model: "claude",
+      apiKey: "",
+      apiFormat: "claude_exec",
+      command: settings.claudeBinary,
+      cwd: process.cwd(),
+      onTemporarySession: (sessionKey) => {
+        try {
+          store.deleteSession(sessionKey);
+        } catch {
+          // Best-effort cleanup if a Claude summary session is indexed before it exits.
+        }
+      },
+    };
+  }
+  return {
+    baseUrl: "",
+    model: "codex",
+    apiKey: "",
+    apiFormat: "codex_exec",
+    command: settings.codexBinary,
+    cwd: process.cwd(),
+    onTemporarySession: (sessionKey) => {
+      try {
+        store.deleteSession(sessionKey);
+      } catch {
+        // Best-effort cleanup if an ephemeral Codex call is indexed before it exits.
+      }
+    },
+  };
 }
 
 const SUMMARY_HEAD_MESSAGES = 24;
@@ -948,7 +981,7 @@ async function maybeAutoBackfillSummaries(): Promise<void> {
   if (summaryBackfillRunning) return;
   const settings = getSettings();
   if (!settings.summaryAutoBackfill) return;
-  const endpoint = resolveSummaryEndpointFromSettings();
+  const endpoint = await resolveSummaryEndpointFromSettings();
   if (!endpoint) return;
   summaryBackfillRunning = true;
   try {
@@ -1020,17 +1053,17 @@ function registerIpc(): void {
   ipcMain.handle("sessions:live", () => loadLiveSessionSnapshot({ includeTrae: getSettings().includeTrae }));
   ipcMain.handle("session:summarize", async (_event, sessionKey: string) => {
     await ensureRemoteSessionDetailsLoaded(sessionKey);
-    const endpoint = resolveSummaryEndpointFromSettings();
+    const endpoint = await resolveSummaryEndpointFromSettings();
     if (!endpoint) {
-      throw new Error("No AI summary provider is configured. Set a custom provider in Settings.");
+      throw new Error(SUMMARY_PROVIDER_ERROR);
     }
     await summarizeOneSession(sessionKey, endpoint);
     return store.getSession(sessionKey);
   });
   ipcMain.handle("session:summarize-missing", async (event) => {
-    const endpoint = resolveSummaryEndpointFromSettings();
+    const endpoint = await resolveSummaryEndpointFromSettings();
     if (!endpoint) {
-      throw new Error("No AI summary provider is configured. Set a custom provider in Settings.");
+      throw new Error(SUMMARY_PROVIDER_ERROR);
     }
     const settings = getSettings();
     const maxAgeMs = settings.summaryMaxAgeDays * 86_400_000;
@@ -1200,7 +1233,7 @@ function registerIpc(): void {
     const session = store.getSession(sessionKey);
     if (!session) throw new Error("Session not found.");
 
-    const endpoint = resolveSummaryEndpointFromSettings();
+    const endpoint = await resolveSummaryEndpointFromSettings();
     const compressor = endpoint ? createMigrationCompressor(endpoint) : null;
     const result = await migrateSession({
       source: session,

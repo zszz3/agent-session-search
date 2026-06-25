@@ -1,8 +1,12 @@
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildSummaryMessages,
   needsBackfill,
   parseSummaryResponse,
+  requestSummaryCompletion,
   resolveSummaryEndpoint,
   type SummaryProviderConfig,
   summarizeSession,
@@ -22,6 +26,60 @@ function customConfig(overrides: Partial<SummaryProviderConfig>): SummaryProvide
 
 const DAY = 24 * 60 * 60 * 1000;
 
+async function writeCodexExecFake(): Promise<{ executable: string; callsPath: string }> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "session-summary-codex-"));
+  const executable = path.join(dir, "codex-fake");
+  const callsPath = path.join(dir, "calls.jsonl");
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const callsPath = ${JSON.stringify(callsPath)};
+
+fs.appendFileSync(callsPath, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+if (!process.argv.includes("exec") || !process.argv.includes("--ephemeral") || !process.argv.includes("--json")) {
+  console.error("expected codex exec --ephemeral --json");
+  process.exit(2);
+}
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+write({ type: "thread.started", thread_id: "thread-summary-1" });
+write({ type: "turn.started" });
+write({ type: "item.completed", item: { id: "item-1", type: "agent_message", text: "{\\"summary\\":\\"Summarized with current Codex config.\\",\\"title\\":\\"Codex summary\\",\\"tags\\":[\\"summary\\"]}" } });
+write({ type: "turn.completed" });
+`;
+  await writeFile(executable, script, "utf8");
+  await chmod(executable, 0o755);
+  return { executable, callsPath };
+}
+
+async function writeClaudeExecFake(): Promise<{ executable: string; callsPath: string }> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "session-summary-claude-"));
+  const executable = path.join(dir, "claude-fake");
+  const callsPath = path.join(dir, "calls.jsonl");
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const callsPath = ${JSON.stringify(callsPath)};
+
+fs.appendFileSync(callsPath, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+if (!process.argv.includes("--print") || !process.argv.includes("stream-json")) {
+  console.error("expected claude --print --output-format stream-json");
+  process.exit(2);
+}
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+write({ type: "system", session_id: "claude-summary-1" });
+write({ type: "result", subtype: "success", session_id: "claude-summary-1", result: "{\\"summary\\":\\"Summarized with current Claude Code settings.\\",\\"title\\":\\"Claude summary\\",\\"tags\\":[\\"summary\\"]}" });
+`;
+  await writeFile(executable, script, "utf8");
+  await chmod(executable, 0o755);
+  return { executable, callsPath };
+}
+
 describe("resolveSummaryEndpoint", () => {
   it("prefers the first usable custom config and trims trailing slashes", () => {
     const endpoint = resolveSummaryEndpoint([customConfig({ customBaseUrl: "https://a.com/v1/" }), customConfig({})]);
@@ -34,13 +92,20 @@ describe("resolveSummaryEndpoint", () => {
     expect(resolveSummaryEndpoint([dedicated, fallback])?.model).toBe("kimi-k2.6");
   });
 
-  it("skips official providers and returns null when nothing is usable", () => {
-    expect(resolveSummaryEndpoint([customConfig({ activeProvider: "official" })])).toBeNull();
+  it("returns null when no provider has a complete custom endpoint", () => {
+    expect(resolveSummaryEndpoint([customConfig({ activeProvider: "official", customApiKey: "" })])).toBeNull();
+  });
+
+  it("ignores saved custom endpoint fields when that provider is not currently active", () => {
+    const endpoint = resolveSummaryEndpoint([
+      customConfig({ activeProvider: "official", customBaseUrl: "https://api.codexzh.com/v1", customModel: "gpt-5.5", customApiFormat: "openai_responses" }),
+    ]);
+    expect(endpoint).toBeNull();
   });
 
   it("maps an anthropic config (e.g. a coding-plan provider) to the anthropic format", () => {
     const endpoint = resolveSummaryEndpoint([
-      customConfig({ activeProvider: "official" }),
+      customConfig({ customApiKey: "" }),
       customConfig({ customBaseUrl: "https://open.bigmodel.cn/api/anthropic", customModel: "glm-5.1", customApiFormat: "anthropic" }),
     ]);
     expect(endpoint?.apiFormat).toBe("anthropic");
@@ -52,6 +117,14 @@ describe("resolveSummaryEndpoint", () => {
       customConfig({ customBaseUrl: "https://open.bigmodel.cn/api/anthropic", customModel: "glm-5.1", customApiFormat: "openai_chat" }),
     ]);
     expect(endpoint?.apiFormat).toBe("anthropic");
+  });
+
+  it("preserves OpenAI Responses configs when falling back to the Codex provider", () => {
+    const endpoint = resolveSummaryEndpoint([
+      customConfig({ customApiKey: "" }),
+      customConfig({ customBaseUrl: "https://api.codexzh.com/v1", customModel: "gpt-5.5", customApiFormat: "openai_responses" }),
+    ]);
+    expect(endpoint).toEqual({ baseUrl: "https://api.codexzh.com/v1", model: "gpt-5.5", apiKey: "sk-test", apiFormat: "openai_responses" });
   });
 });
 
@@ -124,6 +197,95 @@ describe("summarizeSession", () => {
       }),
     ).rejects.toThrow();
     expect(called).toBe(false);
+  });
+
+  it("calls OpenAI Responses API endpoints and parses output_text replies", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = (async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(JSON.stringify({ output_text: '{"summary":"Fixed fallback summaries.","title":"Fallback fix","tags":["summary"]}' }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await summarizeSession(
+        { head: [{ role: "user", content: "fallback summarize fails in codex" }], tail: [], omittedCount: 0 },
+        { baseUrl: "https://api.codexzh.com/v1", model: "gpt-5.5", apiKey: "sk-test", apiFormat: "openai_responses" },
+        requestSummaryCompletion,
+      );
+
+      expect(result.summary).toBe("Fixed fallback summaries.");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe("https://api.codexzh.com/v1/responses");
+      expect(calls[0].body).toMatchObject({
+        model: "gpt-5.5",
+        instructions: expect.stringContaining("You label developer AI-coding sessions"),
+        input: [
+          { type: "message", role: "user", content: [{ type: "input_text", text: expect.stringContaining("fallback summarize fails in codex") }] },
+        ],
+        temperature: 0.2,
+        stream: false,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("uses Codex exec ephemeral with the current Codex config", async () => {
+    const fake = await writeCodexExecFake();
+    const temporarySessions: string[] = [];
+
+    const result = await summarizeSession(
+      { head: [{ role: "user", content: "summarize using official codex" }], tail: [], omittedCount: 0 },
+      {
+        baseUrl: "",
+        model: "codex",
+        apiKey: "",
+        apiFormat: "codex_exec",
+        command: fake.executable,
+        cwd: path.dirname(fake.executable),
+        onTemporarySession: (sessionKey) => temporarySessions.push(sessionKey),
+      },
+      requestSummaryCompletion,
+    );
+
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(result.summary).toBe("Summarized with current Codex config.");
+    expect(temporarySessions).toEqual(["codex:thread-summary-1"]);
+    expect(calls[0].args).toEqual(expect.arrayContaining(["exec", "--ephemeral", "--json", "--skip-git-repo-check"]));
+  });
+
+  it("uses Claude Code print mode with the current Claude Code settings and records the temporary session", async () => {
+    const fake = await writeClaudeExecFake();
+    const temporarySessions: string[] = [];
+
+    const result = await summarizeSession(
+      { head: [{ role: "user", content: "summarize using official claude" }], tail: [], omittedCount: 0 },
+      {
+        baseUrl: "",
+        model: "claude",
+        apiKey: "",
+        apiFormat: "claude_exec",
+        command: fake.executable,
+        cwd: path.dirname(fake.executable),
+        onTemporarySession: (sessionKey) => temporarySessions.push(sessionKey),
+      },
+      requestSummaryCompletion,
+    );
+
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(result.summary).toBe("Summarized with current Claude Code settings.");
+    expect(temporarySessions).toEqual(["claude:claude-summary-1"]);
+    expect(calls[0].args).toEqual(expect.arrayContaining(["--print", "--output-format", "stream-json"]));
   });
 });
 

@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { LiveSession, LiveSessionFamily, LiveSessionSnapshot } from "./types";
 
@@ -18,6 +20,7 @@ export interface LoadLiveSessionOptions {
   runner?: ProcessListRunner;
   now?: Date;
   includeTrae?: boolean;
+  homeDir?: string;
 }
 
 export function detectLiveSessionsFromProcessLines(
@@ -54,6 +57,7 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
   const generatedAt = (options.now ?? new Date()).toISOString();
   const platform = options.platform ?? process.platform;
   const runner = options.runner ?? execText;
+  const homeDir = options.homeDir ?? os.homedir();
 
   try {
     const output =
@@ -68,7 +72,7 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
     const [codexSessionFilesByPid, claudeSessionFilesByPid] =
       platform === "win32"
         ? [new Map<number, string>(), new Map<number, string>()]
-        : await Promise.all([loadPlainCodexSessionFiles(lines, runner), loadPlainClaudeSessionFiles(lines, runner)]);
+        : await Promise.all([loadPlainCodexSessionFiles(lines, runner, homeDir), loadPlainClaudeSessionFiles(lines, runner, homeDir)]);
     const traeSessionIdsByPid =
       platform === "win32" || options.includeTrae === false ? new Map<number, string>() : await loadTraeSessionIds(lines, runner);
 
@@ -85,46 +89,64 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
   }
 }
 
-async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
+async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner, homeDir: string): Promise<Map<number, string>> {
   const sessionFiles = new Map<number, string>();
+  const claimedRawIds = claimedRawIdsForFamily(lines, "codex");
   const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
   const pids = entries
     .filter((entry) => isPlainCodexCommand(splitCommandLine(entry.command)))
     .map((entry) => entry.pid);
 
-  await Promise.all(
+  const outputs = await Promise.all(
     pids.map(async (pid) => {
       try {
-        const output = await runner("lsof", ["-p", String(pid)]);
-        const sessionFile = extractCodexSessionFile(output);
-        if (sessionFile) sessionFiles.set(pid, sessionFile);
+        return { pid, output: await runner("lsof", ["-p", String(pid)]) };
       } catch {
         // A process can exit between ps and lsof; ignore it and keep the rest.
+        return { pid, output: "" };
       }
     }),
   );
 
+  for (const { pid, output } of outputs) {
+    const cwd = extractCwdFromLsof(output);
+    const sessionFile = extractCodexSessionFile(output) ?? latestCodexSessionFileForCwd(cwd, homeDir, claimedRawIds);
+    const rawId = sessionFile ? extractCodexSessionId(sessionFile) : null;
+    if (!sessionFile || !rawId) continue;
+    sessionFiles.set(pid, sessionFile);
+    claimedRawIds.add(rawId);
+  }
+
   return sessionFiles;
 }
 
-async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
+async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner, homeDir: string): Promise<Map<number, string>> {
   const sessionFiles = new Map<number, string>();
+  const claimedRawIds = claimedRawIdsForFamily(lines, "claude");
   const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
   const pids = entries
     .filter((entry) => isPlainClaudeCommand(splitCommandLine(entry.command)))
     .map((entry) => entry.pid);
 
-  await Promise.all(
+  const outputs = await Promise.all(
     pids.map(async (pid) => {
       try {
-        const output = await runner("lsof", ["-p", String(pid)]);
-        const sessionFile = extractClaudeSessionFile(output);
-        if (sessionFile) sessionFiles.set(pid, sessionFile);
+        return { pid, output: await runner("lsof", ["-p", String(pid)]) };
       } catch {
         // A process can exit between ps and lsof; ignore it and keep the rest.
+        return { pid, output: "" };
       }
     }),
   );
+
+  for (const { pid, output } of outputs) {
+    const cwd = extractCwdFromLsof(output);
+    const sessionFile = extractClaudeSessionFile(output) ?? latestClaudeSessionFileForCwd(cwd, homeDir, claimedRawIds);
+    const rawId = sessionFile ? extractClaudeSessionId(sessionFile) : null;
+    if (!sessionFile || !rawId) continue;
+    sessionFiles.set(pid, sessionFile);
+    claimedRawIds.add(rawId);
+  }
 
   return sessionFiles;
 }
@@ -177,6 +199,17 @@ function detectResumeCommand(tokens: string[]): { family: LiveSessionFamily; raw
   return null;
 }
 
+function claimedRawIdsForFamily(lines: string[], family: LiveSessionFamily): Set<string> {
+  const claimed = new Set<string>();
+  for (const line of lines) {
+    const entry = parseProcessLine(line);
+    if (!entry) continue;
+    const command = detectResumeCommand(splitCommandLine(entry.command));
+    if (command?.family === family) claimed.add(command.rawId);
+  }
+  return claimed;
+}
+
 function detectPlainCodexCommand(tokens: string[], sessionFile: string | undefined): { family: LiveSessionFamily; rawId: string } | null {
   if (!sessionFile || !isPlainCodexCommand(tokens)) return null;
   const rawId = extractCodexSessionId(sessionFile);
@@ -195,11 +228,13 @@ function detectTraeAppSession(command: string, rawId: string | undefined): { fam
 }
 
 function isPlainCodexCommand(tokens: string[]): boolean {
-  const commandStartIndexes = isNodeExecutable(tokens[0]) ? [1] : [0];
+  if (isNodeExecutable(tokens[0])) return false;
+  const commandStartIndexes = [0];
 
   for (const index of commandStartIndexes) {
     const family = executableFamily(tokens[index]);
     if (family !== "codex") continue;
+    if (isCodexDesktopProcess(tokens[index])) return false;
     const args = tokens.slice(index + 1);
     if (args.includes("resume")) return false;
     if (args[0] === "app-server") return false;
@@ -221,6 +256,13 @@ function isPlainClaudeCommand(tokens: string[]): boolean {
   }
 
   return false;
+}
+
+function isCodexDesktopProcess(token: string | undefined): boolean {
+  if (!token) return false;
+  const lower = token.toLowerCase();
+  if (lower.includes("/.codex/computer-use/")) return true;
+  return lower.includes(".app/contents/") && !lower.includes("/contents/resources/codex");
 }
 
 function codexResumeId(args: string[]): string | null {
@@ -302,6 +344,85 @@ function extractClaudeSessionFile(lsofOutput: string): string | null {
 function extractClaudeSessionId(sessionFile: string): string | null {
   const rawId = path.basename(sessionFile, ".jsonl").trim();
   return rawId || null;
+}
+
+function extractCwdFromLsof(lsofOutput: string): string | null {
+  for (const line of lsofOutput.split(/\r?\n/)) {
+    if (!/\bcwd\b/.test(line)) continue;
+    const start = line.indexOf("/");
+    if (start >= 0) return line.slice(start).trim();
+  }
+  return null;
+}
+
+function latestClaudeSessionFileForCwd(cwd: string | null, homeDir: string, claimedRawIds: Set<string>): string | null {
+  if (!cwd) return null;
+  return newestJsonlFile(path.join(homeDir, ".claude", "projects", encodeClaudeProjectDir(cwd)), (filePath) => {
+    const rawId = extractClaudeSessionId(filePath);
+    return Boolean(rawId && !claimedRawIds.has(rawId));
+  });
+}
+
+function latestCodexSessionFileForCwd(cwd: string | null, homeDir: string, claimedRawIds: Set<string>): string | null {
+  if (!cwd) return null;
+  return newestJsonlFile(path.join(homeDir, ".codex", "sessions"), (filePath) => {
+    const rawId = extractCodexSessionId(filePath);
+    return Boolean(rawId && !claimedRawIds.has(rawId) && codexSessionCwd(filePath) === cwd);
+  });
+}
+
+function encodeClaudeProjectDir(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+function newestJsonlFile(root: string, matches: (filePath: string) => boolean = () => true): string | null {
+  if (!fs.existsSync(root)) return null;
+  const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const filePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(filePath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      try {
+        candidates.push({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs });
+      } catch {
+        // Ignore files that disappear while scanning.
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates.find((candidate) => matches(candidate.filePath))?.filePath ?? null;
+}
+
+function codexSessionCwd(filePath: string): string | null {
+  try {
+    const firstLine = fs.readFileSync(filePath, "utf-8").split(/\r?\n/, 1)[0];
+    if (!firstLine) return null;
+    const parsed = JSON.parse(firstLine) as {
+      type?: unknown;
+      payload?: { cwd?: unknown };
+      git?: { cwd?: unknown };
+    };
+    if (parsed.type === "session_meta" && typeof parsed.payload?.cwd === "string") return parsed.payload.cwd;
+    if (!parsed.type && typeof parsed.git?.cwd === "string") return parsed.git.cwd;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function extractTraeStateDbPath(lsofOutput: string): string | null {

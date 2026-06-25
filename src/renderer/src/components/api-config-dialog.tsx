@@ -15,6 +15,8 @@ import type { AppSettings, AppSettingsUpdate } from "../../../core/platform";
 import type { SettingsFeedback } from "../app-types";
 import { localize, type LanguageMode } from "../language";
 
+const SUMMARY_API_PROVIDER_PRESETS = API_PROVIDER_PRESETS.filter((preset) => preset.id !== "codexzh");
+
 export function ApiConfigDialog({
   settings,
   language,
@@ -108,11 +110,12 @@ export function ApiConfigDialog({
 
   const selectSummaryPreset = async (presetId: ApiProviderPresetId) => {
     const selectionId = ++summaryApiPresetSelectionRef.current;
-    const preset = API_PROVIDER_PRESETS.find((item) => item.id === presetId) ?? API_PROVIDER_PRESETS[0];
+    const preset = SUMMARY_API_PROVIDER_PRESETS.find((item) => item.id === presetId) ?? SUMMARY_API_PROVIDER_PRESETS[0];
+    if (!preset) return;
     const apiKey = await window.sessionSearch.getApiProviderKey("summary", preset.id).catch(() => "");
     if (selectionId !== summaryApiPresetSelectionRef.current) return;
-    setDraftSummaryApiConfig((current) => ({
-      ...current,
+    const next: ApiConfig = {
+      ...(settings?.summaryApiConfig ?? draftSummaryApiConfig),
       activeProvider: "custom",
       customProviderId: preset.id,
       customProviderName: preset.providerName,
@@ -120,7 +123,9 @@ export function ApiConfigDialog({
       customApiKey: apiKey,
       customModel: preset.model,
       customApiFormat: preset.apiFormat,
-    }));
+    };
+    setDraftSummaryApiConfig(next);
+    onSettingsChange({ summarySource: "custom", summaryApiConfig: next });
     setShowSummaryApiKey(false);
   };
 
@@ -133,7 +138,7 @@ export function ApiConfigDialog({
   const saveDraft = () => {
     if (apiTarget === "codex") onSettingsChange({ apiConfig: draftApiConfig });
     else if (apiTarget === "claude") onSettingsChange({ claudeApiConfig: draftClaudeApiConfig });
-    else onSettingsChange({ summaryApiConfig: draftSummaryApiConfig });
+    else onSettingsChange({ summarySource: "custom", summaryApiConfig: draftSummaryApiConfig });
   };
 
   const applyDraft = () => {
@@ -514,32 +519,38 @@ export function ApiConfigDialog({
           ) : (
             <section className="settings-pane api-settings-form">
               <header className="settings-pane-head">
-                <h3>{l("AI summary provider", "AI 摘要供应商")}</h3>
+                <h3>{l("AI summary source", "AI 摘要来源")}</h3>
                 <p>
                   {l(
-                    "Dedicated OpenAI-compatible provider for summaries. On Fallback, the Codex then Claude provider is used — so an Anthropic coding-plan (e.g. GLM coding plan) set up in the Claude Code tab is reused. Saved locally; never written to any CLI config.",
-                    "用于生成摘要的专用 OpenAI-compatible 供应商。选「回落」时依次用 Codex、Claude 的供应商——这样在 Claude Code 标签里配置的 Anthropic coding plan(如 GLM coding plan）会被复用。仅本地保存，不写入任何 CLI 配置。",
+                    "Choose Codex or Claude Code, or call a summary API provider directly. Direct API providers such as DeepSeek and GLM do not create agent sessions.",
+                    "选择 Codex / Claude Code，或直接调用摘要 API 供应商。DeepSeek、GLM 等直接 API 不会创建 agent session。",
                   )}
                 </p>
               </header>
-              <div className="api-provider-switch" role="group" aria-label={l("AI summary provider", "AI 摘要供应商")}>
+              <div className="api-provider-switch" role="group" aria-label={l("AI summary source", "AI 摘要来源")}>
                 <button
                   type="button"
-                  className={draftSummaryApiConfig.activeProvider === "official" ? "active" : ""}
+                  className={(settings?.summarySource ?? "codex") === "codex" ? "active" : ""}
                   disabled={!settings || saving}
-                  onClick={() => {
-                    summaryApiPresetSelectionRef.current += 1;
-                    updateDraftSummaryApiConfig({ activeProvider: "official" });
-                  }}
+                  onClick={() => onSettingsChange({ summarySource: "codex" })}
                 >
-                  <strong>{l("Fallback (Codex / Claude)", "回落(Codex / Claude)")}</strong>
-                  <span>{l("Reuse the Codex or Claude provider.", "复用 Codex 或 Claude 供应商。")}</span>
+                  <strong>Codex</strong>
+                  <span>{l("Use the current ~/.codex config via an ephemeral Codex call.", "通过 ephemeral Codex 调用使用当前 ~/.codex 配置。")}</span>
                 </button>
-                {API_PROVIDER_PRESETS.filter((preset) => preset.apiFormat === "openai_chat").map((preset) => (
+                <button
+                  type="button"
+                  className={settings?.summarySource === "claude" ? "active" : ""}
+                  disabled={!settings || saving}
+                  onClick={() => onSettingsChange({ summarySource: "claude" })}
+                >
+                  <strong>Claude Code</strong>
+                  <span>{l("Use the current ~/.claude settings, then delete the temporary local session.", "使用当前 ~/.claude 配置，摘要后删除临时本地 session。")}</span>
+                </button>
+                {SUMMARY_API_PROVIDER_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
                     type="button"
-                    className={draftSummaryApiConfig.activeProvider === "custom" && draftSummaryApiConfig.customProviderId === preset.id ? "active" : ""}
+                    className={settings?.summarySource === "custom" && draftSummaryApiConfig.customProviderId === preset.id ? "active" : ""}
                     disabled={!settings || saving}
                     onClick={() => void selectSummaryPreset(preset.id)}
                   >
@@ -548,7 +559,7 @@ export function ApiConfigDialog({
                   </button>
                 ))}
               </div>
-              {draftSummaryApiConfig.activeProvider === "custom" ? (
+              {settings?.summarySource === "custom" ? (
                 <>
                   <label className="settings-field">
                     <div className="settings-field-text">
@@ -566,7 +577,7 @@ export function ApiConfigDialog({
                   <label className="settings-field">
                     <div className="settings-field-text">
                       <span className="settings-field-title">{l("Model", "模型")}</span>
-                      <span className="settings-field-sub">{l("A cheap, fast chat model works well.", "选个便宜快速的聊天模型即可。")}</span>
+                      <span className="settings-field-sub">{l("Summary API model.", "摘要 API 模型。")}</span>
                     </div>
                     <input
                       type="text"

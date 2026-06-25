@@ -43,6 +43,26 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T | Promise<T>): T
   }
 }
 
+function withShell<T>(shell: string, fn: () => T | Promise<T>): T | Promise<T> {
+  const originalShell = process.env.SHELL;
+  process.env.SHELL = shell;
+  const restore = () => {
+    if (originalShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = originalShell;
+  };
+  try {
+    const result = fn();
+    if (result && typeof (result as Promise<T>).then === "function") {
+      return (result as Promise<T>).finally(restore);
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
 describe("platform application resolution", () => {
   it("returns the first macOS application name that resolves", async () => {
     const calls: string[][] = [];
@@ -255,18 +275,13 @@ describe("Ghostty resume launch args", () => {
       rawId: "abc",
       projectPath: "/repo",
     } as SessionSearchResult;
-    const originalShell = process.env.SHELL;
-    process.env.SHELL = "/bin/zsh";
-    try {
+    withShell("/bin/zsh", () => {
       const args = buildGhosttyOpenArgs(session, defaultSettings);
       expect(args.slice(0, 5)).toEqual(["-na", "Ghostty.app", "--args", "-e", "/bin/zsh"]);
       expect(args[5]).toBe("-ic");
       expect(args[6]).toBe("cd /repo && claude --resume abc");
       expect(args.some((arg) => arg.includes("--initial-command"))).toBe(false);
-    } finally {
-      if (originalShell === undefined) delete process.env.SHELL;
-      else process.env.SHELL = originalShell;
-    }
+    });
   });
 });
 
@@ -806,13 +821,15 @@ describe("migration resume terminal launch", () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const settings = { ...defaultSettings, defaultTerminal: "Ghostty" as const, claudeBinary: "/opt/Claude CLI/claude" };
 
-    await withPlatform("darwin", async () => {
-      await openMigrationResumeInTerminal("claude", "session-ghostty", "/repo", settings, {
-        runProcess: async (command, args) => {
-          calls.push({ command, args });
-        },
-      });
-    });
+    await withShell("/bin/zsh", () =>
+      withPlatform("darwin", async () => {
+        await openMigrationResumeInTerminal("claude", "session-ghostty", "/repo", settings, {
+          runProcess: async (command, args) => {
+            calls.push({ command, args });
+          },
+        });
+      })
+    );
 
     expect(calls).toEqual([
       {
@@ -826,13 +843,15 @@ describe("migration resume terminal launch", () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const settings = { ...defaultSettings, defaultTerminal: "WezTerm" as const, codeBuddyBinary: "/opt/CodeBuddy CLI/codebuddy" };
 
-    await withPlatform("darwin", async () => {
-      await openMigrationResumeInTerminal("codebuddy", "session-wez", "/repo with spaces", settings, {
-        runProcess: async (command, args) => {
-          calls.push({ command, args });
-        },
-      });
-    });
+    await withShell("/bin/zsh", () =>
+      withPlatform("darwin", async () => {
+        await openMigrationResumeInTerminal("codebuddy", "session-wez", "/repo with spaces", settings, {
+          runProcess: async (command, args) => {
+            calls.push({ command, args });
+          },
+        });
+      })
+    );
 
     expect(calls).toEqual([
       {

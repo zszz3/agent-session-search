@@ -1762,6 +1762,9 @@ select:focus-visible {
   right: 18px;
   bottom: 18px;
   z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   max-width: min(420px, calc(100vw - 36px));
   padding: 10px 12px;
   border: 1px solid var(--border-strong);
@@ -1772,6 +1775,30 @@ select:focus-visible {
   box-shadow: var(--shadow-popover);
   font-size: 12.5px;
   line-height: 1.45;
+}
+
+.action-toast span {
+  min-width: 0;
+}
+
+.action-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin: -3px -4px -3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+}
+
+.action-toast-close:hover {
+  background: var(--panel-hover);
 }
 
 .action-toast.running {

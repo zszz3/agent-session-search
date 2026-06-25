@@ -69,6 +69,7 @@ export interface AppSettings {
   notifyMinDurationSeconds: number;
   summaryAutoBackfill: boolean;
   summaryMaxAgeDays: number;
+  summarySource: "codex" | "claude" | "custom";
   sessionSearchMcpEnabled: boolean;
   apiConfig: ApiConfig;
   claudeApiConfig: ClaudeApiConfig;
@@ -101,6 +102,7 @@ export const defaultSettings: AppSettings = {
   notifyMinDurationSeconds: 30,
   summaryAutoBackfill: false,
   summaryMaxAgeDays: 30,
+  summarySource: "codex",
   sessionSearchMcpEnabled: true,
   apiConfig: defaultApiConfig,
   claudeApiConfig: defaultClaudeApiConfig,
@@ -115,6 +117,7 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
     globalShortcut: normalizeGlobalShortcut(merged.globalShortcut),
     notifyMinDurationSeconds: normalizeNotifyDuration(merged.notifyMinDurationSeconds),
     summaryMaxAgeDays: normalizeSummaryMaxAgeDays(merged.summaryMaxAgeDays),
+    summarySource: merged.summarySource === "claude" || merged.summarySource === "custom" ? merged.summarySource : "codex",
     apiConfig: normalizeApiConfig({ ...previous.apiConfig, ...(updates.apiConfig ?? {}) }),
     claudeApiConfig: normalizeClaudeApiConfig({ ...previous.claudeApiConfig, ...(updates.claudeApiConfig ?? {}) }),
     summaryApiConfig: normalizeApiConfig({ ...previous.summaryApiConfig, ...(updates.summaryApiConfig ?? {}) }),

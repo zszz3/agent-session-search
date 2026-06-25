@@ -1,3 +1,8 @@
+import { spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 // Accepts any role string so non user/assistant rows (e.g. tool output) can be filtered out.
 export interface SummaryInputMessage {
   role: string;
@@ -12,7 +17,11 @@ export interface SummaryEndpoint {
   baseUrl: string;
   model: string;
   apiKey: string;
-  apiFormat: "openai_chat" | "anthropic";
+  apiFormat: "openai_chat" | "openai_responses" | "anthropic" | "codex_exec" | "claude_exec";
+  command?: string;
+  cwd?: string;
+  modelArg?: string;
+  onTemporarySession?: (sessionKey: string) => void;
 }
 
 export interface SessionSummaryResult {
@@ -24,6 +33,12 @@ export interface SessionSummaryResult {
 export interface ChatMessage {
   role: "system" | "user";
   content: string;
+}
+
+interface ResponsesInputMessage {
+  type: "message";
+  role: "user";
+  content: Array<{ type: "input_text"; text: string }>;
 }
 
 const MAX_CHARS_PER_MESSAGE = 1200;
@@ -49,10 +64,8 @@ export interface SummaryProviderConfig {
   customApiFormat: string;
 }
 
-// Picks the first usable custom endpoint from the candidate configs in order.
-// Callers pass the dedicated summary config first, then existing configs, so an
-// unconfigured dedicated provider transparently falls back to the existing one
-// (including a Claude/Anthropic coding-plan provider).
+// Picks the first active, complete custom endpoint from the candidate configs in
+// order. Official Codex is handled separately through `codex exec --ephemeral`.
 export function resolveSummaryEndpoint(candidates: readonly SummaryProviderConfig[]): SummaryEndpoint | null {
   for (const config of candidates) {
     if (config.activeProvider !== "custom") continue;
@@ -64,7 +77,8 @@ export function resolveSummaryEndpoint(candidates: readonly SummaryProviderConfi
       // /anthropic base path (GLM/DeepSeek/Kimi coding endpoints), since the
       // dedicated summary config can only store an OpenAI-ish format.
       const isAnthropic = config.customApiFormat === "anthropic" || /\/anthropic(\/|$)/.test(baseUrl);
-      return { baseUrl, model, apiKey, apiFormat: isAnthropic ? "anthropic" : "openai_chat" };
+      const apiFormat = isAnthropic ? "anthropic" : config.customApiFormat === "openai_responses" ? "openai_responses" : "openai_chat";
+      return { baseUrl, model, apiKey, apiFormat };
     }
   }
   return null;
@@ -184,9 +198,11 @@ export async function summarizeSession(
 }
 
 function defaultChatCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
-  return endpoint.apiFormat === "anthropic"
-    ? anthropicCompletion(endpoint, messages, signal)
-    : openaiChatCompletion(endpoint, messages, signal);
+  if (endpoint.apiFormat === "codex_exec") return codexExecCompletion(endpoint, messages, signal);
+  if (endpoint.apiFormat === "claude_exec") return claudeExecCompletion(endpoint, messages, signal);
+  if (endpoint.apiFormat === "anthropic") return anthropicCompletion(endpoint, messages, signal);
+  if (endpoint.apiFormat === "openai_responses") return openaiResponsesCompletion(endpoint, messages, signal);
+  return openaiChatCompletion(endpoint, messages, signal);
 }
 
 export const requestSummaryCompletion: ChatCompletionFn = defaultChatCompletion;
@@ -229,6 +245,269 @@ async function openaiChatCompletion(endpoint: SummaryEndpoint, messages: ChatMes
   const content = data.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("AI summary response had no content.");
   return content;
+}
+
+// OpenAI-compatible Responses API (/responses), used by Codex-style providers.
+async function openaiResponsesCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  const response = await postJson(
+    `${endpoint.baseUrl}/responses`,
+    { Authorization: `Bearer ${endpoint.apiKey}` },
+    { model: endpoint.model, instructions: responsesInstructions(messages), input: toResponsesInput(messages), temperature: 0.2, stream: false },
+    signal,
+  );
+  if (!response.ok) {
+    const detail = await safeReadText(response);
+    throw new Error(`AI summary request failed (HTTP ${response.status}). ${detail}`.trim());
+  }
+  const data = (await response.json()) as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
+  const content =
+    typeof data.output_text === "string"
+      ? data.output_text
+      : Array.isArray(data.output)
+        ? data.output
+            .flatMap((item) => item.content ?? [])
+            .filter((block) => (block.type === "output_text" || block.type === "text") && typeof block.text === "string")
+            .map((block) => block.text)
+            .join("")
+        : "";
+  if (!content.trim()) throw new Error("AI summary response had no content.");
+  return content;
+}
+
+async function codexExecCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  const command = endpoint.command?.trim() || "codex";
+  const cwd = endpoint.cwd || process.cwd();
+  const prompt = `${responsesInstructions(messages)}\n\n${messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n\n")}`;
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2);
+  const mergedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawn(command, ["exec", "--ephemeral", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt], {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      signal: mergedSignal,
+    });
+    let stderr = "";
+    let content = "";
+    let stdoutBuffer = "";
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer = consumeJsonLines(stdoutBuffer + chunk.toString(), (line) => {
+        const event = parseCodexExecLine(line);
+        if (event?.type === "thread.started" && event.thread_id) {
+          endpoint.onTemporarySession?.(`codex:${event.thread_id}`);
+        }
+        if (event?.type === "item.completed") {
+          const text = extractCodexExecItemText(event.item);
+          if (text) content += text;
+        }
+      });
+    });
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", (error) => {
+      if (error.name === "AbortError") reject(new Error(`AI summary request timed out after ${(REQUEST_TIMEOUT_MS * 2) / 1000}s.`));
+      else reject(error);
+    });
+    proc.on("close", (code, signalName) => {
+      if (stdoutBuffer.trim()) {
+        const event = parseCodexExecLine(stdoutBuffer.trim());
+        if (event?.type === "thread.started" && event.thread_id) {
+          endpoint.onTemporarySession?.(`codex:${event.thread_id}`);
+        }
+        if (event?.type === "item.completed") {
+          const text = extractCodexExecItemText(event.item);
+          if (text) content += text;
+        }
+      }
+      if (code !== 0) {
+        const status = code === null ? `unknown${signalName ? ` (${signalName})` : ""}` : String(code);
+        reject(new Error(`Codex summary exited with ${status}. ${stderr.trim().slice(-1000)}`.trim()));
+        return;
+      }
+      if (!content.trim()) {
+        reject(new Error("AI summary response had no content."));
+        return;
+      }
+      resolve(content);
+    });
+  });
+}
+
+async function claudeExecCompletion(endpoint: SummaryEndpoint, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  const command = endpoint.command?.trim() || "claude";
+  const cwd = endpoint.cwd || process.cwd();
+  const prompt = `${responsesInstructions(messages)}\n\n${messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n\n")}`;
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2);
+  const mergedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const args = [
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--permission-mode",
+    "bypassPermissions",
+    ...(endpoint.modelArg ? ["--model", endpoint.modelArg] : []),
+    prompt,
+  ];
+
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawn(command, args, {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      signal: mergedSignal,
+    });
+    const sessionIds = new Set<string>();
+    let stderr = "";
+    let streamedContent = "";
+    let resultContent = "";
+    let stdoutBuffer = "";
+    const notifiedSessionIds = new Set<string>();
+    const recordTemporarySession = (sessionId: string): void => {
+      sessionIds.add(sessionId);
+      if (notifiedSessionIds.has(sessionId)) return;
+      notifiedSessionIds.add(sessionId);
+      endpoint.onTemporarySession?.(`claude:${sessionId}`);
+    };
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer = consumeJsonLines(stdoutBuffer + chunk.toString(), (line) => {
+        const event = parseJsonLine(line);
+        const sessionId = extractClaudeSessionId(event);
+        if (sessionId) recordTemporarySession(sessionId);
+        if (isRecord(event) && event.type === "result") {
+          const result = typeof event.result === "string" ? event.result : "";
+          if (result) resultContent = result;
+        } else {
+          streamedContent += extractClaudeEventText(event);
+        }
+      });
+    });
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", (error) => {
+      if (error.name === "AbortError") reject(new Error(`AI summary request timed out after ${(REQUEST_TIMEOUT_MS * 2) / 1000}s.`));
+      else reject(error);
+    });
+    proc.on("close", (code, signalName) => {
+      if (stdoutBuffer.trim()) {
+        const event = parseJsonLine(stdoutBuffer.trim());
+        const sessionId = extractClaudeSessionId(event);
+        if (sessionId) recordTemporarySession(sessionId);
+        if (isRecord(event) && event.type === "result" && typeof event.result === "string") resultContent = event.result;
+        else streamedContent += extractClaudeEventText(event);
+      }
+      void deleteClaudeTemporarySessions(cwd, sessionIds);
+      if (code !== 0) {
+        const status = code === null ? `unknown${signalName ? ` (${signalName})` : ""}` : String(code);
+        reject(new Error(`Claude Code summary exited with ${status}. ${stderr.trim().slice(-1000)}`.trim()));
+        return;
+      }
+      const content = resultContent || streamedContent;
+      if (!content.trim()) {
+        reject(new Error("AI summary response had no content."));
+        return;
+      }
+      resolve(content);
+    });
+  });
+}
+
+function consumeJsonLines(buffer: string, onLine: (line: string) => void): string {
+  const lines = buffer.split(/\r?\n/);
+  const rest = lines.pop() ?? "";
+  for (const line of lines) {
+    if (line.trim()) onLine(line);
+  }
+  return rest;
+}
+
+function parseJsonLine(line: string): unknown {
+  try {
+    return JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function parseCodexExecLine(line: string): { type?: string; thread_id?: string; item?: unknown } | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as { type?: string; thread_id?: string; item?: unknown }) : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractClaudeSessionId(event: unknown): string {
+  if (!isRecord(event)) return "";
+  const sessionId = typeof event.session_id === "string" ? event.session_id : typeof event.sessionId === "string" ? event.sessionId : "";
+  return sessionId.trim();
+}
+
+function extractClaudeEventText(event: unknown): string {
+  if (!isRecord(event)) return "";
+  if (event.type !== "assistant" && event.type !== "message") return "";
+  const message = isRecord(event.message) ? event.message : event;
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!isRecord(part)) return "";
+      return typeof part.text === "string" ? part.text : typeof part.content === "string" ? part.content : "";
+    })
+    .join("");
+}
+
+async function deleteClaudeTemporarySessions(cwd: string, sessionIds: Iterable<string>): Promise<void> {
+  const slug = cwd.replace(/[\\/]/g, "-");
+  await Promise.all(
+    [...sessionIds].map(async (sessionId) => {
+      try {
+        await rm(path.join(os.homedir(), ".claude", "projects", slug, `${sessionId}.jsonl`), { force: true });
+      } catch {
+        // Best-effort cleanup only; the summary result should not depend on local history deletion.
+      }
+    }),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function extractCodexExecItemText(item: unknown): string {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+  const record = item as Record<string, unknown>;
+  if (record.type !== "agent_message") return "";
+  return typeof record.text === "string" ? record.text : "";
+}
+
+function toResponsesInput(messages: ChatMessage[]): ResponsesInputMessage[] {
+  return messages.filter((message) => message.role === "user").map((message) => ({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: message.content }],
+  }));
+}
+
+function responsesInstructions(messages: ChatMessage[]): string {
+  return messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n\n");
 }
 
 // Anthropic Messages API (/v1/messages). Covers coding-plan providers used with

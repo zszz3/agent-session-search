@@ -170,6 +170,20 @@ describe("detail panel actions", () => {
     expect(mainHandlerSource("command:copy-resume")).not.toContain("ensureRemoteResumePreflight");
   });
 
+  it("hydrates profile defaults before resolving AI summary providers", () => {
+    const resolverStart = mainSource.indexOf("async function resolveSummaryEndpointFromSettings");
+    expect(resolverStart).toBeGreaterThanOrEqual(0);
+    const resolverEnd = mainSource.indexOf("const SUMMARY_HEAD_MESSAGES", resolverStart);
+    const resolver = mainSource.slice(resolverStart, resolverEnd);
+
+    expect(resolver).toContain("await getHydratedSettings()");
+    expect(resolver).toContain('settings.summarySource === "claude"');
+    expect(resolver).toContain("claude_exec");
+    expect(resolver).toContain("codex_exec");
+    expect(mainHandlerSource("session:summarize")).toContain("await resolveSummaryEndpointFromSettings()");
+    expect(mainHandlerSource("session:summarize-missing")).toContain("await resolveSummaryEndpointFromSettings()");
+  });
+
   it("renders remote environment diagnostics in settings", () => {
     const settingsDialog = appSource.slice(appSource.indexOf("function SettingsDialog"), appSource.indexOf("function SettingsSection"));
 

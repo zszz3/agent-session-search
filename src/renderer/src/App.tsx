@@ -1722,7 +1722,7 @@ export function App(): ReactElement {
         />
       ) : null}
 
-      {actionStatus ? <ActionToast status={actionStatus} /> : null}
+      {actionStatus ? <ActionToast status={actionStatus} onClose={() => setActionStatus(null)} /> : null}
 
       {dialog ? (
         <CommandDialog
@@ -2023,10 +2023,15 @@ function SessionRow({
   );
 }
 
-function ActionToast({ status }: { status: ActionStatus }): ReactElement {
+function ActionToast({ status, onClose }: { status: ActionStatus; onClose: () => void }): ReactElement {
   return (
     <div className={`action-toast ${status.kind}`} role="status" aria-live="polite">
-      {status.message}
+      <span>{status.message}</span>
+      {status.kind === "error" ? (
+        <button type="button" className="action-toast-close" onClick={onClose} aria-label="Close">
+          <X size={14} />
+        </button>
+      ) : null}
     </div>
   );
 }
