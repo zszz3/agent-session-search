@@ -58,6 +58,14 @@ describe("stylesheet theme contract", () => {
     expect(sshBody).toMatch(/overflow-y:\s*auto/);
   });
 
+  it("clamps the detail title so long remote prompts cannot push conversation out of view", () => {
+    const detailTitle = stylesheet.match(/\.detail-header h2\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(detailTitle).toMatch(/display:\s*-webkit-box/);
+    expect(detailTitle).toMatch(/-webkit-line-clamp:\s*3/);
+    expect(detailTitle).toMatch(/-webkit-box-orient:\s*vertical/);
+  });
+
   it("keeps toolbar action buttons isolated from remote environment filter chips", () => {
     const toolbar = stylesheet.match(/\.toolbar\s*\{[^}]*\}/)?.[0] ?? "";
     const toolbarFilters = stylesheet.match(/\.toolbar-filters\s*\{[^}]*\}/)?.[0] ?? "";

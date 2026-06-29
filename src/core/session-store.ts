@@ -1362,7 +1362,7 @@ export class SessionStore {
     ) as Array<{ content: string }>)
       .map((message) => message.content)
       .join("\n\n");
-    const title = row.custom_title || row.first_question || row.original_title || "Untitled Session";
+    const title = row.custom_title || row.original_title || row.first_question || "Untitled Session";
     // Prepend the AI summary so its normalized wording is searchable alongside the raw transcript.
     const summary = row.ai_summary?.trim();
     const ftsContent = summary ? `${summary}\n\n${contentText}` : contentText;
@@ -1791,7 +1791,7 @@ export class SessionStore {
   }
 
   private hydrateRow(row: SessionRow, snippet: string | null, tags = this.getTagsForSession(row.session_key)): SessionSearchResult {
-    const displayTitle = row.custom_title || row.first_question || row.original_title || "Untitled Session";
+    const displayTitle = row.custom_title || row.original_title || row.first_question || "Untitled Session";
     const environment = this.getEnvironment(row.environment_id) ?? localEnvironment();
     return {
       sessionKey: row.session_key,

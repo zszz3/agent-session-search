@@ -82,7 +82,7 @@ describe("remote sync", () => {
     expect(status.indexed).toBe(1);
     expect(session).toMatchObject({
       originalTitle: "Remote Summary",
-      displayTitle: "summary first question",
+      displayTitle: "Remote Summary",
       firstQuestion: "summary first question",
       messageCount: 12,
       projectPath: "/repo",

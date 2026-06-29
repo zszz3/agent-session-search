@@ -164,6 +164,32 @@ describe("SessionStore", () => {
     expect(results[0].matchSnippet).toContain("refresh token");
   });
 
+  it("uses the indexed title for display when first question is a long remote summary prompt", () => {
+    const store = createInMemoryStore();
+    const longFirstQuestion = [
+      "# AGENTS.md instructions for /data00/home/xuguowei.x/meta_resource_generator",
+      "<INSTRUCTIONS>",
+      "Global Coding Preferences - Before concrete code work or commit preparation, read the target repository's local rules first.",
+    ].join("\n");
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "ssh:dev:codex:remote",
+        rawId: "remote",
+        environmentId: "ssh-dev",
+        environmentKind: "ssh",
+        environmentLabel: "SSH · dev",
+        originalTitle: "# AGENTS.md instructions for /data00/home/xuguowei.x/meta_resource_generator",
+        firstQuestion: longFirstQuestion,
+      }),
+      [],
+    );
+
+    const session = store.getSession("ssh:dev:codex:remote");
+
+    expect(session?.displayTitle).toBe("# AGENTS.md instructions for /data00/home/xuguowei.x/meta_resource_generator");
+    expect(session?.displayTitle).not.toContain("<INSTRUCTIONS>");
+  });
+
   it("stores token usage per session and aggregates selected stats periods by source", () => {
     const store = createInMemoryStore();
     const now = new Date("2026-06-01T12:00:00Z").getTime();
