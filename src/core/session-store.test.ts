@@ -438,6 +438,47 @@ describe("SessionStore", () => {
     expect(store.getApiProviderKey("codex", "codexzh")).toBe("sk-codexzh");
   });
 
+  it("stores skill sync bindings for local and remote lookup", () => {
+    const store = createInMemoryStore();
+
+    store.upsertSkillSyncBinding({
+      localSkillPath: "/tmp/.codex/skills/review-code/SKILL.md",
+      remoteSkillId: "remote-review",
+      remoteUpdatedAt: "2026-06-29T10:00:00.000Z",
+      lastSyncedAt: 100,
+      direction: "upload",
+    });
+
+    expect(store.getSkillSyncBindingForLocalPath("/tmp/.codex/skills/review-code/SKILL.md")).toEqual({
+      localSkillPath: "/tmp/.codex/skills/review-code/SKILL.md",
+      remoteSkillId: "remote-review",
+      remoteUpdatedAt: "2026-06-29T10:00:00.000Z",
+      lastSyncedAt: 100,
+      direction: "upload",
+    });
+    expect(store.getSkillSyncBindingForRemoteId("remote-review")?.localSkillPath).toBe("/tmp/.codex/skills/review-code/SKILL.md");
+
+    store.upsertSkillSyncBinding({
+      localSkillPath: "/tmp/.codex/skills/review-code/SKILL.md",
+      remoteSkillId: "remote-review",
+      remoteUpdatedAt: "2026-06-29T11:00:00.000Z",
+      lastSyncedAt: 200,
+      direction: "download",
+    });
+
+    expect(store.listSkillSyncBindings()).toEqual([
+      {
+        localSkillPath: "/tmp/.codex/skills/review-code/SKILL.md",
+        remoteSkillId: "remote-review",
+        remoteUpdatedAt: "2026-06-29T11:00:00.000Z",
+        lastSyncedAt: 200,
+        direction: "download",
+      },
+    ]);
+
+    store.close();
+  });
+
   it("records duplicate session migrations and lists them in descending creation order", () => {
     const store = createInMemoryStore();
     try {

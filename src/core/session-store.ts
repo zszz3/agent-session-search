@@ -123,6 +123,24 @@ interface SkillUsageEventRow {
   timestamp: number;
 }
 
+export type SkillSyncDirection = "upload" | "download";
+
+export interface SkillSyncBinding {
+  localSkillPath: string;
+  remoteSkillId: string;
+  remoteUpdatedAt: string;
+  lastSyncedAt: number;
+  direction: SkillSyncDirection;
+}
+
+interface SkillSyncBindingRow {
+  local_skill_path: string;
+  remote_skill_id: string;
+  remote_updated_at: string;
+  last_synced_at: number;
+  direction: SkillSyncDirection;
+}
+
 interface SessionMigrationRow {
   id: string;
   source_session_key: string;
@@ -846,6 +864,64 @@ export class SessionStore {
     return skillUsageSnapshotFromEvents(rows, "", sourceCountRow.count > 0 || rows.length > 0);
   }
 
+  upsertSkillSyncBinding(binding: SkillSyncBinding): void {
+    const localSkillPath = binding.localSkillPath.trim();
+    const remoteSkillId = binding.remoteSkillId.trim();
+    if (!localSkillPath || !remoteSkillId) return;
+    this.db
+      .prepare(
+        `
+        INSERT INTO skill_sync_bindings (local_skill_path, remote_skill_id, remote_updated_at, last_synced_at, direction)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(local_skill_path) DO UPDATE SET
+          remote_skill_id = excluded.remote_skill_id,
+          remote_updated_at = excluded.remote_updated_at,
+          last_synced_at = excluded.last_synced_at,
+          direction = excluded.direction
+      `,
+      )
+      .run(localSkillPath, remoteSkillId, binding.remoteUpdatedAt, binding.lastSyncedAt, binding.direction);
+  }
+
+  getSkillSyncBindingForLocalPath(localSkillPath: string): SkillSyncBinding | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT local_skill_path, remote_skill_id, remote_updated_at, last_synced_at, direction
+        FROM skill_sync_bindings
+        WHERE local_skill_path = ?
+      `,
+      )
+      .get(localSkillPath) as SkillSyncBindingRow | undefined;
+    return row ? skillSyncBindingFromRow(row) : null;
+  }
+
+  getSkillSyncBindingForRemoteId(remoteSkillId: string): SkillSyncBinding | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT local_skill_path, remote_skill_id, remote_updated_at, last_synced_at, direction
+        FROM skill_sync_bindings
+        WHERE remote_skill_id = ?
+      `,
+      )
+      .get(remoteSkillId) as SkillSyncBindingRow | undefined;
+    return row ? skillSyncBindingFromRow(row) : null;
+  }
+
+  listSkillSyncBindings(): SkillSyncBinding[] {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT local_skill_path, remote_skill_id, remote_updated_at, last_synced_at, direction
+        FROM skill_sync_bindings
+        ORDER BY last_synced_at DESC, local_skill_path
+      `,
+      )
+      .all() as unknown as SkillSyncBindingRow[];
+    return rows.map(skillSyncBindingFromRow);
+  }
+
   getApiProviderKey(target: ApiProviderKeyTarget, providerId: string): string {
     const normalizedProviderId = providerId.trim();
     if (!normalizedProviderId) return "";
@@ -1178,6 +1254,14 @@ export class SessionStore {
         FOREIGN KEY (source_path) REFERENCES skill_usage_sources(source_path) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS skill_sync_bindings (
+        local_skill_path TEXT PRIMARY KEY,
+        remote_skill_id TEXT NOT NULL UNIQUE,
+        remote_updated_at TEXT NOT NULL,
+        last_synced_at INTEGER NOT NULL,
+        direction TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS api_provider_keys (
         target TEXT NOT NULL,
         provider_id TEXT NOT NULL,
@@ -1224,6 +1308,8 @@ export class SessionStore {
         ON skill_usage_events(agent, skill);
       CREATE INDEX IF NOT EXISTS idx_skill_usage_events_timestamp
         ON skill_usage_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_skill_sync_bindings_remote_id
+        ON skill_sync_bindings(remote_skill_id);
       CREATE INDEX IF NOT EXISTS idx_session_migrations_source_session_key_created_at_id
         ON session_migrations(source_session_key, created_at DESC, id DESC);
     `);
@@ -1895,6 +1981,16 @@ function normalizeTokenEvent(event: TokenUsageEvent): TokenUsageEvent {
     ...normalizeTokenUsage(event),
     timestamp: nonNegativeNumber(event.timestamp),
     dedupeKey: event.dedupeKey.trim(),
+  };
+}
+
+function skillSyncBindingFromRow(row: SkillSyncBindingRow): SkillSyncBinding {
+  return {
+    localSkillPath: row.local_skill_path,
+    remoteSkillId: row.remote_skill_id,
+    remoteUpdatedAt: row.remote_updated_at,
+    lastSyncedAt: row.last_synced_at,
+    direction: row.direction,
   };
 }
 

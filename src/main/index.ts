@@ -70,7 +70,21 @@ import { loadRemoteSessionDetailPayload } from "../core/remote-session-loader";
 import { RemoteEnvironmentLifecycle } from "../core/remote-environment-lifecycle";
 import { RemoteWatchManager } from "../core/remote-watch";
 import { SessionStore } from "../core/session-store";
-import { deleteInstalledSkill, listInstalledSkills, skillProjectDirsFromIndexedProjects, type InstalledSkillsSnapshot } from "../core/skill-manager";
+import {
+  deleteInstalledSkill,
+  installRemoteSkillLocally,
+  listInstalledSkills,
+  skillProjectDirsFromIndexedProjects,
+  type InstalledSkill,
+  type InstalledSkillsSnapshot,
+} from "../core/skill-manager";
+import {
+  buildSkillSyncSetupSql,
+  SupabaseSkillSyncClient,
+  type SkillSyncInstallResult,
+  type SkillSyncSnapshot,
+  type SkillSyncUploadResult,
+} from "../core/skill-sync";
 import {
   listSkillUsageSources,
   readSkillUsageSourceEvents,
@@ -196,6 +210,89 @@ function refreshSkillUsageIndexSafely(): void {
   } catch (error) {
     console.error(`Failed to refresh skill usage: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function createSkillSyncClient(): SupabaseSkillSyncClient {
+  const settings = getSettings();
+  if (!settings.skillSyncEnabled || !settings.skillSyncSupabaseUrl || !settings.skillSyncSupabaseAnonKey) {
+    throw new Error("Supabase skill sync is not configured.");
+  }
+  return new SupabaseSkillSyncClient({
+    url: settings.skillSyncSupabaseUrl,
+    anonKey: settings.skillSyncSupabaseAnonKey,
+  });
+}
+
+async function buildSkillSyncSnapshot(): Promise<SkillSyncSnapshot> {
+  const setupSql = buildSkillSyncSetupSql();
+  const settings = getSettings();
+  if (!settings.skillSyncEnabled || !settings.skillSyncSupabaseUrl || !settings.skillSyncSupabaseAnonKey) {
+    return {
+      status: {
+        kind: "unconfigured",
+        setupSql,
+        message: "Configure Supabase URL and anon key in Settings to sync skills.",
+      },
+      remoteSkills: [],
+      bindings: store.listSkillSyncBindings(),
+      scannedAt: Date.now(),
+    };
+  }
+
+  const client = createSkillSyncClient();
+  const status = await client.checkStatus();
+  const remoteSkills = status.kind === "ready" ? await client.listRemoteSkills() : [];
+  return {
+    status,
+    remoteSkills,
+    bindings: store.listSkillSyncBindings(),
+    scannedAt: Date.now(),
+  };
+}
+
+async function uploadLocalSkillToSupabase(skillPath: string): Promise<SkillSyncUploadResult> {
+  const skill = findInstalledSkillByPath(skillPath);
+  const client = createSkillSyncClient();
+  const existing = store.getSkillSyncBindingForLocalPath(skill.path);
+  const remoteSkill = existing
+    ? await client.updateRemoteSkill(existing.remoteSkillId, skill)
+    : await client.upsertLocalSkill(skill);
+  const binding = {
+    localSkillPath: skill.path,
+    remoteSkillId: remoteSkill.id,
+    remoteUpdatedAt: remoteSkill.updatedAt,
+    lastSyncedAt: Date.now(),
+    direction: "upload" as const,
+  };
+  store.upsertSkillSyncBinding(binding);
+  return { remoteSkill, binding };
+}
+
+async function installRemoteSkillFromSupabase(remoteSkillId: string): Promise<SkillSyncInstallResult> {
+  const client = createSkillSyncClient();
+  const remoteSkill = await client.getRemoteSkill(remoteSkillId);
+  const installed = installRemoteSkillLocally(remoteSkill);
+  const binding = {
+    localSkillPath: installed.installedPath,
+    remoteSkillId: remoteSkill.id,
+    remoteUpdatedAt: remoteSkill.updatedAt,
+    lastSyncedAt: Date.now(),
+    direction: "download" as const,
+  };
+  store.upsertSkillSyncBinding(binding);
+  return {
+    remoteSkill,
+    binding,
+    installedPath: installed.installedPath,
+    overwritten: installed.overwritten,
+  };
+}
+
+function findInstalledSkillByPath(skillPath: string): InstalledSkill {
+  const normalized = path.resolve(skillPath);
+  const skill = buildSkillsSnapshot().skills.find((item) => path.resolve(item.path) === normalized);
+  if (!skill) throw new Error("Skill is no longer installed or is outside managed roots.");
+  return skill;
 }
 
 app.setName(PRODUCT_NAME);
@@ -1313,6 +1410,12 @@ function registerIpc(): void {
   );
   ipcMain.handle("skills:list", () => buildSkillsSnapshot());
   ipcMain.handle("skills:refresh-usage", () => refreshSkillUsageIndex());
+  ipcMain.handle("skills:sync-snapshot", () => buildSkillSyncSnapshot());
+  ipcMain.handle("skills:sync-upload", (_event, skillPath: string) => uploadLocalSkillToSupabase(skillPath));
+  ipcMain.handle("skills:sync-install", (_event, remoteSkillId: string) => installRemoteSkillFromSupabase(remoteSkillId));
+  ipcMain.handle("skills:sync-copy-setup-sql", () => {
+    clipboard.writeText(buildSkillSyncSetupSql());
+  });
   ipcMain.handle("skills:copy-path", (_event, skillPath: string) => {
     clipboard.writeText(skillPath);
   });
