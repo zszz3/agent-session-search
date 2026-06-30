@@ -2097,6 +2097,10 @@ select:focus-visible {
   width: min(520px, calc(100vw - 40px));
 }
 
+.migration-dialog .dialog-copy {
+  font-size: 15px;
+}
+
 .migration-targets {
   display: grid;
   gap: 8px;
