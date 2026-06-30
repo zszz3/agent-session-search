@@ -92,6 +92,50 @@ describe("remote sync", () => {
     expect(store.getMessages("ssh:ssh-devbox:codex:remote-codex-summary")).toEqual([]);
   });
 
+  it("stores token usage carried by lightweight remote summaries", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    const output = `${JSON.stringify({
+      kind: "codex-session",
+      path: "/home/me/.codex/sessions/rollout.jsonl",
+      mtimeMs: 100,
+      size: 2048,
+      rawId: "remote-codex-tokens",
+      projectPath: "/repo",
+      timestamp: new Date("2026-06-04T10:00:00Z").getTime(),
+      originalTitle: "Remote Tokens",
+      firstQuestion: "q",
+      messageCount: 4,
+      gitBranch: "main",
+      tokenUsage: { inputTokens: 100, outputTokens: 40, cachedInputTokens: 10, reasoningOutputTokens: 5, totalTokens: 155 },
+    })}\n`;
+
+    await syncRemoteEnvironment(store, environment, { runSsh: async () => output });
+
+    expect(store.getSession("ssh:ssh-devbox:codex:remote-codex-tokens")?.tokenUsage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedInputTokens: 10,
+      reasoningOutputTokens: 5,
+      totalTokens: 155,
+    });
+  });
+
+  it("emits remote summary token usage from the collector script", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    let collectorCommand = "";
+    await syncRemoteEnvironment(store, environment, {
+      runSsh: async (_environment, remoteCommand) => {
+        collectorCommand = remoteCommand;
+        return "";
+      },
+    });
+    const collectorScript = Buffer.from(collectorCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+    expect(collectorScript).toContain("total_token_usage");
+    expect(collectorScript).toContain('"tokenUsage"');
+  });
+
   it("fetches a remote session message page without transferring the full session payload", async () => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);
@@ -251,6 +295,47 @@ describe("remote sync", () => {
     expect(script).toContain("sorted(candidates");
     expect(script).not.toContain("contentBase64");
     expect(script).not.toContain("read_bytes()");
+  });
+
+  it("counts remote summary messages with the same parser used for on-demand paging", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+
+    let collectorCommand = "";
+    await syncRemoteEnvironment(store, environment, {
+      runSsh: async (_environment, remoteCommand) => {
+        collectorCommand = remoteCommand;
+        return "";
+      },
+    });
+
+    let pageCommand = "";
+    await fetchRemoteSessionMessagePage(
+      environment,
+      { source: "codex-cli", filePath: "/home/me/.codex/sessions/rollout.jsonl" } as SessionSearchResult,
+      0,
+      10,
+      {
+        runSsh: async (_environment, remoteCommand) => {
+          pageCommand = remoteCommand;
+          return JSON.stringify({ messages: [] });
+        },
+      },
+    );
+
+    const decodeScript = (command: string): string =>
+      Buffer.from(command.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+    const collectorScript = decodeScript(collectorCommand);
+    const pageScript = decodeScript(pageCommand);
+
+    for (const script of [collectorScript, pageScript]) {
+      expect(script).toContain("def parse_message(row, kind):");
+      expect(script).toContain("def meaningful_user(text):");
+      expect(script).toContain("(AGENTS|CLAUDE)");
+      expect(script).toContain("system-reminder");
+    }
+    // The collector must not keep the looser legacy heuristic that disagreed with paging.
+    expect(collectorScript).not.toContain("def meaningful(text):");
   });
 
   it("fetches one remote session file on demand without exposing the path to the remote shell", async () => {

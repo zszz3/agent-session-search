@@ -2,7 +2,7 @@ import { execFile, type ExecFileOptions } from "node:child_process";
 import { loadRemoteSessionPayloads, type RemoteSessionFilePayload } from "./remote-session-loader";
 import type { SessionStore } from "./session-store";
 import { buildSshArgs } from "./ssh-config";
-import type { IndexedSession, SessionEnvironment, SessionMessage, SessionSearchResult, SessionSource } from "./types";
+import type { IndexedSession, SessionEnvironment, SessionMessage, SessionSearchResult, SessionSource, TokenUsage } from "./types";
 
 export interface RemoteSyncStatus {
   environmentId: string;
@@ -26,6 +26,7 @@ export interface RemoteSessionSummaryPayload {
   firstQuestion: string;
   messageCount: number;
   gitBranch?: string | null;
+  tokenUsage?: TokenUsage;
 }
 
 export interface RemoteSessionFileFetchOptions {
@@ -36,6 +37,207 @@ export const REMOTE_SYNC_EXEC_OPTIONS = {
   maxBuffer: 128 * 1024 * 1024,
   timeout: 90_000,
 } satisfies ExecFileOptions;
+
+// Shared Python message parser used by BOTH the lightweight summary collector and the
+// on-demand message pager. The summary `messageCount` must match the number of messages the
+// pager enumerates, otherwise the detail view (which loads the tail window
+// `[messageCount - limit, messageCount)`) shows the wrong slice or hides the newest messages.
+const REMOTE_MESSAGE_PARSER_PY = String.raw`import re
+
+def text_from_blocks(content):
+  if isinstance(content, str):
+    return content
+  if not isinstance(content, list):
+    return ""
+  parts = []
+  for block in content:
+    if not isinstance(block, dict):
+      continue
+    if block.get("type") in {"tool_use", "tool_result", "input_image"}:
+      continue
+    text = block.get("text")
+    if isinstance(text, str) and text:
+      parts.append(text)
+  return "\n".join(parts)
+
+def meaningful_user(text):
+  value = text.strip()
+  if not value:
+    return False
+  if re.match(r"^#\s*(AGENTS|CLAUDE)\.md", value, re.I):
+    return False
+  if re.match(r"^<(system-reminder|environment_context|command-message|command-name|command-args|task-notification|local-command-stdout|local-command-stderr|user-prompt-submit-hook|bash-input|bash-stdout|bash-stderr)[\s>]", value):
+    return False
+  if value.startswith("Caveat:"):
+    return False
+  if re.match(r"^\[Request interrupted by user(?: for tool use)?\]$", value):
+    return False
+  if re.match(r"^\[Image:[^\]]*\]$", value):
+    return False
+  return True
+
+def parse_message(row, kind):
+  if not isinstance(row, dict):
+    return None
+  if kind == "codex":
+    role = None
+    content = None
+    if row.get("type") == "response_item":
+      payload = row.get("payload")
+      if isinstance(payload, dict) and payload.get("type") == "message":
+        role = payload.get("role")
+        content = payload.get("content")
+    elif row.get("type") == "message":
+      role = row.get("role")
+      content = row.get("content")
+    if role not in {"user", "assistant"}:
+      return None
+    text = text_from_blocks(content)
+    if not text or (role == "user" and not meaningful_user(text)):
+      return None
+    return {"role": role, "content": text, "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else ""}
+  if row.get("type") not in {"user", "assistant"}:
+    return None
+  message = row.get("message")
+  content = message.get("content") if isinstance(message, dict) else None
+  text = text_from_blocks(content)
+  if not text or (row.get("type") == "user" and not meaningful_user(text)):
+    return None
+  return {"role": row.get("type"), "content": text, "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else ""}`;
+
+// Token usage accounting for the summary collector. Mirrors session-loader.ts
+// (extractCodexTokenEvents / extractClaudeTokenEvents) so the lightweight summary total matches
+// the value computed when the session is fully hydrated on demand.
+const REMOTE_TOKEN_USAGE_PY = String.raw`def _tok_num(value):
+  return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+def _tok_create(input_tokens, output_tokens, cached, reasoning):
+  return {
+    "inputTokens": input_tokens,
+    "outputTokens": output_tokens,
+    "cachedInputTokens": cached,
+    "reasoningOutputTokens": reasoning,
+    "totalTokens": input_tokens + output_tokens + cached + reasoning,
+  }
+
+def _tok_empty():
+  return _tok_create(0, 0, 0, 0)
+
+def _tok_add(total, nxt):
+  total["inputTokens"] += nxt["inputTokens"]
+  total["outputTokens"] += nxt["outputTokens"]
+  total["cachedInputTokens"] += nxt["cachedInputTokens"]
+  total["reasoningOutputTokens"] += nxt["reasoningOutputTokens"]
+  total["totalTokens"] += nxt["totalTokens"]
+
+def _tok_put(entries, key, usage):
+  existing = entries.get(key)
+  if existing is None or usage["totalTokens"] > existing["totalTokens"]:
+    entries[key] = usage
+
+def _tok_normalize_codex(usage):
+  cached = _tok_num(usage.get("cached_input_tokens")) + _tok_num(usage.get("cache_read_input_tokens"))
+  reasoning = _tok_num(usage.get("reasoning_output_tokens"))
+  return _tok_create(
+    max(0, _tok_num(usage.get("input_tokens")) - cached),
+    max(0, _tok_num(usage.get("output_tokens")) - reasoning),
+    cached,
+    reasoning,
+  )
+
+def _tok_cumulative_delta(current, previous_totals):
+  best_index = -1
+  best_distance = None
+  for index in range(len(previous_totals)):
+    previous = previous_totals[index]
+    if previous["totalTokens"] > current["totalTokens"]:
+      continue
+    distance = current["totalTokens"] - previous["totalTokens"]
+    if best_distance is None or distance < best_distance:
+      best_distance = distance
+      best_index = index
+  if best_index < 0:
+    previous_totals.append(dict(current))
+    return dict(current)
+  previous = previous_totals[best_index]
+  delta = _tok_create(
+    max(0, current["inputTokens"] - previous["inputTokens"]),
+    max(0, current["outputTokens"] - previous["outputTokens"]),
+    max(0, current["cachedInputTokens"] - previous["cachedInputTokens"]),
+    max(0, current["reasoningOutputTokens"] - previous["reasoningOutputTokens"]),
+  )
+  previous_totals[best_index] = dict(current)
+  return delta
+
+def new_codex_token_state():
+  return {"previous": [], "cumulative": _tok_empty(), "has_cumulative": False, "entries": {}, "model": ""}
+
+def accumulate_codex_tokens(state, row):
+  payload = row.get("payload")
+  payload = payload if isinstance(payload, dict) else {}
+  if row.get("type") == "turn_context":
+    model = payload.get("model")
+    if isinstance(model, str) and model:
+      state["model"] = model
+    return
+  if row.get("type") != "event_msg" or payload.get("type") != "token_count":
+    return
+  info = payload.get("info")
+  info = info if isinstance(info, dict) else {}
+  model = info.get("model") if isinstance(info.get("model"), str) and info.get("model") else state["model"]
+  total_usage = info.get("total_token_usage")
+  if isinstance(total_usage, dict):
+    current = _tok_normalize_codex(total_usage)
+    delta = _tok_cumulative_delta(current, state["previous"])
+    if delta["totalTokens"] > 0:
+      state["has_cumulative"] = True
+      _tok_add(state["cumulative"], delta)
+  last_usage = info.get("last_token_usage")
+  if isinstance(last_usage, dict):
+    last = _tok_normalize_codex(last_usage)
+    key = "codex:%s:%s:%s:%s:%s" % (model, last["inputTokens"], last["outputTokens"], last["cachedInputTokens"], last["reasoningOutputTokens"])
+    _tok_put(state["entries"], key, last)
+
+def finalize_codex_tokens(state):
+  if state["has_cumulative"]:
+    return state["cumulative"]
+  total = _tok_empty()
+  for usage in state["entries"].values():
+    _tok_add(total, usage)
+  return total
+
+def new_claude_token_state():
+  return {"entries": {}, "index": 0}
+
+def accumulate_claude_tokens(state, row):
+  index = state["index"]
+  state["index"] += 1
+  if not isinstance(row, dict) or row.get("type") != "assistant":
+    return
+  message = row.get("message")
+  message = message if isinstance(message, dict) else {}
+  usage = message.get("usage")
+  if not isinstance(usage, dict):
+    return
+  cached = _tok_num(usage.get("cache_read_input_tokens")) + _tok_num(usage.get("cached_input_tokens")) + _tok_num(usage.get("cache_creation_input_tokens"))
+  entry = _tok_create(_tok_num(usage.get("input_tokens")), _tok_num(usage.get("output_tokens")), cached, _tok_num(usage.get("reasoning_output_tokens")))
+  mid = message.get("id")
+  uid = row.get("uuid")
+  if isinstance(mid, str) and mid:
+    key = mid
+  elif isinstance(uid, str) and uid:
+    key = uid
+  else:
+    key = "%d:%s" % (index, json.dumps(usage, sort_keys=True))
+  if not key.startswith("claude-code:"):
+    key = "claude-code:" + key
+  _tok_put(state["entries"], key, entry)
+
+def finalize_claude_tokens(state):
+  total = _tok_empty()
+  for usage in state["entries"].values():
+    _tok_add(total, usage)
+  return total`;
 
 export async function syncRemoteEnvironment(
   store: SessionStore,
@@ -78,6 +280,7 @@ function remoteSummaryToIndexedSession(environment: SessionEnvironment, summary:
     prUrl: null,
     prNumber: null,
     gitBranch: summary.gitBranch,
+    tokenUsage: summary.tokenUsage,
     environmentId: environment.id,
     environmentKind: environment.kind,
     environmentLabel: environment.label,
@@ -196,77 +399,13 @@ function buildRemoteMessagePageCommand(session: SessionSearchResult, offset: num
     offset: Math.max(0, Math.floor(offset)),
     limit: Math.max(0, Math.min(500, Math.floor(limit))),
   };
-  const script = String.raw`import json
-from pathlib import Path
-
+  const body = String.raw`
 request = __REQUEST_JSON__
 path = Path(request["path"])
 kind = request["kind"]
 offset = int(request["offset"])
 limit = int(request["limit"])
 end = offset + limit
-
-def text_from_blocks(content):
-  if isinstance(content, str):
-    return content
-  if not isinstance(content, list):
-    return ""
-  parts = []
-  for block in content:
-    if not isinstance(block, dict):
-      continue
-    if block.get("type") in {"tool_use", "tool_result", "input_image"}:
-      continue
-    text = block.get("text")
-    if isinstance(text, str) and text:
-      parts.append(text)
-  return "\n".join(parts)
-
-def meaningful_user(text):
-  value = text.strip()
-  if not value:
-    return False
-  import re
-  if re.match(r"^#\s*(AGENTS|CLAUDE)\.md", value, re.I):
-    return False
-  if re.match(r"^<(system-reminder|environment_context|command-message|command-name|command-args|task-notification|local-command-stdout|local-command-stderr|user-prompt-submit-hook|bash-input|bash-stdout|bash-stderr)[\s>]", value):
-    return False
-  if value.startswith("Caveat:"):
-    return False
-  if re.match(r"^\[Request interrupted by user(?: for tool use)?\]$", value):
-    return False
-  if re.match(r"^\[Image:[^\]]*\]$", value):
-    return False
-  return True
-
-def parse_message(row):
-  if not isinstance(row, dict):
-    return None
-  if kind == "codex":
-    role = None
-    content = None
-    if row.get("type") == "response_item":
-      payload = row.get("payload")
-      if isinstance(payload, dict) and payload.get("type") == "message":
-        role = payload.get("role")
-        content = payload.get("content")
-    elif row.get("type") == "message":
-      role = row.get("role")
-      content = row.get("content")
-    if role not in {"user", "assistant"}:
-      return None
-    text = text_from_blocks(content)
-    if not text or (role == "user" and not meaningful_user(text)):
-      return None
-    return {"role": role, "content": text, "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else ""}
-  if row.get("type") not in {"user", "assistant"}:
-    return None
-  message = row.get("message")
-  content = message.get("content") if isinstance(message, dict) else None
-  text = text_from_blocks(content)
-  if not text or (row.get("type") == "user" and not meaningful_user(text)):
-    return None
-  return {"role": row.get("type"), "content": text, "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else ""}
 
 messages = []
 message_index = 0
@@ -278,7 +417,7 @@ with path.open("r", encoding="utf-8", errors="replace") as handle:
       row = json.loads(line)
     except Exception:
       continue
-    parsed = parse_message(row)
+    parsed = parse_message(row, kind)
     if not parsed:
       continue
     if message_index >= offset and message_index < end:
@@ -292,7 +431,8 @@ with path.open("r", encoding="utf-8", errors="replace") as handle:
     if message_index >= end:
       break
 
-print(json.dumps({"messages": messages}, ensure_ascii=False))`.replace("__REQUEST_JSON__", JSON.stringify(request));
+print(json.dumps({"messages": messages}, ensure_ascii=False))`.replace("__REQUEST_JSON__", () => JSON.stringify(request));
+  const script = `import json\nfrom pathlib import Path\n${REMOTE_MESSAGE_PARSER_PY}\n${body}`;
   return buildPythonBase64Command(script);
 }
 
@@ -424,6 +564,19 @@ function parseRemoteSummaryRecord(
     firstQuestion,
     messageCount,
     gitBranch: stringField(parsed, "gitBranch") || null,
+    tokenUsage: tokenUsageField(parsed, "tokenUsage"),
+  };
+}
+
+function tokenUsageField(value: Record<string, unknown>, key: string): TokenUsage | undefined {
+  const raw = value[key];
+  if (!isRecord(raw)) return undefined;
+  return {
+    inputTokens: numberField(raw, "inputTokens"),
+    outputTokens: numberField(raw, "outputTokens"),
+    cachedInputTokens: numberField(raw, "cachedInputTokens"),
+    reasoningOutputTokens: numberField(raw, "reasoningOutputTokens"),
+    totalTokens: numberField(raw, "totalTokens"),
   };
 }
 
@@ -452,31 +605,9 @@ MAX_SESSION_FILES = 2500
 
 home = Path.home()
 
-def text_from_blocks(content):
-  if isinstance(content, str):
-    return content
-  if not isinstance(content, list):
-    return ""
-  parts = []
-  for block in content:
-    if not isinstance(block, dict):
-      continue
-    if block.get("type") in {"tool_use", "tool_result", "input_image"}:
-      continue
-    text = block.get("text")
-    if isinstance(text, str) and text:
-      parts.append(text)
-  return "\n".join(parts)
+${REMOTE_MESSAGE_PARSER_PY}
 
-def meaningful(text):
-  value = text.strip()
-  if not value:
-    return False
-  if value.startswith("<") or value.startswith("Caveat:"):
-    return False
-  if value.startswith("[Request interrupted by user") or value.startswith("[Image:"):
-    return False
-  return True
+${REMOTE_TOKEN_USAGE_PY}
 
 def title_from(text):
   lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
@@ -533,6 +664,7 @@ def emit_codex_summary(path, stat, titles):
   first_question = ""
   message_count = 0
   git_branch = ""
+  token_state = new_codex_token_state()
   try:
     with path.open("r", encoding="utf-8", errors="replace") as handle:
       for line in handle:
@@ -557,22 +689,12 @@ def emit_codex_summary(path, stat, titles):
             except Exception:
               pass
           continue
-        role = None
-        content = None
-        if row.get("type") == "response_item":
-          payload = row.get("payload")
-          if isinstance(payload, dict) and payload.get("type") == "message":
-            role = payload.get("role")
-            content = payload.get("content")
-        elif row.get("type") == "message":
-          role = row.get("role")
-          content = row.get("content")
-        if role in {"user", "assistant"}:
-          text = text_from_blocks(content)
-          if meaningful(text):
-            message_count += 1
-            if role == "user" and not first_question:
-              first_question = text
+        accumulate_codex_tokens(token_state, row)
+        parsed = parse_message(row, "codex")
+        if parsed:
+          message_count += 1
+          if parsed["role"] == "user" and not first_question:
+            first_question = parsed["content"]
   except Exception:
     return
   indexed_title = titles.get(raw_id, ("", ""))[0]
@@ -588,6 +710,7 @@ def emit_codex_summary(path, stat, titles):
     "firstQuestion": first_question,
     "messageCount": message_count,
     "gitBranch": git_branch,
+    "tokenUsage": finalize_codex_tokens(token_state),
   })
 
 def emit_claude_summary(path, stat, index):
@@ -598,6 +721,7 @@ def emit_claude_summary(path, stat, index):
   first_question = ""
   message_count = 0
   git_branch = ""
+  token_state = new_claude_token_state()
   try:
     with path.open("r", encoding="utf-8", errors="replace") as handle:
       for line in handle:
@@ -611,13 +735,12 @@ def emit_claude_summary(path, stat, index):
           project_path = row.get("cwd")
         if not git_branch and isinstance(row.get("gitBranch"), str):
           git_branch = row.get("gitBranch")
-        message = row.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        text = text_from_blocks(content)
-        if meaningful(text):
+        accumulate_claude_tokens(token_state, row)
+        parsed = parse_message(row, "claude")
+        if parsed:
           message_count += 1
-          if row.get("type") == "user" and not first_question:
-            first_question = text
+          if parsed["role"] == "user" and not first_question:
+            first_question = parsed["content"]
   except Exception:
     return
   emit({
@@ -632,6 +755,7 @@ def emit_claude_summary(path, stat, index):
     "firstQuestion": first_question,
     "messageCount": message_count,
     "gitBranch": git_branch,
+    "tokenUsage": finalize_claude_tokens(token_state),
   })
 
 candidates = []
