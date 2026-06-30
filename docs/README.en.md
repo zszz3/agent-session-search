@@ -22,7 +22,7 @@
 ### Core Features
 
 - **Unified search and management for AI coding-agent sessions**:
-  Search, filter, inspect, organize, and quick launch Claude Code, Codex, and optional sessions from CodeBuddy, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae; add custom titles, tags, favorites, pinned state, and hidden state; local and SSH remote environments are supported without installing this app on the remote machine.
+  Search, filter, inspect, organize, and quick launch Claude Code, Codex, and optional sessions from tclaude, tcodex, CodeBuddy, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae; add custom titles, tags, favorites, pinned state, and hidden state; local and SSH remote environments are supported without installing this app on the remote machine.
 - **Full session context view**:
   The detail view shows complete messages, tool calls, Markdown / code blocks, and supports AI summaries plus Markdown export.
 - **AI / Agent-assisted session retrieval**:
@@ -42,6 +42,8 @@
 | Codex Desktop | `~/.codex/sessions/**/*.jsonl`, detected by session metadata |
 | Claude Code CLI | `~/.claude/projects/*/*.jsonl` plus optional `~/.claude/sessions/*.json` metadata |
 | Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` plus Claude Code project logs |
+| TClaude CLI | Optional in settings; reads `~/.tclaude/projects/*/*.jsonl` (a Claude Code fork sharing the same format); supports Resume |
+| TCodex CLI | Optional in settings; reads `~/.tcodex/sessions/**/*.jsonl` (a Codex fork sharing the same format); supports Resume |
 | CodeBuddy CLI | Optional in settings; reads `~/.codebuddy/projects/**/*.jsonl` |
 | OpenClaw | Optional in settings; reads `~/.openclaw/agents/*/sessions/*.jsonl`, legacy `~/.clawdbot/agents/*/sessions/*.jsonl`, excluding `*.trajectory.jsonl` |
 | Hermes | Optional in settings; reads `~/.hermes/state.db` |
@@ -52,7 +54,7 @@
 
 Codex title metadata is read from `~/.codex/session_index.jsonl` when that file exists. If no upstream title is available, the app uses the first meaningful user question as the default title.
 
-CodeBuddy CLI, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae are off by default and can be selected from Settings -> Optional sources. Once enabled, they support local read-only indexing, search, details, and source filtering. Resume, SSH remote sync, and provider-specific usage stats for these sources are intentionally separate follow-up work. Trae also supports open-state detection.
+CodeBuddy CLI, TClaude, TCodex, OpenClaw, Hermes, OpenCode, Cursor Agent, and Trae are off by default and can be selected from Settings -> Optional sources. Once enabled, they support local read-only indexing, search, details, and source filtering. Because TClaude / TCodex share the Claude Code / Codex formats, they additionally support Resume and one-click launch (invoking the `tclaude` / `tcodex` commands respectively). For the other sources, Resume, SSH remote sync, and provider-specific usage stats are intentionally separate follow-up work. Trae also supports open-state detection.
 
 ## Skills Management and Sync
 

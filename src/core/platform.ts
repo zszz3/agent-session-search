@@ -55,8 +55,12 @@ export interface AppSettings {
   claudeBinary: string;
   codexBinary: string;
   codeBuddyBinary: string;
+  tclaudeBinary: string;
+  tcodexBinary: string;
   includeClaudeInternal: boolean;
   includeCodexInternal: boolean;
+  includeTclaude: boolean;
+  includeTcodex: boolean;
   includeCodeBuddyCli: boolean;
   includeOpenClaw: boolean;
   includeHermes: boolean;
@@ -91,8 +95,12 @@ export const defaultSettings: AppSettings = {
   claudeBinary: "claude",
   codexBinary: "codex",
   codeBuddyBinary: "codebuddy",
+  tclaudeBinary: "tclaude",
+  tcodexBinary: "tcodex",
   includeClaudeInternal: false,
   includeCodexInternal: false,
+  includeTclaude: false,
+  includeTcodex: false,
   includeCodeBuddyCli: false,
   includeOpenClaw: false,
   includeHermes: false,
@@ -149,7 +157,7 @@ function normalizeSummaryMaxAgeDays(value: number): number {
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
 
-type SourceFamily = "claude" | "codex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+type SourceFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
 
 function sourceDisplayName(source: SessionSource): string {
   if (source === "opencode-cli") return "OpenCode";
@@ -157,12 +165,16 @@ function sourceDisplayName(source: SessionSource): string {
   if (source === "openclaw") return "OpenClaw";
   if (source === "hermes") return "Hermes";
   if (source === "trae") return "Trae";
+  if (source === "tclaude-cli") return "TClaude";
+  if (source === "tcodex-cli") return "TCodex";
   if (source === "codebuddy-cli") return "CodeBuddy";
   if (source.startsWith("claude")) return "Claude";
   return "Codex";
 }
 
 export function sourceFamily(source: SessionSource): SourceFamily {
+  if (source === "tclaude-cli") return "tclaude";
+  if (source === "tcodex-cli") return "tcodex";
   if (source === "codebuddy-cli") return "codebuddy";
   if (source === "openclaw") return "openclaw";
   if (source === "hermes") return "hermes";
@@ -223,8 +235,18 @@ function buildResumeProcessArgs(
     if (skipPermissions) args.push("--dangerously-skip-permissions");
     return { command: settings.claudeBinary, args };
   }
+  if (family === "tclaude") {
+    const args = ["--resume", session.rawId];
+    if (skipPermissions) args.push("--dangerously-skip-permissions");
+    return { command: settings.tclaudeBinary, args };
+  }
   if (family === "codebuddy") {
     return { command: settings.codeBuddyBinary, args: ["--resume", session.rawId] };
+  }
+  if (family === "tcodex") {
+    const args = ["resume", session.rawId];
+    if (skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
+    return { command: settings.tcodexBinary, args };
   }
   if (family !== "codex") {
     throw new Error(`Resume is not supported for ${sourceDisplayName(session.source)} sessions yet.`);

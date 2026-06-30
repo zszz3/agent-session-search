@@ -5,6 +5,8 @@ export type SessionSource =
   | "codex-cli"
   | "codex-app"
   | "codex-internal"
+  | "tclaude-cli"
+  | "tcodex-cli"
   | "codebuddy-cli"
   | "openclaw"
   | "hermes"
@@ -255,7 +257,7 @@ export interface UsageQuotaSnapshot {
   providers: UsageQuotaCard[];
 }
 
-export type LiveSessionFamily = "claude" | "codex" | "codebuddy" | "trae";
+export type LiveSessionFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "trae";
 
 export interface LiveSession {
   family: LiveSessionFamily;

@@ -156,7 +156,7 @@ export function getFormatForSource(source: SessionSource): SessionFormat {
   if (source === "opencode-cli") return "opencode";
   if (source === "cursor-agent") return "cursor";
   if (source === "trae") return "trae";
-  return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
+  return source === "claude-cli" || source === "claude-app" || source === "claude-internal" || source === "tclaude-cli" ? "claude" : "codex";
 }
 
 export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): FormatAdapter {

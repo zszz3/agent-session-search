@@ -125,7 +125,7 @@ function buildReport(checks: RemoteHealthCheck[]): RemoteHealthReport {
 }
 
 function cliNameForSource(source: SessionSource): "codex" | "claude" | "codebuddy" {
-  if (source.startsWith("claude")) return "claude";
+  if (source.startsWith("claude") || source === "tclaude-cli") return "claude";
   if (source === "codebuddy-cli") return "codebuddy";
   return "codex";
 }

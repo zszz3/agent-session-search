@@ -115,9 +115,11 @@ const PRODUCT_NAME = "Agent-Session-Search";
 const TRAY_ICON_RELATIVE_PATH = path.join("assets", "tray-iconTemplate.png");
 type ApiProviderKeyTarget = "codex" | "claude" | "summary";
 
-const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeCodeBuddyCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae">; sources: SessionSource[] }> = [
+const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeTclaude" | "includeTcodex" | "includeCodeBuddyCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae">; sources: SessionSource[] }> = [
   { key: "includeClaudeInternal", sources: ["claude-internal"] },
   { key: "includeCodexInternal", sources: ["codex-internal"] },
+  { key: "includeTclaude", sources: ["tclaude-cli"] },
+  { key: "includeTcodex", sources: ["tcodex-cli"] },
   { key: "includeCodeBuddyCli", sources: ["codebuddy-cli"] },
   { key: "includeOpenClaw", sources: ["openclaw"] },
   { key: "includeHermes", sources: ["hermes"] },
@@ -891,6 +893,8 @@ async function runIndexSync(): Promise<IndexStatus> {
     loadOptions: {
       includeClaudeInternal: settings.includeClaudeInternal,
       includeCodexInternal: settings.includeCodexInternal,
+      includeTclaude: settings.includeTclaude,
+      includeTcodex: settings.includeTcodex,
       includeCodeBuddyCli: settings.includeCodeBuddyCli,
       includeOpenClaw: settings.includeOpenClaw,
       includeHermes: settings.includeHermes,
@@ -934,6 +938,8 @@ const LIVE_NOTIFY_INTERVAL_MS = 10_000;
 const LIVE_FAMILY_LABEL: Record<TrackedLiveSession["family"], string> = {
   claude: "Claude Code",
   codex: "Codex",
+  tclaude: "TClaude",
+  tcodex: "TCodex",
   codebuddy: "CodeBuddy",
   trae: "Trae",
 };

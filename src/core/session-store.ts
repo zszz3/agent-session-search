@@ -41,6 +41,8 @@ const LIVE_SESSION_KEY_SQL = `
   CASE
     WHEN source IN ('claude-cli', 'claude-app', 'claude-internal') THEN 'claude:' || raw_id
     WHEN source IN ('codex-cli', 'codex-app', 'codex-internal') THEN 'codex:' || raw_id
+    WHEN source = 'tclaude-cli' THEN 'tclaude:' || raw_id
+    WHEN source = 'tcodex-cli' THEN 'tcodex:' || raw_id
     WHEN source = 'codebuddy-cli' THEN 'codebuddy:' || raw_id
     WHEN source = 'trae' THEN 'trae:' || raw_id
     ELSE NULL

@@ -10,6 +10,7 @@ import {
   loadCodexSessionFile,
   loadCodexSessionsIterator,
   loadCodexSessions,
+  loadDefaultSessions,
   parseCodexSessionMetaLine,
 } from "./session-loader";
 import { TRACE_DETAIL_PREVIEW_MAX_CHARS } from "./trace-detail";
@@ -1034,5 +1035,74 @@ describe("CodeBuddy session loading", () => {
     expect(loaded[0].session.originalTitle).toBe("Switch the active model");
 
     fs.rmSync(codeBuddyDir, { recursive: true, force: true });
+  });
+});
+
+describe("tclaude / tcodex optional sources", () => {
+  it("indexes ~/.tclaude with the tclaude source and its own session-key namespace", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-tclaude-"));
+    const projectDir = path.join(home, ".tclaude", "projects", "-repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, "tclaude-1.jsonl"),
+      [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-06-01T10:00:00Z",
+          cwd: "/repo",
+          sessionId: "tclaude-1",
+          message: { role: "user", content: "tclaude 会话" },
+        }),
+      ].join("\n"),
+    );
+
+    const off = loadDefaultSessions({ homeDir: home });
+    expect(off.some((item) => item.session.source === "tclaude-cli")).toBe(false);
+
+    const loaded = loadDefaultSessions({ homeDir: home, includeTclaude: true });
+    const session = loaded.find((item) => item.session.source === "tclaude-cli")?.session;
+    expect(session).toMatchObject({
+      sessionKey: "tclaude:tclaude-1",
+      rawId: "tclaude-1",
+      source: "tclaude-cli",
+      projectPath: "/repo",
+    });
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("indexes ~/.tcodex with the tcodex source and its own session-key namespace", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-tcodex-"));
+    const sessionDir = path.join(home, ".tcodex", "sessions", "2026", "06", "01");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "rollout.jsonl"),
+      [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-06-01T10:00:00Z",
+          payload: { id: "tcodex-1", cwd: "/repo" },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-01T10:01:00Z",
+          payload: { type: "message", role: "user", content: [{ type: "input_text", text: "tcodex 会话" }] },
+        }),
+      ].join("\n"),
+    );
+
+    const off = loadDefaultSessions({ homeDir: home });
+    expect(off.some((item) => item.session.source === "tcodex-cli")).toBe(false);
+
+    const loaded = loadDefaultSessions({ homeDir: home, includeTcodex: true });
+    const session = loaded.find((item) => item.session.source === "tcodex-cli")?.session;
+    expect(session).toMatchObject({
+      sessionKey: "tcodex:tcodex-1",
+      rawId: "tcodex-1",
+      source: "tcodex-cli",
+      projectPath: "/repo",
+    });
+
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });

@@ -28,6 +28,18 @@ describe("live session detection", () => {
     ]);
   });
 
+  it("detects tclaude and tcodex resume commands with their own families and resume syntaxes", () => {
+    expect(
+      detectLiveSessionsFromProcessLines([
+        "201 /Users/dev/.nvm/versions/node/v22/bin/tclaude --resume tclaude-1",
+        "202 /Users/dev/.nvm/versions/node/v22/bin/tcodex resume tcodex-1",
+      ]),
+    ).toEqual([
+      { family: "tclaude", rawId: "tclaude-1", pid: 201 },
+      { family: "tcodex", rawId: "tcodex-1", pid: 202 },
+    ]);
+  });
+
   it("maps a plain running Codex process through its open session file", () => {
     expect(
       detectLiveSessionsFromProcessLines(

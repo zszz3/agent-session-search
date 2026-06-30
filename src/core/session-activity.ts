@@ -192,7 +192,7 @@ function detectResumeCommand(tokens: string[]): { family: LiveSessionFamily; raw
     if (!family) continue;
 
     const args = tokens.slice(index + 1);
-    const rawId = family === "codex" ? codexResumeId(args) : flagResumeId(args);
+    const rawId = family === "codex" || family === "tcodex" ? codexResumeId(args) : flagResumeId(args);
     if (rawId) return { family, rawId };
   }
 
@@ -292,7 +292,9 @@ function executableFamily(token: string | undefined): LiveSessionFamily | null {
   if (!token) return null;
   const normalized = normalizedExecutableName(token);
   if (normalized === "codex") return "codex";
+  if (normalized === "tcodex") return "tcodex";
   if (normalized === "claude" || normalized === "claude-code") return "claude";
+  if (normalized === "tclaude") return "tclaude";
   if (normalized === "codebuddy" || normalized === "cbc") return "codebuddy";
 
   const lower = token.toLowerCase();

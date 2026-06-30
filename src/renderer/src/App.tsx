@@ -150,11 +150,13 @@ const LIVE_STATUS_FILTERS: Array<{ label: string; value: LiveStatusFilter }> = [
 ];
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
-type PendingSourceKey = "claude" | "codex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+type PendingSourceKey = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
 type OptionalSourceSettingKey = keyof Pick<
   AppSettings,
   | "includeClaudeInternal"
   | "includeCodexInternal"
+  | "includeTclaude"
+  | "includeTcodex"
   | "includeCodeBuddyCli"
   | "includeOpenClaw"
   | "includeHermes"
@@ -166,6 +168,8 @@ type OptionalSourceSettingKey = keyof Pick<
 const OPTIONAL_SOURCE_SETTINGS: Array<{ key: OptionalSourceSettingKey; pendingKey: PendingSourceKey; filter: SearchOptions["source"] }> = [
   { key: "includeClaudeInternal", pendingKey: "claude", filter: "claude-internal" },
   { key: "includeCodexInternal", pendingKey: "codex", filter: "codex-internal" },
+  { key: "includeTclaude", pendingKey: "tclaude", filter: "tclaude-cli" },
+  { key: "includeTcodex", pendingKey: "tcodex", filter: "tcodex-cli" },
   { key: "includeCodeBuddyCli", pendingKey: "codebuddy", filter: "codebuddy-cli" },
   { key: "includeOpenClaw", pendingKey: "openclaw", filter: "openclaw" },
   { key: "includeHermes", pendingKey: "hermes", filter: "hermes" },
@@ -428,6 +432,8 @@ export function App(): ReactElement {
   const [pendingPersonalSources, setPendingPersonalSources] = useState<Record<PendingSourceKey, boolean>>({
     claude: false,
     codex: false,
+    tclaude: false,
+    tcodex: false,
     codebuddy: false,
     openclaw: false,
     hermes: false,
@@ -910,6 +916,8 @@ export function App(): ReactElement {
       ...appSettings,
       includeClaudeInternal: appSettings.includeClaudeInternal && !pendingPersonalSources.claude,
       includeCodexInternal: appSettings.includeCodexInternal && !pendingPersonalSources.codex,
+      includeTclaude: appSettings.includeTclaude && !pendingPersonalSources.tclaude,
+      includeTcodex: appSettings.includeTcodex && !pendingPersonalSources.tcodex,
       includeCodeBuddyCli: appSettings.includeCodeBuddyCli && !pendingPersonalSources.codebuddy,
       includeOpenClaw: appSettings.includeOpenClaw && !pendingPersonalSources.openclaw,
       includeHermes: appSettings.includeHermes && !pendingPersonalSources.hermes,
@@ -2683,6 +2691,32 @@ function SettingsDialog({
                     checked={Boolean(settings?.includeCodexInternal)}
                     disabled={!settings || saving}
                     onChange={(event) => onSettingsChange({ includeCodexInternal: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include ~/.tclaude</span>
+                    <span className="settings-field-sub">{l("Indexes TClaude CLI sessions (Claude Code fork).", "索引 TClaude CLI 会话（Claude Code 分支）。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeTclaude)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeTclaude: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include ~/.tcodex</span>
+                    <span className="settings-field-sub">{l("Indexes TCodex CLI sessions (Codex fork).", "索引 TCodex CLI 会话（Codex 分支）。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeTcodex)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeTcodex: event.currentTarget.checked })}
                   />
                 </label>
                 <label className="settings-field settings-toggle">

@@ -22,7 +22,7 @@
 ### 核心功能
 
 - **统一搜索和管理多种 AI Coding Agent 会话**：
-  搜索、过滤、查看、整理和快速启动 Claude Code、Codex，以及可选的 CodeBuddy、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等会话；支持自定义标题、标签、收藏、置顶、隐藏和一键快速启动；也支持本地环境和 SSH 远程环境，远程机器无需安装本应用。
+  搜索、过滤、查看、整理和快速启动 Claude Code、Codex，以及可选的 TClaude、TCodex、CodeBuddy、OpenClaw、Hermes、OpenCode、Cursor Agent、Trae 等会话；支持自定义标题、标签、收藏、置顶、隐藏和一键快速启动；也支持本地环境和 SSH 远程环境，远程机器无需安装本应用。
 - **完整查看会话上下文**：
   详情页展示完整消息、tool call 与 Markdown / code block，并支持查看 AI 摘要和导出 Markdown。
 - **AI / Agent 辅助检索历史会话**：
@@ -42,6 +42,8 @@
 | Codex Desktop | `~/.codex/sessions/**/*.jsonl`，通过 session metadata 识别 |
 | Claude Code CLI | `~/.claude/projects/*/*.jsonl`，以及可选的 `~/.claude/sessions/*.json` 元数据 |
 | Claude Desktop app | `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json`，以及 Claude Code 项目日志 |
+| TClaude CLI | 可在设置中开启，读取 `~/.tclaude/projects/*/*.jsonl`（Claude Code 分支，格式一致），支持 Resume |
+| TCodex CLI | 可在设置中开启，读取 `~/.tcodex/sessions/**/*.jsonl`（Codex 分支，格式一致），支持 Resume |
 | CodeBuddy CLI | 可在设置中开启，读取 `~/.codebuddy/projects/**/*.jsonl` |
 | OpenClaw | 可在设置中开启，读取 `~/.openclaw/agents/*/sessions/*.jsonl`，兼容 `~/.clawdbot/agents/*/sessions/*.jsonl`，排除 `*.trajectory.jsonl` |
 | Hermes | 可在设置中开启，读取 `~/.hermes/state.db` |
@@ -52,7 +54,7 @@
 
 当 `~/.codex/session_index.jsonl` 存在时，应用会读取 Codex 的标题元数据。没有上游标题时，会使用第一个有效用户问题作为默认标题。
 
-CodeBuddy CLI、OpenClaw、Hermes、OpenCode、Cursor Agent 和 Trae 默认关闭，可在 Settings -> Optional sources 里选择监测。开启后支持本地只读索引、搜索、详情查看和来源过滤；Resume、远程 SSH 同步和专属用量统计会后续按来源单独补齐。Trae 额外支持打开状态检测。
+CodeBuddy CLI、TClaude、TCodex、OpenClaw、Hermes、OpenCode、Cursor Agent 和 Trae 默认关闭，可在 Settings -> Optional sources 里选择监测。开启后支持本地只读索引、搜索、详情查看和来源过滤；其中 TClaude / TCodex 因为与 Claude Code / Codex 格式一致，额外支持 Resume 和一键启动（分别调用 `tclaude` / `tcodex` 命令）。OpenClaw 等其他来源的 Resume、远程 SSH 同步和专属用量统计会后续按来源单独补齐。Trae 额外支持打开状态检测。
 
 ## Skills 管理与同步
 

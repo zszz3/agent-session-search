@@ -97,6 +97,30 @@ describe("resume commands", () => {
     );
   });
 
+  it("uses claude resume syntax with the tclaude binary for tclaude sessions", () => {
+    const session = {
+      source: "tclaude-cli",
+      rawId: "tclaude-1",
+      projectPath: "/repo",
+    } as SessionSearchResult;
+
+    expect(getResumeCommand(session, defaultSettings, { platform: "darwin" })).toBe(
+      "cd /repo && tclaude --resume tclaude-1",
+    );
+  });
+
+  it("uses codex resume syntax with the tcodex binary for tcodex sessions", () => {
+    const session = {
+      source: "tcodex-cli",
+      rawId: "tcodex-1",
+      projectPath: "/repo",
+    } as SessionSearchResult;
+
+    expect(getResumeCommand(session, defaultSettings, { platform: "darwin" })).toBe(
+      "cd /repo && tcodex resume tcodex-1",
+    );
+  });
+
   it("builds a cmd-compatible cd prefix when Windows terminal is Cmd", () => {
     const session = {
       source: "claude-cli",
