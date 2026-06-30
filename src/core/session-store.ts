@@ -36,6 +36,7 @@ const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: typeof Databa
 
 type Db = DatabaseSyncType;
 type ApiProviderKeyTarget = "codex" | "claude" | "summary";
+const CJK_INDEX_VERSION = "1";
 
 const LIVE_SESSION_KEY_SQL = `
   CASE
@@ -225,6 +226,7 @@ export class SessionStore {
       this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM trace_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(session.sessionKey);
+      this.db.prepare("DELETE FROM session_cjk_terms WHERE session_key = ?").run(session.sessionKey);
 
       const insertMessage = this.db.prepare(
         "INSERT INTO messages (session_key, message_index, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -441,6 +443,7 @@ export class SessionStore {
       if (row.source === "opencode-cli") throw new Error("Cannot delete shared OpenCode source database.");
       this.deleteSessionSourceFile(row.file_path);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(sessionKey);
+      this.db.prepare("DELETE FROM session_cjk_terms WHERE session_key = ?").run(sessionKey);
       this.db.prepare("DELETE FROM sessions WHERE session_key = ?").run(sessionKey);
       this.deleteUnusedTags();
       deleted = true;
@@ -971,18 +974,49 @@ export class SessionStore {
     const limit = options.limit ?? 200;
     const query = options.query?.trim() || "";
     const ftsMatches = query ? this.searchFts(query) : new Map<string, string | null>();
+    const cjkTerms = query ? buildCjkQueryBigrams(query) : [];
+    const cjkMatches = cjkTerms.length > 0 ? this.searchCjkTerms(cjkTerms) : new Set<string>();
+    const hasCjkTerms = cjkTerms.length > 0;
+    const hasFtsTerms = query ? Boolean(buildFtsQuery(query)) : false;
+    const hasIndexedTerms = hasCjkTerms || hasFtsTerms;
+    const nonCjkQuery = query ? stripCjkRuns(query).trim() : "";
     const rows = this.getCandidateRows(options, query, limit);
     const tagsBySession = this.getTagsForSessions(rows.map((row) => row.session_key));
     const merged = new Map<string, SessionSearchResult>();
 
     for (const row of rows) {
       const hasFtsMatch = ftsMatches.has(row.session_key);
+      const hasCjkMatch = hasCjkTerms ? cjkMatches.has(row.session_key) : true;
       const ftsSnippet = hasFtsMatch ? (ftsMatches.get(row.session_key) ?? null) : null;
       const hydrated = this.hydrateRow(row, query ? ftsSnippet : null, tagsBySession.get(row.session_key) ?? []);
-      if (query && !hasFtsMatch && !this.matchesTextFields(hydrated, query)) {
-        const snippet = this.findSnippet(row.session_key, query);
-        if (!snippet) continue;
-        hydrated.matchSnippet = snippet;
+
+      if (query) {
+        if (!hasIndexedTerms) {
+          if (!this.matchesTextFields(hydrated, query)) {
+            const snippet = this.findSnippet(row.session_key, query);
+            if (!snippet) continue;
+            hydrated.matchSnippet = snippet;
+          }
+        } else {
+          let nonCjkSnippet: string | null = null;
+          let hasNonCjkMatch =
+            !hasFtsTerms || hasFtsMatch || (nonCjkQuery ? this.matchesTextFields(hydrated, nonCjkQuery) : false);
+          if (hasFtsTerms && !hasNonCjkMatch && nonCjkQuery) {
+            nonCjkSnippet = this.findSnippet(row.session_key, nonCjkQuery);
+            hasNonCjkMatch = Boolean(nonCjkSnippet);
+          }
+
+          if (!(hasCjkMatch && hasNonCjkMatch) && !this.matchesTextFields(hydrated, query)) {
+            continue;
+          }
+
+          if (!hydrated.matchSnippet) {
+            hydrated.matchSnippet =
+              nonCjkSnippet ??
+              (hasCjkTerms && hasCjkMatch ? this.findCjkSnippet(row.session_key, cjkTerms) : null) ??
+              (nonCjkQuery ? this.findSnippet(row.session_key, nonCjkQuery) : null);
+          }
+        }
       }
       merged.set(hydrated.sessionKey, hydrated);
     }
@@ -1005,6 +1039,7 @@ export class SessionStore {
       this.db.prepare("DELETE FROM token_events").run();
       this.db.prepare("DELETE FROM trace_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
+      this.db.prepare("DELETE FROM session_cjk_terms").run();
       this.db
         .prepare(
           `
@@ -1030,6 +1065,7 @@ export class SessionStore {
     const placeholders = sources.map(() => "?").join(", ");
     this.transaction(() => {
       this.db.prepare(`DELETE FROM session_fts WHERE session_key IN (SELECT session_key FROM sessions WHERE source IN (${placeholders}))`).run(...sources);
+      this.db.prepare(`DELETE FROM session_cjk_terms WHERE session_key IN (SELECT session_key FROM sessions WHERE source IN (${placeholders}))`).run(...sources);
       this.db.prepare(`DELETE FROM sessions WHERE source IN (${placeholders})`).run(...sources);
       this.deleteUnusedTags();
     });
@@ -1186,6 +1222,11 @@ export class SessionStore {
         PRIMARY KEY (target, provider_id)
       );
 
+      CREATE TABLE IF NOT EXISTS app_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS session_migrations (
         id TEXT PRIMARY KEY,
         source_session_key TEXT NOT NULL,
@@ -1204,6 +1245,13 @@ export class SessionStore {
         content_text,
         project_path,
         tokenize = 'unicode61'
+      );
+
+      CREATE TABLE IF NOT EXISTS session_cjk_terms (
+        term TEXT NOT NULL,
+        session_key TEXT NOT NULL,
+        PRIMARY KEY (term, session_key),
+        FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_hidden_favorited_pinned
@@ -1226,6 +1274,8 @@ export class SessionStore {
         ON skill_usage_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_session_migrations_source_session_key_created_at_id
         ON session_migrations(source_session_key, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_session_cjk_terms_session
+        ON session_cjk_terms(session_key);
     `);
     this.addColumnIfMissing("sessions", "favorited", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
@@ -1248,6 +1298,7 @@ export class SessionStore {
       DROP INDEX IF EXISTS idx_session_migrations_created_at_desc;
     `);
     this.ensureLocalEnvironment();
+    this.ensureCjkIndexBackfilled();
   }
 
   private addColumnIfMissing(tableName: string, columnName: string, definition: string): void {
@@ -1261,9 +1312,30 @@ export class SessionStore {
     this.upsertEnvironment(localEnvironment());
   }
 
+  private ensureCjkIndexBackfilled(): void {
+    const row = this.db.prepare("SELECT value FROM app_metadata WHERE key = ?").get("cjk_index_version") as
+      | { value: string }
+      | undefined;
+    if (row?.value === CJK_INDEX_VERSION) return;
+
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM session_cjk_terms").run();
+      const sessions = this.db.prepare("SELECT session_key FROM sessions").all() as Array<{ session_key: string }>;
+      for (const session of sessions) {
+        this.refreshCjkTermsForSession(session.session_key);
+      }
+      this.db
+        .prepare("INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)")
+        .run("cjk_index_version", CJK_INDEX_VERSION);
+    });
+  }
+
   private deleteEnvironmentSessionsInTransaction(environmentId: string): void {
     this.db
       .prepare("DELETE FROM session_fts WHERE session_key IN (SELECT session_key FROM sessions WHERE environment_id = ?)")
+      .run(environmentId);
+    this.db
+      .prepare("DELETE FROM session_cjk_terms WHERE session_key IN (SELECT session_key FROM sessions WHERE environment_id = ?)")
       .run(environmentId);
     this.db.prepare("DELETE FROM sessions WHERE environment_id = ?").run(environmentId);
   }
@@ -1286,6 +1358,29 @@ export class SessionStore {
         "INSERT INTO session_fts (session_key, title, first_question, content_text, project_path) VALUES (?, ?, ?, ?, ?)",
       )
       .run(sessionKey, title, row.first_question, ftsContent, row.project_path);
+    this.refreshCjkTermsForSession(sessionKey, row, title, contentText, summary ?? "");
+  }
+
+  private refreshCjkTermsForSession(sessionKey: string, row?: SessionRow, title?: string, contentText?: string, summary?: string): void {
+    const session = row ?? (this.db.prepare("SELECT * FROM sessions WHERE session_key = ?").get(sessionKey) as SessionRow | undefined);
+    if (!session) return;
+    const resolvedTitle = title || session.custom_title || session.first_question || session.original_title || "Untitled Session";
+    const resolvedSummary = summary ?? session.ai_summary?.trim() ?? "";
+    const resolvedContent =
+      contentText ??
+      (this.db.prepare("SELECT content FROM messages WHERE session_key = ? ORDER BY message_index").all(sessionKey) as Array<{ content: string }>)
+        .map((message) => message.content)
+        .join("\n\n");
+    const terms = buildCjkBigrams(
+      [resolvedTitle, session.original_title, session.first_question, session.project_path, resolvedSummary, resolvedContent].join("\n\n"),
+    );
+
+    this.db.prepare("DELETE FROM session_cjk_terms WHERE session_key = ?").run(sessionKey);
+    if (terms.length === 0) return;
+    const insert = this.db.prepare("INSERT OR IGNORE INTO session_cjk_terms (term, session_key) VALUES (?, ?)");
+    for (const term of terms) {
+      insert.run(term, sessionKey);
+    }
   }
 
   private deleteSessionSourceFile(filePath: string): void {
@@ -1633,12 +1728,52 @@ export class SessionStore {
       )
       .get(sessionKey, like) as { content: string } | undefined;
     if (!row) return null;
-    const content = row.content.replace(/\s+/g, " ");
-    const idx = content.toLowerCase().indexOf(query.toLowerCase());
-    if (idx < 0) return content.slice(0, 180);
-    const start = Math.max(0, idx - 60);
-    const end = Math.min(content.length, idx + query.length + 80);
-    return `${start > 0 ? "..." : ""}${content.slice(start, end)}${end < content.length ? "..." : ""}`;
+    return snippetAround(row.content, query);
+  }
+
+  private findCjkSnippet(sessionKey: string, terms: string[]): string | null {
+    const uniqueTerms = [...new Set(terms)].filter(Boolean);
+    if (uniqueTerms.length === 0) return null;
+    const rows = this.db
+      .prepare(
+        `
+        SELECT content
+        FROM messages
+        WHERE session_key = ?
+        ORDER BY message_index
+      `,
+      )
+      .all(sessionKey) as Array<{ content: string }>;
+    for (const row of rows) {
+      const content = row.content.replace(/\s+/g, " ");
+      if (!uniqueTerms.every((term) => content.includes(term))) continue;
+      const firstTerm = uniqueTerms.reduce((best, term) => {
+        const index = content.indexOf(term);
+        if (index < 0) return best;
+        return !best || index < best.index ? { term, index } : best;
+      }, null as { term: string; index: number } | null);
+      if (!firstTerm) return content.slice(0, 180);
+      return snippetAt(content, firstTerm.index, firstTerm.term.length);
+    }
+    return null;
+  }
+
+  private searchCjkTerms(terms: string[]): Set<string> {
+    const uniqueTerms = [...new Set(terms)].filter(Boolean);
+    if (uniqueTerms.length === 0) return new Set();
+    const placeholders = uniqueTerms.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `
+        SELECT session_key
+        FROM session_cjk_terms
+        WHERE term IN (${placeholders})
+        GROUP BY session_key
+        HAVING COUNT(DISTINCT term) = ?
+      `,
+      )
+      .all(...uniqueTerms, uniqueTerms.length) as Array<{ session_key: string }>;
+    return new Set(rows.map((row) => row.session_key));
   }
 
   private searchFts(query: string): Map<string, string | null> {
@@ -1929,14 +2064,82 @@ function startOfLocalDay(timestamp: number): number {
   return date.getTime();
 }
 
+function buildCjkBigrams(text: string): string[] {
+  const terms = new Set<string>();
+  for (const run of text.matchAll(CJK_RUN_PATTERN)) {
+    const chars = Array.from(run[0]);
+    for (let i = 0; i < chars.length - 1; i += 1) {
+      terms.add(`${chars[i]}${chars[i + 1]}`.toLocaleLowerCase());
+    }
+  }
+  return [...terms];
+}
+
+function buildCjkQueryBigrams(text: string): string[] {
+  const terms = new Set<string>();
+  for (const run of text.matchAll(CJK_RUN_PATTERN)) {
+    const segmented = segmentCjkRun(run[0]);
+    const sources = segmented.length >= 2 ? segmented : [run[0]];
+    for (const source of sources) {
+      for (const term of buildCjkBigrams(source)) {
+        terms.add(term);
+      }
+    }
+  }
+  return [...terms];
+}
+
+function segmentCjkRun(text: string): string[] {
+  if (!CJK_WORD_SEGMENTER) return [];
+  return [...CJK_WORD_SEGMENTER.segment(text)]
+    .filter((part) => part.isWordLike !== false)
+    .map((part) => part.segment)
+    .filter((segment) => Array.from(segment).length >= 2 && CJK_CHAR_PATTERN.test(segment));
+}
+
+function stripCjkRuns(text: string): string {
+  return text.replace(CJK_RUN_PATTERN, " ");
+}
+
 function buildFtsQuery(query: string): string {
-  const tokens = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  const tokens = stripCjkRuns(query).match(/[\p{L}\p{N}_]+/gu) ?? [];
   return tokens
     .map((token) => token.replace(/"/g, ""))
     .filter(Boolean)
     .map((token) => `${token}*`)
     .join(" ");
 }
+
+function snippetAround(content: string, query: string): string {
+  const normalized = content.replace(/\s+/g, " ");
+  const idx = normalized.toLowerCase().indexOf(query.toLowerCase());
+  if (idx < 0) return normalized.slice(0, 180);
+  return snippetAt(normalized, idx, query.length);
+}
+
+function snippetAt(content: string, index: number, length: number): string {
+  const start = Math.max(0, index - 60);
+  const end = Math.min(content.length, index + length + 80);
+  return `${start > 0 ? "..." : ""}${content.slice(start, end)}${end < content.length ? "..." : ""}`;
+}
+
+const CJK_RUN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
+const CJK_CHAR_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+interface CjkWordSegment {
+  segment: string;
+  isWordLike?: boolean;
+}
+
+interface CjkWordSegmenter {
+  segment(input: string): Iterable<CjkWordSegment>;
+}
+
+const CJK_WORD_SEGMENTER: CjkWordSegmenter | null = (() => {
+  const intl = Intl as typeof Intl & {
+    Segmenter?: new (locale: string, options: { granularity: "word" }) => CjkWordSegmenter;
+  };
+  return typeof intl.Segmenter === "function" ? new intl.Segmenter("zh", { granularity: "word" }) : null;
+})();
 
 function sessionSortSql(sortBy: SessionSortBy = "activity"): string {
   if (sortBy === "activity") return sessionActivitySql("sessions");

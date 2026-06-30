@@ -164,6 +164,68 @@ describe("SessionStore", () => {
     expect(results[0].matchSnippet).toContain("refresh token");
   });
 
+  it("searches segmented Chinese terms inside transcript content", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({
+        originalTitle: "Unrelated title",
+        firstQuestion: "Unrelated question",
+      }),
+      [
+        { role: "user", content: "这里讨论的是登录态失效的问题", timestamp: "2026-06-01T10:00:00Z", index: 0 },
+        { role: "assistant", content: "最终发现 refresh token 过期", timestamp: "2026-06-01T10:01:00Z", index: 1 },
+      ],
+    );
+
+    for (const query of ["登录 失效", "登录失效"]) {
+      const results = store.searchSessions({ query });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].sessionKey).toBe("codex:abc");
+      expect(results[0].matchSnippet).toContain("登录态失效");
+    }
+  });
+
+  it("requires both Chinese and Latin terms for mixed transcript search", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({
+        originalTitle: "Unrelated title",
+        firstQuestion: "Unrelated question",
+      }),
+      [
+        { role: "user", content: "这里讨论的是登录态失效的问题", timestamp: "2026-06-01T10:00:00Z", index: 0 },
+        { role: "assistant", content: "最终发现 refresh token 过期", timestamp: "2026-06-01T10:01:00Z", index: 1 },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:token-only",
+        rawId: "token-only",
+        originalTitle: "Unrelated token title",
+        firstQuestion: "Unrelated token question",
+        filePath: "/tmp/token-only.jsonl",
+        fileMtimeMs: 20,
+      }),
+      [{ role: "assistant", content: "refresh token rotation only", timestamp: "2026-06-01T10:02:00Z", index: 0 }],
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:cn-only",
+        rawId: "cn-only",
+        originalTitle: "Unrelated Chinese title",
+        firstQuestion: "Unrelated Chinese question",
+        filePath: "/tmp/cn-only.jsonl",
+        fileMtimeMs: 30,
+      }),
+      [{ role: "user", content: "这里只有登录态失效，没有英文关键词", timestamp: "2026-06-01T10:03:00Z", index: 0 }],
+    );
+
+    const results = store.searchSessions({ query: "登录 token" });
+
+    expect(results.map((result) => result.sessionKey)).toEqual(["codex:abc"]);
+  });
+
   it("stores token usage per session and aggregates selected stats periods by source", () => {
     const store = createInMemoryStore();
     const now = new Date("2026-06-01T12:00:00Z").getTime();

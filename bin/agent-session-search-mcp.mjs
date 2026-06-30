@@ -12,6 +12,10 @@ import { fileURLToPath } from "node:url";
 
 const MAX_RESULTS = 50;
 const MAX_MESSAGES = 200;
+const CJK_RUN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
+const CJK_CHAR_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const CJK_WORD_SEGMENTER =
+  typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh", { granularity: "word" }) : null;
 
 // Mirrors src/core/app-paths.ts (this file runs standalone, outside the bundle).
 export function resolveDbPath(env = process.env, home = homedir()) {
@@ -32,13 +36,49 @@ function clamp(value, fallback, max) {
   return Math.min(Math.floor(n), max);
 }
 
+function buildCjkBigrams(text) {
+  const terms = new Set();
+  for (const run of text.matchAll(CJK_RUN_PATTERN)) {
+    const chars = Array.from(run[0]);
+    for (let i = 0; i < chars.length - 1; i += 1) {
+      terms.add(`${chars[i]}${chars[i + 1]}`.toLocaleLowerCase());
+    }
+  }
+  return [...terms];
+}
+
+function buildCjkQueryBigrams(text) {
+  const terms = new Set();
+  for (const run of text.matchAll(CJK_RUN_PATTERN)) {
+    const segmented = segmentCjkRun(run[0]);
+    const sources = segmented.length >= 2 ? segmented : [run[0]];
+    for (const source of sources) {
+      for (const term of buildCjkBigrams(source)) {
+        terms.add(term);
+      }
+    }
+  }
+  return [...terms];
+}
+
+function segmentCjkRun(text) {
+  if (!CJK_WORD_SEGMENTER) return [];
+  return [...CJK_WORD_SEGMENTER.segment(text)]
+    .filter((part) => part.isWordLike !== false)
+    .map((part) => part.segment)
+    .filter((segment) => Array.from(segment).length >= 2 && CJK_CHAR_PATTERN.test(segment));
+}
+
+function stripCjkRuns(text) {
+  return text.replace(CJK_RUN_PATTERN, " ");
+}
+
 // Quote each term so user input cannot break FTS5 MATCH syntax; terms AND together.
 function ftsMatchExpr(query) {
-  const terms = query
-    .split(/\s+/)
+  const terms = (stripCjkRuns(query).match(/[\p{L}\p{N}_]+/gu) ?? [])
     .map((term) => term.replace(/["']/g, "").trim())
     .filter(Boolean);
-  return terms.length ? terms.map((term) => `"${term}"`).join(" ") : '""';
+  return terms.length ? terms.map((term) => `"${term}"`).join(" ") : "";
 }
 
 function toResult(row) {
@@ -64,9 +104,35 @@ function hasColumn(db, table, column) {
   }
 }
 
+function hasTable(db, table) {
+  try {
+    return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
+  } catch {
+    return false;
+  }
+}
+
 function resultColumns(db, prefix = "") {
   const summary = hasColumn(db, "sessions", "ai_summary") ? `${prefix}ai_summary` : "NULL AS ai_summary";
   return [...BASE_COLUMNS.map((c) => `${prefix}${c}`), summary].join(", ");
+}
+
+function addCjkFilter(db, filters, params, terms) {
+  const uniqueTerms = [...new Set(terms)].filter(Boolean);
+  if (!uniqueTerms.length) return "none";
+  if (!hasTable(db, "session_cjk_terms")) return "missing";
+  const placeholders = uniqueTerms.map(() => "?").join(", ");
+  filters.push(
+    `s.session_key IN (
+      SELECT session_key
+      FROM session_cjk_terms
+      WHERE term IN (${placeholders})
+      GROUP BY session_key
+      HAVING COUNT(DISTINCT term) = ?
+    )`,
+  );
+  params.push(...uniqueTerms, uniqueTerms.length);
+  return "added";
 }
 
 export function searchSessions(db, { query = "", source = "", project = "", limit = 20 } = {}) {
@@ -84,16 +150,31 @@ export function searchSessions(db, { query = "", source = "", project = "", limi
 
   const q = String(query || "").trim();
   if (q) {
-    const where = ["session_fts MATCH ?", ...filters].join(" AND ");
+    const cjkTerms = buildCjkQueryBigrams(q);
+    const ftsExpr = ftsMatchExpr(q);
+    const queryFilters = [...filters];
+    const queryParams = [...params];
+    const cjkFilter = addCjkFilter(db, queryFilters, queryParams, cjkTerms);
+
+    if (ftsExpr) {
+      const where = ["session_fts MATCH ?", ...queryFilters].join(" AND ");
+      const rows = db
+        .prepare(
+          `SELECT ${resultColumns(db, "s.")}
+           FROM session_fts JOIN sessions s ON s.session_key = session_fts.session_key
+           WHERE ${where}
+           ORDER BY rank
+           LIMIT ?`,
+        )
+        .all(ftsExpr, ...queryParams, cap);
+      return rows.map(toResult);
+    }
+
+    if (cjkFilter !== "added") return [];
+    const where = queryFilters.length ? `WHERE ${queryFilters.join(" AND ")}` : "";
     const rows = db
-      .prepare(
-        `SELECT ${resultColumns(db, "s.")}
-         FROM session_fts JOIN sessions s ON s.session_key = session_fts.session_key
-         WHERE ${where}
-         ORDER BY rank
-         LIMIT ?`,
-      )
-      .all(ftsMatchExpr(q), ...params, cap);
+      .prepare(`SELECT ${resultColumns(db, "s.")} FROM sessions s ${where} ORDER BY s.file_mtime_ms DESC LIMIT ?`)
+      .all(...queryParams, cap);
     return rows.map(toResult);
   }
 

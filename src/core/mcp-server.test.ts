@@ -48,6 +48,19 @@ function seedStore(): { db: import("node:sqlite").DatabaseSync; store: SessionSt
     [],
     [],
   );
+  store.upsertIndexedSession(
+    session({
+      sessionKey: "codex:cn",
+      rawId: "cn",
+      originalTitle: "中文正文",
+      firstQuestion: "unrelated question",
+      projectPath: "/repo",
+      fileMtimeMs: 25,
+    }),
+    messages("这里讨论的是登录态失效的问题"),
+    [],
+    [],
+  );
   store.addTag("codex:abc", "auth");
 
   // A 60-message session for paging tests.
@@ -68,6 +81,12 @@ describe("MCP query functions", () => {
     const results = searchSessions(db, { query: "refresh token" });
     expect(results.map((r) => r.sessionKey)).toContain("codex:abc");
     expect(results.find((r) => r.sessionKey === "codex:abc")?.project).toBe("/repo");
+  });
+
+  it("finds segmented Chinese transcript content", () => {
+    const { db } = seedStore();
+    const results = searchSessions(db, { query: "登录失效" });
+    expect(results.map((r) => r.sessionKey)).toContain("codex:cn");
   });
 
   it("returns recent sessions when no query is given", () => {
