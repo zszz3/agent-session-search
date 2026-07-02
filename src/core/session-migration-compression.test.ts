@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   applyMigrationLengthPolicy,
   buildLocalMigrationFallback,
@@ -8,6 +11,7 @@ import {
   parseMigrationHandoff,
 } from "./session-migration-compression";
 import { estimatePortableSessionTokens, MIGRATION_TOKEN_LIMIT } from "./session-migration";
+import { writeMigratedSession } from "./session-migration-writers";
 import type { PortableSession, SessionMessage } from "./types";
 
 const STARTED_AT = "2026-06-23T00:00:00.000Z";
@@ -161,6 +165,23 @@ describe("migration compression policy", () => {
     expectContinuousIndexes(first);
   });
 
+  it("retains deterministic middle anchors in the local fallback instead of only head and tail", () => {
+    const session = portable(
+      Array.from({ length: 100 }, (_, index) =>
+        message(`middle-anchor-${index}-${"x".repeat(4_000)}`, index),
+      ),
+    );
+
+    const fallback = buildLocalMigrationFallback(session);
+    const combined = fallback.messages.map((entry) => entry.content).join("\n");
+
+    expect(combined).toContain("middle-anchor-0");
+    expect(combined).toContain("middle-anchor-50");
+    expect(combined).toContain("middle-anchor-99");
+    expect(estimatePortableSessionTokens(fallback)).toBeLessThanOrEqual(MIGRATION_TOKEN_LIMIT);
+    expectContinuousIndexes(fallback);
+  });
+
   it("clips a single oversized message without exceeding the budget", () => {
     const fallback = buildLocalMigrationFallback(
       portable([message(`opening-${"x".repeat(300_000)}-closing`, 0)]),
@@ -212,6 +233,28 @@ describe("migration compression policy", () => {
     expect(result.strategy).toBe("ai-compressed");
     expect(result.session.messages[0].content).toContain("原始用户目标：实现压缩迁移对齐 Claude Code");
     expect(estimatePortableSessionTokens(result.session)).toBeLessThanOrEqual(MIGRATION_TOKEN_LIMIT);
+  });
+
+  it("writes an AI-compressed session to CodeBuddy with valid synthetic marker timestamps", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-compressed-codebuddy-"));
+    const session = portableWithContent("x".repeat(239_989));
+    const prepared = await applyMigrationLengthPolicy(
+      session,
+      vi.fn().mockResolvedValue(VALID_HANDOFF),
+    );
+
+    try {
+      await expect(
+        writeMigratedSession({
+          target: "codebuddy",
+          session: prepared.session,
+          homeDir,
+          now: new Date("2026-06-23T06:07:08.901Z"),
+        }),
+      ).resolves.toMatchObject({ sessionId: expect.any(String) });
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it("does not split emoji when clipping local head and tail boundaries", () => {
@@ -398,6 +441,31 @@ describe("migration handoff provider request", () => {
 
     expectNoUnpairedSurrogates(payload.transcript);
     expect(payload.transcript).not.toContain("after");
+  });
+
+  it("summarizes long migrations from chunks that cover middle messages", async () => {
+    const endpoint = {
+      baseUrl: "https://provider.example/v1",
+      model: "model",
+      apiKey: "secret",
+      apiFormat: "openai_chat" as const,
+    };
+    const session = portable(
+      Array.from({ length: 80 }, (_, index) =>
+        message(`chunk-visible-${index}-${"x".repeat(5_000)}`, index),
+      ),
+    );
+    const chat = vi.fn(async (_endpoint, messages) => {
+      if (messages[0].content.includes("分片摘要")) {
+        return `分片覆盖：${messages[1].content.includes("chunk-visible-40") ? "chunk-visible-40" : "other"}`;
+      }
+      return VALID_HANDOFF;
+    });
+
+    await expect(createMigrationCompressor(endpoint, chat)(session)).resolves.toBe(VALID_HANDOFF);
+
+    expect(chat.mock.calls.length).toBeGreaterThan(1);
+    expect(chat.mock.calls.map(([, messages]) => messages[1].content).join("\n")).toContain("chunk-visible-40");
   });
 
   it("reuses the supplied summary completion function", async () => {
