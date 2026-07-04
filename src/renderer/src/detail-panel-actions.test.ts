@@ -63,6 +63,22 @@ describe("detail panel actions", () => {
     expect(detailPanelSource).toContain("Show ${Math.min(messagePageSize, olderMessageCount)} older messages");
   });
 
+  it("filters the loaded full conversation by role while keeping pagination available", () => {
+    const showOlderIndex = detailPanelSource.indexOf("olderMessageCount > 0");
+    const visibleItemsIndex = detailPanelSource.indexOf("visibleTimelineItems.map");
+
+    expect(detailPanelSource).toContain('type ConversationRoleFilter = "all" | SessionMessage["role"]');
+    expect(detailPanelSource).toContain('const CONVERSATION_ROLE_FILTERS: ConversationRoleFilter[] = ["all", "user", "assistant"]');
+    expect(detailPanelSource).toContain('roleFilter === "all" ? messages : messages.filter((message) => message.role === roleFilter)');
+    expect(detailPanelSource).toContain('roleFilter === "all" ? timelineItems : roleFilteredMessages.map(messageTimelineItem)');
+    expect(detailPanelSource).toContain('setRoleFilter("all");');
+    expect(detailPanelSource).toContain("conversation-role-filter");
+    expect(detailPanelSource).toContain("No User messages in the loaded conversation.");
+    expect(detailPanelSource).toContain("No Assistant messages in the loaded conversation.");
+    expect(showOlderIndex).toBeGreaterThanOrEqual(0);
+    expect(visibleItemsIndex).toBeGreaterThan(showOlderIndex);
+  });
+
   it("loads the visible message window before trace events when opening detail", () => {
     const openDetail = appSource.slice(appSource.indexOf("async function openDetail"), appSource.indexOf("function closeDetail"));
     const freshIndex = openDetail.indexOf("const fresh = await window.sessionSearch.getSession(sessionKey)");

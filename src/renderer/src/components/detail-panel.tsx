@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { ArrowRightLeft, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../core/format-session";
@@ -22,10 +22,24 @@ type ConversationTimelineItem =
   | { kind: "message"; key: string; timestampMs: number | null; order: number; message: SessionMessage }
   | { kind: "trace"; key: string; timestampMs: number | null; order: number; event: SessionTraceEvent };
 
+type ConversationRoleFilter = "all" | SessionMessage["role"];
+
+const CONVERSATION_ROLE_FILTERS: ConversationRoleFilter[] = ["all", "user", "assistant"];
+
 function timestampMs(timestamp: string): number | null {
   if (!timestamp) return null;
   const parsed = new Date(timestamp).getTime();
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function messageTimelineItem(message: SessionMessage): ConversationTimelineItem {
+  return {
+    kind: "message",
+    key: `message:${message.index}`,
+    timestampMs: timestampMs(message.timestamp),
+    order: message.index * 2,
+    message,
+  };
 }
 
 function conversationTimeline(messages: SessionMessage[], traceEvents: SessionTraceEvent[]): ConversationTimelineItem[] {
@@ -41,13 +55,7 @@ function conversationTimeline(messages: SessionMessage[], traceEvents: SessionTr
         });
 
   const items: ConversationTimelineItem[] = [
-    ...messages.map((message) => ({
-      kind: "message" as const,
-      key: `message:${message.index}`,
-      timestampMs: timestampMs(message.timestamp),
-      order: message.index * 2,
-      message,
-    })),
+    ...messages.map(messageTimelineItem),
     ...visibleTraceEvents.map((event) => ({
       kind: "trace" as const,
       key: `trace:${event.index}`,
@@ -65,6 +73,18 @@ function conversationTimeline(messages: SessionMessage[], traceEvents: SessionTr
     if (a.timestampMs === null && b.timestampMs !== null) return 1;
     return a.order - b.order;
   });
+}
+
+function conversationRoleFilterLabel(filter: ConversationRoleFilter, language: LanguageMode): string {
+  if (filter === "all") return localize(language, "All", "全部");
+  if (filter === "user") return localize(language, "User", "用户");
+  return localize(language, "Assistant", "助手");
+}
+
+function conversationRoleEmptyLabel(filter: Exclude<ConversationRoleFilter, "all">, language: LanguageMode): string {
+  return filter === "user"
+    ? localize(language, "No User messages in the loaded conversation.", "当前已加载内容中没有用户消息。")
+    : localize(language, "No Assistant messages in the loaded conversation.", "当前已加载内容中没有助手消息。");
 }
 
 export function DetailPanel({
@@ -146,12 +166,23 @@ export function DetailPanel({
   const l = (en: string, zh: string) => localize(language, en, zh);
   const bodyRef = useRef<HTMLDivElement>(null);
   const pendingInitialScrollRef = useRef<string | null>(session.sessionKey);
+  const [roleFilter, setRoleFilter] = useState<ConversationRoleFilter>("all");
   const timelineItems = useMemo(() => conversationTimeline(messages, traceEvents), [messages, traceEvents]);
+  const roleFilteredMessages = useMemo(
+    () => roleFilter === "all" ? messages : messages.filter((message) => message.role === roleFilter),
+    [messages, roleFilter],
+  );
+  const visibleTimelineItems = useMemo(
+    () => roleFilter === "all" ? timelineItems : roleFilteredMessages.map(messageTimelineItem),
+    [roleFilter, roleFilteredMessages, timelineItems],
+  );
+  const roleFilterEmpty = !loading && messages.length > 0 && roleFilter !== "all" && roleFilteredMessages.length === 0;
   const localOnlyDisabled = isRemoteSession(session);
   const revealTitle = localOnlyDisabled ? remoteRevealTitle(language) : l(`Show in ${revealLabel}`, `在${revealLabel}中显示`);
 
   useEffect(() => {
     pendingInitialScrollRef.current = session.sessionKey;
+    setRoleFilter("all");
   }, [session.sessionKey]);
 
   useEffect(() => {
@@ -321,7 +352,21 @@ export function DetailPanel({
             </section>
           ) : null}
           <section className="conversation">
-            <h3>{l("Full Conversation", "完整会话")}</h3>
+            <div className="conversation-header">
+              <h3>{l("Full Conversation", "完整会话")}</h3>
+              <div className="conversation-role-filter" role="group" aria-label={l("Conversation role filter", "会话角色过滤")}>
+                {CONVERSATION_ROLE_FILTERS.map((filter) => (
+                  <button
+                    key={filter}
+                    className={roleFilter === filter ? "active" : ""}
+                    onClick={() => setRoleFilter(filter)}
+                    aria-pressed={roleFilter === filter}
+                  >
+                    {conversationRoleFilterLabel(filter, language)}
+                  </button>
+                ))}
+              </div>
+            </div>
             {loading ? <div className="loading-state">{l("Loading conversation...", "正在加载会话...")}</div> : null}
             {!loading && messages.length === 0 ? <div className="loading-state">{l("No visible messages indexed for this session.", "这个会话没有可见消息被索引。")}</div> : null}
             {!loading && olderMessageCount > 0 ? (
@@ -329,7 +374,10 @@ export function DetailPanel({
                 {l(`Show ${Math.min(messagePageSize, olderMessageCount)} older messages`, `再显示 ${Math.min(messagePageSize, olderMessageCount)} 条更早消息`)}
               </button>
             ) : null}
-            {timelineItems.map((item) => (
+            {roleFilter !== "all" && roleFilterEmpty ? (
+              <div className="conversation-empty">{conversationRoleEmptyLabel(roleFilter, language)}</div>
+            ) : null}
+            {visibleTimelineItems.map((item) => (
               item.kind === "message" ? (
                 <MessageBlock key={item.key} message={item.message} query={query} language={language} />
               ) : (
