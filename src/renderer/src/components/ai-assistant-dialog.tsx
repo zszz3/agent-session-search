@@ -27,14 +27,21 @@ export function AiAssistantDialog({
   const l = (en: string, zh: string) => localize(language, en, zh);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  // User turns typed while a reply is in flight wait here, then get dispatched
+  // one at a time so the conversation stays strictly user→assistant→user→… and
+  // each request carries the full prior history.
+  const [queue, setQueue] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastUserMessageRef = useRef<HTMLDivElement>(null);
 
+  // Keep the newest user question pinned to the top of the viewport (rather than
+  // scrolling to the bottom), so the user reads from their question down through
+  // the matched sessions and reply.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, pending]);
+    lastUserMessageRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [messages, queue, pending]);
 
   // Auto-grow the textarea so the send button stays bottom-aligned with it.
   useEffect(() => {
@@ -44,32 +51,54 @@ export function AiAssistantDialog({
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [input]);
 
-  const send = async (): Promise<void> => {
+  // Enqueue the current input, so the user can keep typing and submitting while a
+  // reply is in flight. Clears the box; the driver below sends it when ready.
+  const enqueue = (): void => {
     const text = input.trim();
-    if (!text || pending) return;
+    if (!text) return;
     setError(null);
+    setQueue((current) => [...current, text]);
+    setInput("");
+  };
+
+  // Queue driver: whenever no request is in flight and a queued turn exists, move
+  // the oldest queued turn into the transcript and send the full history so the
+  // model keeps context and answers queued messages in order.
+  useEffect(() => {
+    if (pending || queue.length === 0) return;
+    const [text, ...rest] = queue;
     const nextMessages: DisplayMessage[] = [...messages, { role: "user", content: text }];
     setMessages(nextMessages);
-    setInput("");
+    setQueue(rest);
     setPending(true);
-    try {
-      // Send full history (user + assistant text) so the model keeps context.
-      const history: AiChatMessage[] = nextMessages.map((message) => ({ role: message.role, content: message.content }));
-      const reply = await window.sessionSearch.askAiAssistant(history);
-      setMessages((current) => [...current, { role: "assistant", content: reply.reply, sessions: reply.sessions }]);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setPending(false);
+    const history: AiChatMessage[] = nextMessages.map((message) => ({ role: message.role, content: message.content }));
+
+    void (async () => {
+      try {
+        const reply = await window.sessionSearch.askAiAssistant(history);
+        setMessages((current) => [...current, { role: "assistant", content: reply.reply, sessions: reply.sessions }]);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        setPending(false);
+        // Return focus to the input so the user can immediately send the next message.
+        textareaRef.current?.focus();
+      }
+    })();
+  }, [messages, queue, pending]);
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+    // While an IME is composing (e.g. picking a Chinese candidate), Enter confirms
+    // the candidate — it must not send. keyCode 229 covers older IME behavior.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      enqueue();
     }
   };
 
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void send();
-    }
-  };
+  // The newest user turn — its DOM node is what we pin to the top of the viewport.
+  const lastUserMessageIndex = messages.map((m) => m.role).lastIndexOf("user");
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -84,7 +113,7 @@ export function AiAssistantDialog({
           </button>
         </div>
 
-        <div className="ai-assistant-messages" ref={scrollRef}>
+        <div className="ai-assistant-messages">
           {messages.length === 0 ? (
             <div className="ai-assistant-empty">
               <Sparkles size={22} />
@@ -95,53 +124,67 @@ export function AiAssistantDialog({
             </div>
           ) : null}
 
-          {messages.map((message, index) => (
-            <div key={index} className={`ai-message ai-message-${message.role}`}>
-              <div className="ai-message-bubble">
-                {message.role === "assistant" ? <Markdown text={message.content} /> : message.content}
-              </div>
-              {message.sessions && message.sessions.length > 0 ? (
-                <div className="ai-session-cards">
-                  {message.sessions.map((session) => (
-                    <div
-                      key={session.sessionKey}
-                      role="button"
-                      tabIndex={0}
-                      className="ai-session-card"
-                      onClick={() => {
-                        // Don't open when the user is selecting text inside the card.
-                        if ((window.getSelection()?.toString() ?? "").length > 0) return;
-                        onOpenSession(session);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
+          {messages.map((message, index) => {
+            const sessions = message.sessions ?? [];
+            // For assistant turns, the session cards ARE the answer — hide the
+            // model's prose. Keep it only when there are no cards to show (e.g. a
+            // clarifying question or "nothing found"), so the turn isn't blank.
+            const showBubble = message.role === "user" || sessions.length === 0;
+            return (
+              <div
+                key={index}
+                ref={index === lastUserMessageIndex ? lastUserMessageRef : undefined}
+                className={`ai-message ai-message-${message.role}`}
+              >
+                {/* Surface the matched sessions — the top card is the closest
+                    match, so it sits right under the user's question. */}
+                {sessions.length > 0 ? (
+                  <div className="ai-session-cards">
+                    {sessions.map((session) => (
+                      <div
+                        key={session.sessionKey}
+                        role="button"
+                        tabIndex={0}
+                        className="ai-session-card"
+                        onClick={() => {
+                          // Don't open when the user is selecting text inside the card.
+                          if ((window.getSelection()?.toString() ?? "").length > 0) return;
                           onOpenSession(session);
-                        }
-                      }}
-                    >
-                      <div className="ai-session-card-title">{session.displayTitle}</div>
-                      <div className="ai-session-card-meta">
-                        <span className="ai-session-card-source">{SOURCE_LABEL[session.source] ?? session.source}</span>
-                        {session.projectPath ? (
-                          <span className="ai-session-card-project">
-                            <FolderOpen size={11} />
-                            {session.projectPath}
-                          </span>
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onOpenSession(session);
+                          }
+                        }}
+                      >
+                        <div className="ai-session-card-title">{session.displayTitle}</div>
+                        <div className="ai-session-card-meta">
+                          <span className="ai-session-card-source">{SOURCE_LABEL[session.source] ?? session.source}</span>
+                          {session.projectPath ? (
+                            <span className="ai-session-card-project">
+                              <FolderOpen size={11} />
+                              {session.projectPath}
+                            </span>
+                          ) : null}
+                        </div>
+                        {session.aiSummary ? (
+                          <div className="ai-session-card-summary">
+                            <Markdown text={session.aiSummary} />
+                          </div>
                         ) : null}
                       </div>
-                      {session.aiSummary ? (
-                        <div className="ai-session-card-summary">
-                          <Markdown text={session.aiSummary} />
-                        </div>
-                      ) : null}
-                      <span className="ai-session-card-open">{l("Open session", "打开会话")} →</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
+                    ))}
+                  </div>
+                ) : null}
+                {showBubble ? (
+                  <div className="ai-message-bubble">
+                    {message.role === "assistant" ? <Markdown text={message.content} /> : message.content}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
 
           {pending ? (
             <div className="ai-message ai-message-assistant">
@@ -155,6 +198,14 @@ export function AiAssistantDialog({
               </div>
             </div>
           ) : null}
+
+          {/* Turns typed while a reply is in flight, waiting their turn to send. */}
+          {queue.map((text, index) => (
+            <div key={`queued-${index}`} className="ai-message ai-message-user ai-message-queued">
+              <div className="ai-message-bubble">{text}</div>
+            </div>
+          ))}
+
           {error ? <div className="ai-assistant-error">{error}</div> : null}
         </div>
 
@@ -168,7 +219,7 @@ export function AiAssistantDialog({
             rows={1}
             autoFocus
           />
-          <button type="button" className="ai-assistant-send" onClick={() => void send()} disabled={pending || !input.trim()} aria-label={l("Send", "发送")}>
+          <button type="button" className="ai-assistant-send" onClick={enqueue} disabled={!input.trim()} aria-label={l("Send", "发送")}>
             <ArrowUp size={16} />
           </button>
         </div>

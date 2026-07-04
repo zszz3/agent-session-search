@@ -4038,6 +4038,11 @@ body.overlay-open .sidebar {
   align-items: flex-end;
 }
 
+/* Queued turns (typed while a reply is in flight) read as pending, not yet sent. */
+.ai-message-queued {
+  opacity: 0.55;
+}
+
 .ai-message-bubble {
   max-width: 88%;
   padding: 10px 13px;
@@ -4189,19 +4194,6 @@ body.overlay-open .sidebar {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-.ai-session-card-open {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--accent);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.ai-session-card:hover .ai-session-card-open,
-.ai-session-card:focus-visible .ai-session-card-open {
-  opacity: 1;
-}
-
 .ai-session-card-title {
   font-weight: 600;
   font-size: 13px;
@@ -4300,6 +4292,7 @@ body.overlay-open .sidebar {
   font-family: inherit;
   padding: 6px 0;
   max-height: 140px;
+  overflow-y: hidden;
 }
 
 .ai-assistant-input textarea::placeholder {
