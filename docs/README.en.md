@@ -26,7 +26,7 @@
 - **Full session context view**:
   The detail view shows complete messages, tool calls, Markdown / code blocks, and supports AI summaries plus Markdown export.
 - **AI / Agent-assisted session retrieval**:
-  Use AI summaries to improve history search, ask for sessions in natural language, and expose read-only MCP capabilities so Claude Code / Codex / CodeBuddy can search and read session history directly in chat.
+  Use AI summaries to improve history search, ask for sessions in natural language, and expose MCP capabilities so Claude Code / Codex / CodeBuddy can search, read, tag, favorite, and set the visibility of session history directly in chat.
 - **Cross-agent session migration**:
   Migrate Claude / Codex / CodeBuddy sessions into another agent and continue from the migrated session.
 - **Remote session storage and cross-device restore**:

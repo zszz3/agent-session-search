@@ -26,7 +26,7 @@
 - **完整查看会话上下文**：
   详情页展示完整消息、tool call 与 Markdown / code block，并支持查看 AI 摘要和导出 Markdown。
 - **AI / Agent 辅助检索历史会话**：
-  可以使用 AI 摘要增强历史会话检索，也支持自然语言找会话；同时开放只读 MCP 能力，让 Claude Code / Codex / CodeBuddy 可以在对话里直接搜索和读取历史会话。
+  可以使用 AI 摘要增强历史会话检索，也支持自然语言找会话；同时开放 MCP 能力,让 Claude Code / Codex / CodeBuddy 可以在对话里直接搜索、读取历史会话,并对会话打标签、收藏、设置可见性。
 - **跨 Agent 迁移会话**：
   **支持把 Claude / Codex / CodeBuddy 会话迁移到Claude / Codex / CodeBuddy，并在迁移后继续工作，非常好用！！！**。
 - **远程保存和跨设备恢复会话**：
