@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// MCP stdio server exposing the local agent-session-search database read-only,
-// so Claude Code / Codex can recall "how did I solve X before" from past sessions.
+// MCP stdio server exposing the local agent-session-search database, so
+// Claude Code / Codex can recall "how did I solve X before" from past sessions
+// and manage them (tag, favorite, visibility).
 //
-// The query functions below are exported and SDK-free so they can be unit tested;
-// the MCP wiring is loaded lazily in runServer().
+// The query and write functions below are exported and SDK-free so they can be
+// unit tested; the MCP wiring is loaded lazily in runServer().
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -140,8 +141,103 @@ export function listTags(db) {
   return db.prepare("SELECT name FROM tags ORDER BY lower(name)").all().map((row) => row.name);
 }
 
+// --- Write operations -----------------------------------------------------
+// These mirror the semantics of SessionStore's write methods, reimplemented in
+// raw SQL because this bin runs standalone (outside the app bundle) and can't
+// import SessionStore. All are idempotent.
+
+function sessionExists(db, sessionKey) {
+  return Boolean(db.prepare("SELECT 1 FROM sessions WHERE session_key = ?").get(sessionKey));
+}
+
+function currentTags(db, sessionKey) {
+  return db
+    .prepare(
+      `SELECT tags.name
+       FROM session_tags JOIN tags ON tags.id = session_tags.tag_id
+       WHERE session_tags.session_key = ?
+       ORDER BY lower(tags.name)`,
+    )
+    .all(sessionKey)
+    .map((row) => row.name);
+}
+
+// Drop a tag from the tags table once no session references it (matches
+// SessionStore.deleteUnusedTag), so removing the last use doesn't leave orphans.
+function deleteUnusedTag(db, tagName) {
+  db.prepare(
+    `DELETE FROM tags
+     WHERE name = ?
+       AND NOT EXISTS (SELECT 1 FROM session_tags WHERE session_tags.tag_id = tags.id)`,
+  ).run(tagName);
+}
+
+export function tagSession(db, { sessionKey, action, tag } = {}) {
+  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+  const name = String(tag ?? "").trim();
+  if (!name) return { ok: false, error: "Tag must not be empty." };
+  if (action !== "add" && action !== "remove") return { ok: false, error: 'action must be "add" or "remove".' };
+
+  if (action === "add") {
+    db.prepare("INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING").run(name);
+    const row = db.prepare("SELECT id FROM tags WHERE name = ?").get(name);
+    db.prepare("INSERT INTO session_tags (session_key, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(sessionKey, row.id);
+  } else {
+    db.prepare(
+      `DELETE FROM session_tags
+       WHERE session_key = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)`,
+    ).run(sessionKey, name);
+    deleteUnusedTag(db, name);
+  }
+  return { ok: true, sessionKey, action, tag: name, tags: currentTags(db, sessionKey) };
+}
+
+export function toggleFavorite(db, { sessionKey, favorited } = {}) {
+  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+  db.prepare("UPDATE sessions SET favorited = ? WHERE session_key = ?").run(favorited ? 1 : 0, sessionKey);
+  return { ok: true, sessionKey, favorited: Boolean(favorited) };
+}
+
+// Visibility is not a single column: it's derived from independent favorited /
+// pinned / hidden flags (see App.tsx ViewMode). Each call sets the requested
+// dimension and clears what would otherwise hide the session from that view,
+// without disturbing unrelated flags (e.g. favoriting doesn't unpin).
+export function setVisibility(db, { sessionKey, visibility } = {}) {
+  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+  switch (visibility) {
+    case "default":
+      // Return to the normal list: un-hide and un-pin, leave favorite as-is.
+      db.prepare("UPDATE sessions SET hidden = 0, pinned = 0 WHERE session_key = ?").run(sessionKey);
+      break;
+    case "favorites":
+      db.prepare("UPDATE sessions SET favorited = 1, hidden = 0 WHERE session_key = ?").run(sessionKey);
+      break;
+    case "pinned":
+      db.prepare("UPDATE sessions SET pinned = 1, hidden = 0 WHERE session_key = ?").run(sessionKey);
+      break;
+    case "hidden":
+      db.prepare("UPDATE sessions SET hidden = 1 WHERE session_key = ?").run(sessionKey);
+      break;
+    default:
+      return { ok: false, error: 'visibility must be one of "default", "favorites", "hidden", "pinned".' };
+  }
+  const row = db.prepare("SELECT favorited, pinned, hidden FROM sessions WHERE session_key = ?").get(sessionKey);
+  return {
+    ok: true,
+    sessionKey,
+    visibility,
+    favorited: row.favorited === 1,
+    pinned: row.pinned === 1,
+    hidden: row.hidden === 1,
+  };
+}
+
 function jsonContent(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+function errorContent(message) {
+  return { content: [{ type: "text", text: message }], isError: true };
 }
 
 async function runServer() {
@@ -158,7 +254,12 @@ async function runServer() {
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const { z } = await import("zod");
 
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  // Read-write: the write tools (tag/favorite/visibility) mutate this DB. The
+  // app keeps it in WAL mode, so this separate process writes safely alongside
+  // it (SQLite serializes writers). busy_timeout tolerates brief write contention.
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA foreign_keys = ON");
   const server = new McpServer({ name: "agent-session-search", version: "0.1.0" });
 
   server.registerTool(
@@ -203,6 +304,54 @@ async function runServer() {
     "list_tags",
     { description: "List all tags, to scope a search.", inputSchema: {} },
     async () => jsonContent(listTags(db)),
+  );
+
+  server.registerTool(
+    "tag_session",
+    {
+      description:
+        "Add or remove a tag on a session. Use to mark sessions (e.g. 'important', 'review'). Idempotent. Returns the session's current tags.",
+      inputSchema: {
+        sessionKey: z.string().describe("The sessionKey from search_sessions."),
+        action: z.enum(["add", "remove"]).describe("Whether to add or remove the tag."),
+        tag: z.string().describe("Tag name, e.g. 'important'."),
+      },
+    },
+    async (args) => {
+      const result = tagSession(db, args);
+      return result.ok ? jsonContent(result) : errorContent(result.error);
+    },
+  );
+
+  server.registerTool(
+    "toggle_favorite",
+    {
+      description: "Favorite or unfavorite a session. Idempotent — set favorited to the desired final state.",
+      inputSchema: {
+        sessionKey: z.string().describe("The sessionKey from search_sessions."),
+        favorited: z.boolean().describe("true to favorite, false to unfavorite."),
+      },
+    },
+    async (args) => {
+      const result = toggleFavorite(db, args);
+      return result.ok ? jsonContent(result) : errorContent(result.error);
+    },
+  );
+
+  server.registerTool(
+    "set_visibility",
+    {
+      description:
+        "Set a session's visibility dimension. 'default' un-hides and un-pins; 'favorites' favorites it; 'pinned' pins it; 'hidden' hides it. These flags are independent (favoriting does not unpin), so this sets the chosen dimension rather than toggling exclusively.",
+      inputSchema: {
+        sessionKey: z.string().describe("The sessionKey from search_sessions."),
+        visibility: z.enum(["default", "favorites", "hidden", "pinned"]).describe("Target visibility."),
+      },
+    },
+    async (args) => {
+      const result = setVisibility(db, args);
+      return result.ok ? jsonContent(result) : errorContent(result.error);
+    },
   );
 
   await server.connect(new StdioServerTransport());

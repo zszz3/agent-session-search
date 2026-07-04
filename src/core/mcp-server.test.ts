@@ -16,6 +16,10 @@ const getSession = mcp.getSession as (
 ) => (SearchResult & { messages: Array<{ content: string }>; totalMessages: number; returned: number; nextOffset: number | null }) | null;
 const listProjects = mcp.listProjects as (db: Db) => Array<{ project: string; sessions: number }>;
 const listTags = mcp.listTags as (db: Db) => string[];
+type WriteResult = { ok: boolean; error?: string; tags?: string[]; favorited?: boolean; pinned?: boolean; hidden?: boolean };
+const tagSession = mcp.tagSession as (db: Db, args: Record<string, unknown>) => WriteResult;
+const toggleFavorite = mcp.toggleFavorite as (db: Db, args: Record<string, unknown>) => WriteResult;
+const setVisibility = mcp.setVisibility as (db: Db, args: Record<string, unknown>) => WriteResult;
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string) => import("node:sqlite").DatabaseSync };
@@ -114,5 +118,96 @@ describe("MCP query functions", () => {
     const { db } = seedStore();
     expect(listProjects(db).map((p) => p.project).sort()).toEqual(["/multi", "/other", "/repo"]);
     expect(listTags(db)).toContain("auth");
+  });
+});
+
+describe("MCP write functions", () => {
+  const flags = (db: import("node:sqlite").DatabaseSync, sessionKey: string) =>
+    db.prepare("SELECT favorited, pinned, hidden FROM sessions WHERE session_key = ?").get(sessionKey) as {
+      favorited: number;
+      pinned: number;
+      hidden: number;
+    };
+
+  it("adds and removes a tag, cleaning up the orphaned tag", () => {
+    const { db } = seedStore();
+    const added = tagSession(db, { sessionKey: "codex:abc", action: "add", tag: "important" });
+    expect(added.ok).toBe(true);
+    expect(added.tags).toContain("important");
+    expect(listTags(db)).toContain("important");
+
+    const removed = tagSession(db, { sessionKey: "codex:abc", action: "remove", tag: "important" });
+    expect(removed.ok).toBe(true);
+    expect(removed.tags).not.toContain("important");
+    // "important" had no other users, so it's gone from the tags table entirely.
+    expect(listTags(db)).not.toContain("important");
+    // "auth" was seeded on this session and untouched.
+    expect(listTags(db)).toContain("auth");
+  });
+
+  it("is idempotent when adding the same tag twice", () => {
+    const { db } = seedStore();
+    tagSession(db, { sessionKey: "codex:abc", action: "add", tag: "dup" });
+    const second = tagSession(db, { sessionKey: "codex:abc", action: "add", tag: "dup" });
+    expect(second.tags?.filter((t) => t === "dup")).toHaveLength(1);
+  });
+
+  it("rejects tagging a missing session", () => {
+    const { db } = seedStore();
+    const result = tagSession(db, { sessionKey: "missing", action: "add", tag: "x" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Session not found.");
+  });
+
+  it("rejects an empty tag and an invalid action", () => {
+    const { db } = seedStore();
+    expect(tagSession(db, { sessionKey: "codex:abc", action: "add", tag: "  " }).ok).toBe(false);
+    expect(tagSession(db, { sessionKey: "codex:abc", action: "flip", tag: "x" }).ok).toBe(false);
+  });
+
+  it("toggles favorite on and off", () => {
+    const { db } = seedStore();
+    expect(toggleFavorite(db, { sessionKey: "codex:abc", favorited: true }).favorited).toBe(true);
+    expect(flags(db, "codex:abc").favorited).toBe(1);
+    expect(toggleFavorite(db, { sessionKey: "codex:abc", favorited: false }).favorited).toBe(false);
+    expect(flags(db, "codex:abc").favorited).toBe(0);
+  });
+
+  it("rejects favoriting a missing session", () => {
+    const { db } = seedStore();
+    expect(toggleFavorite(db, { sessionKey: "missing", favorited: true }).ok).toBe(false);
+  });
+
+  it("sets each visibility dimension", () => {
+    const { db } = seedStore();
+
+    setVisibility(db, { sessionKey: "codex:abc", visibility: "hidden" });
+    expect(flags(db, "codex:abc").hidden).toBe(1);
+
+    // "default" un-hides and un-pins.
+    setVisibility(db, { sessionKey: "codex:abc", visibility: "pinned" });
+    expect(flags(db, "codex:abc").pinned).toBe(1);
+    const back = setVisibility(db, { sessionKey: "codex:abc", visibility: "default" });
+    expect(back.pinned).toBe(false);
+    expect(back.hidden).toBe(false);
+
+    const fav = setVisibility(db, { sessionKey: "codex:abc", visibility: "favorites" });
+    expect(fav.favorited).toBe(true);
+    expect(fav.hidden).toBe(false);
+  });
+
+  it("leaves unrelated flags alone (favoriting does not unpin)", () => {
+    const { db } = seedStore();
+    setVisibility(db, { sessionKey: "codex:abc", visibility: "pinned" });
+    setVisibility(db, { sessionKey: "codex:abc", visibility: "favorites" });
+    const f = flags(db, "codex:abc");
+    expect(f.pinned).toBe(1);
+    expect(f.favorited).toBe(1);
+  });
+
+  it("rejects an invalid visibility and a missing session", () => {
+    const { db } = seedStore();
+    expect(setVisibility(db, { sessionKey: "codex:abc", visibility: "bogus" }).ok).toBe(false);
+    expect(setVisibility(db, { sessionKey: "missing", visibility: "hidden" }).ok).toBe(false);
   });
 });
