@@ -1,9 +1,5 @@
-import {
-  migrationCompressionPercent,
-  type MigrationCompressionListener,
-  type PreparedMigrationSession,
-} from "./session-migration-compression";
-import { estimatePortableSessionTokens, MIGRATION_TOKEN_LIMIT } from "./session-migration";
+import type { MigrationCompressionListener, PreparedMigrationSession } from "./session-migration-compression";
+import { estimatePortableSessionTokens, migrationCompressionPercent, MIGRATION_TOKEN_LIMIT } from "./session-migration";
 import type { WrittenMigratedSession } from "./session-migration-writers";
 import type {
   MigrationAgent,

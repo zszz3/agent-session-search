@@ -283,18 +283,6 @@ function buildAiCompressedSession(
   };
 }
 
-// Map a compression event to a 0-100 percent. Total work units =
-// totalChunks (chunk summaries) + 1 (final handoff). A "chunk" event fires
-// after chunk `chunkIndex` is summarized (done = chunkIndex + 1); a "handoff"
-// event fires once the final handoff call begins (all chunks done, handoff in
-// flight, so done = totalChunks — the bar tops just below 100% until the
-// compressor returns and the orchestrator moves to the "writing" stage).
-export function migrationCompressionPercent(event: MigrationCompressionEvent): number {
-  const totalUnits = event.totalChunks + 1;
-  const done = event.phase === "handoff" ? event.totalChunks : event.chunkIndex + 1;
-  return Math.max(0, Math.min(100, Math.round((done / totalUnits) * 100)));
-}
-
 export async function applyMigrationLengthPolicy(
   session: PortableSession,
   compress: MigrationCompressFn | null,

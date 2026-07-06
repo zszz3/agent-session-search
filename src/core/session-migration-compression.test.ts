@@ -8,10 +8,9 @@ import {
   buildMigrationHandoffMessages,
   createMigrationCompressor,
   formatCompactSummary,
-  migrationCompressionPercent,
   parseMigrationHandoff,
 } from "./session-migration-compression";
-import { estimatePortableSessionTokens, MIGRATION_TOKEN_LIMIT } from "./session-migration";
+import { estimatePortableSessionTokens, migrationCompressionPercent, MIGRATION_TOKEN_LIMIT } from "./session-migration";
 import { writeMigratedSession } from "./session-migration-writers";
 import type { MigrationCompressionEvent, PortableSession, SessionMessage } from "./types";
 
