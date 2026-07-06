@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { ArrowRightLeft, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../core/format-session";
 import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../core/types";
 import { formatTokenCount } from "../format-count";
@@ -391,15 +391,15 @@ export function DetailPanel({
   );
 }
 
+const MESSAGE_TRUNCATE_LIMIT = 3000;
+
 function MessageBlock({ message, query, language }: { message: SessionMessage; query: string; language: LanguageMode }): ReactElement {
+  const truncated = message.content.length > MESSAGE_TRUNCATE_LIMIT;
+  const [expanded, setExpanded] = useState(false);
   const content = useMemo(() => {
-    const text =
-      message.content.length > 3000
-        ? `${message.content.slice(0, 3000)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`
-        : message.content;
-    if (!query) return text;
-    return text;
-  }, [message.content, query, language]);
+    if (!truncated || expanded) return message.content;
+    return `${message.content.slice(0, MESSAGE_TRUNCATE_LIMIT)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`;
+  }, [message.content, truncated, expanded, language]);
 
   return (
     <div className={`message ${message.role}`}>
@@ -408,6 +408,12 @@ function MessageBlock({ message, query, language }: { message: SessionMessage; q
         <span>{formatMessageTime(message.timestamp)}</span>
       </div>
       <pre>{content}</pre>
+      {truncated ? (
+        <button className="expand-toggle" onClick={() => setExpanded((prev) => !prev)}>
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {expanded ? localize(language, "Collapse", "收起") : localize(language, "Show full content", "展开全文")}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -419,13 +425,16 @@ function traceStatusSymbol(event: SessionTraceEvent): string {
   return "•";
 }
 
+const TRACE_TRUNCATE_LIMIT = 2400;
+
 function TraceEventBlock({ event, language }: { event: SessionTraceEvent; language: LanguageMode }): ReactElement {
+  const truncated = Boolean(event.detail) && event.detail.length > TRACE_TRUNCATE_LIMIT;
+  const [expanded, setExpanded] = useState(false);
   const detail = useMemo(() => {
     if (!event.detail) return localize(language, "No detail captured.", "没有记录详情。");
-    return event.detail.length > 2400
-      ? `${event.detail.slice(0, 2400)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`
-      : event.detail;
-  }, [event.detail, language]);
+    if (!truncated || expanded) return event.detail;
+    return `${event.detail.slice(0, TRACE_TRUNCATE_LIMIT)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`;
+  }, [event.detail, truncated, expanded, language]);
 
   return (
     <details className={`trace-event ${event.kind} ${event.status || "unknown"}`}>
@@ -441,6 +450,12 @@ function TraceEventBlock({ event, language }: { event: SessionTraceEvent; langua
         {event.callId ? <span>{event.callId}</span> : null}
       </div>
       <pre>{detail}</pre>
+      {truncated ? (
+        <button className="expand-toggle" onClick={() => setExpanded((prev) => !prev)}>
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {expanded ? localize(language, "Collapse", "收起") : localize(language, "Show full detail", "展开详情")}
+        </button>
+      ) : null}
     </details>
   );
 }
