@@ -50,7 +50,7 @@ const CHUNK_SUMMARY_MAX_CHARACTERS = 4_000;
 // Max chunk summaries run in parallel. Chunk summaries are independent (the
 // handoff that depends on all of them stays sequential after), so bounding
 // concurrency turns N sequential LLM calls into ceil(N / CONCURRENCY) batches.
-export const COMPRESSION_CONCURRENCY = 4;
+export const COMPRESSION_CONCURRENCY = 8;
 
 interface TranscriptFragment {
   text: string;
@@ -524,8 +524,8 @@ export function createMigrationCompressor(
       return chat(endpoint, buildMigrationHandoffMessages(session));
     }
 
-    // Chunk summaries are independent — run them concurrently (bounded) so a
-    // 10-chunk session takes ~3 batches instead of 10 sequential LLM calls.
+    // Chunk summaries are independent — run them concurrently (bounded) so an
+    // N-chunk session takes ceil(N/CONCURRENCY) batches instead of N sequential calls.
     // `completed` advances as each finishes (order-independent, monotonic); the
     // handoff still waits for all of them since it folds the summaries together.
     let completed = 0;
