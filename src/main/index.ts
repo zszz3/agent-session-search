@@ -378,7 +378,8 @@ async function restoreRemoteSession(
 ): Promise<SessionMigrationResult> {
   const client = createRemoteSessionClient();
   const portable = await client.getPortableSession(remoteId);
-  const endpoint = await resolveSummaryEndpointFromSettings();
+  // 没配自定义摘要 endpoint 时回退本地 Codex CLI(缺失则再退 Claude),让迁移仍走 AI 压缩而非直接本地截断——与 AI 助手一致。
+  const endpoint = (await resolveSummaryEndpointFromSettings()) ?? buildCodexExecEndpoint(await getHydratedSettings());
   const compressor = endpoint ? createMigrationCompressor(endpoint) : null;
   return restoreRemotePortableSession({
     remoteId,
@@ -387,7 +388,7 @@ async function restoreRemoteSession(
     localProjectPath,
     deps: {
       inspectCli: (migrationTarget) => inspectMigrationCli(migrationTarget, getSettings()),
-      prepare: (session) => applyMigrationLengthPolicy(session, compressor),
+      prepare: (session, onProgress) => applyMigrationLengthPolicy(session, compressor, onProgress),
       write: (migrationTarget, session) => writeMigratedSession({ target: migrationTarget, session }),
       record: (record) => store.recordSessionMigration(record),
       refreshIndex: async (migrationTarget, writtenFilePath) => {
@@ -1641,7 +1642,8 @@ function registerIpc(): void {
     const session = store.getSession(sessionKey);
     if (!session) throw new Error("Session not found.");
 
-    const endpoint = await resolveSummaryEndpointFromSettings();
+    // 没配自定义摘要 endpoint 时回退本地 Codex CLI(缺失则再退 Claude),让迁移仍走 AI 压缩而非直接本地截断——与 AI 助手一致。
+    const endpoint = (await resolveSummaryEndpointFromSettings()) ?? buildCodexExecEndpoint(await getHydratedSettings());
     const compressor = endpoint ? createMigrationCompressor(endpoint) : null;
     const result = await migrateSession({
       source: session,
@@ -1649,7 +1651,7 @@ function registerIpc(): void {
       target,
       deps: {
         inspectCli: (migrationTarget) => inspectMigrationCli(migrationTarget, getSettings()),
-        prepare: (portable) => applyMigrationLengthPolicy(portable, compressor),
+        prepare: (portable, onProgress) => applyMigrationLengthPolicy(portable, compressor, onProgress),
         write: (migrationTarget, portable) => writeMigratedSession({ target: migrationTarget, session: portable }),
         record: (record) => store.recordSessionMigration(record),
         refreshIndex: async (migrationTarget, writtenFilePath) => {

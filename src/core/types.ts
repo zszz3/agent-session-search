@@ -61,6 +61,20 @@ export type MigrationAgent = "claude" | "codex" | "codebuddy";
 export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";
 export type SessionMigrationStage = "reading" | "compressing" | "writing" | "indexing" | "launching";
 
+// Granular progress emitted from inside the AI compression loop. The compressor
+// summarizes the transcript chunk-by-chunk, then makes one final handoff call;
+// each completed unit reports back so the UI can render a percentage.
+export type MigrationCompressionPhase = "chunk" | "handoff";
+
+export interface MigrationCompressionEvent {
+  // 0-based index of the chunk just summarized (chunk phase), or the last
+  // chunk index (handoff phase).
+  chunkIndex: number;
+  // Number of chunk-summary calls (>=1); the final handoff is the +1th unit.
+  totalChunks: number;
+  phase: MigrationCompressionPhase;
+}
+
 export interface PortableSession {
   sourceSessionKey: string;
   sourceAgent: MigrationAgent;
@@ -74,6 +88,11 @@ export interface SessionMigrationProgress {
   sessionKey: string;
   target: MigrationAgent;
   stage: SessionMigrationStage;
+  // 0-100 progress within the current stage. Only meaningful during
+  // "compressing" (the only stage with multiple discrete units of work).
+  percent?: number;
+  // Structured compression detail; the renderer localizes this into text.
+  compression?: MigrationCompressionEvent;
 }
 
 export interface SessionMigrationResult {

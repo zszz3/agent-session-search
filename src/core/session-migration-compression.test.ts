@@ -10,9 +10,9 @@ import {
   formatCompactSummary,
   parseMigrationHandoff,
 } from "./session-migration-compression";
-import { estimatePortableSessionTokens, MIGRATION_TOKEN_LIMIT } from "./session-migration";
+import { estimatePortableSessionTokens, migrationCompressionPercent, MIGRATION_TOKEN_LIMIT } from "./session-migration";
 import { writeMigratedSession } from "./session-migration-writers";
-import type { PortableSession, SessionMessage } from "./types";
+import type { MigrationCompressionEvent, PortableSession, SessionMessage } from "./types";
 
 const STARTED_AT = "2026-06-23T00:00:00.000Z";
 
@@ -119,6 +119,28 @@ describe("migration compression policy", () => {
     expect(result.session.messages.at(-1)?.content).toContain("final answer");
     expect(estimatePortableSessionTokens(result.session)).toBeLessThanOrEqual(MIGRATION_TOKEN_LIMIT);
     expectContinuousIndexes(result.session);
+  });
+
+  it("forwards the compression progress listener to compress", async () => {
+    const session = portableWithContent("x".repeat(239_989));
+    const compress = vi.fn(
+      async (_session, onProgress?: (event: MigrationCompressionEvent) => void) => {
+        onProgress?.({ chunkIndex: 0, totalChunks: 2, phase: "chunk" });
+        onProgress?.({ chunkIndex: 1, totalChunks: 2, phase: "handoff" });
+        return VALID_HANDOFF;
+      },
+    );
+
+    const events: MigrationCompressionEvent[] = [];
+    const result = await applyMigrationLengthPolicy(session, compress, (event) => {
+      events.push(event);
+    });
+
+    expect(result.strategy).toBe("ai-compressed");
+    expect(events).toEqual([
+      { chunkIndex: 0, totalChunks: 2, phase: "chunk" },
+      { chunkIndex: 1, totalChunks: 2, phase: "handoff" },
+    ]);
   });
 
   it.each([
@@ -480,5 +502,73 @@ describe("migration handoff provider request", () => {
 
     await expect(createMigrationCompressor(endpoint, chat)(session)).resolves.toBe(VALID_HANDOFF);
     expect(chat).toHaveBeenCalledWith(endpoint, buildMigrationHandoffMessages(session));
+  });
+
+  it("reports chunk-then-handoff progress as it summarizes a multi-chunk session", async () => {
+    const endpoint = {
+      baseUrl: "https://provider.example/v1",
+      model: "model",
+      apiKey: "secret",
+      apiFormat: "openai_chat" as const,
+    };
+    const session = portable(
+      Array.from({ length: 80 }, (_, index) =>
+        message(`chunk-${index}-${"x".repeat(5_000)}`, index),
+      ),
+    );
+    const chat = vi.fn(async (_endpoint, messages) => {
+      if (messages[0].content.includes("分片摘要")) return "分片摘要内容";
+      return VALID_HANDOFF;
+    });
+
+    const events: MigrationCompressionEvent[] = [];
+    await createMigrationCompressor(endpoint, chat)(session, (event) => {
+      events.push(event);
+    });
+
+    const chunkEvents = events.filter((event) => event.phase === "chunk");
+    expect(chunkEvents.length).toBeGreaterThan(1);
+    expect(events[events.length - 1].phase).toBe("handoff");
+    const totalChunks = events[0].totalChunks;
+    expect(totalChunks).toBeGreaterThan(1);
+    expect(events.every((event) => event.totalChunks === totalChunks)).toBe(true);
+    // chunk events fire in increasing source order
+    const chunkIndexes = chunkEvents.map((event) => event.chunkIndex);
+    expect(chunkIndexes).toEqual([...chunkIndexes].sort((a, b) => a - b));
+    // percent climbs monotonically across the reported events
+    const percents = events.map((event) => migrationCompressionPercent(event));
+    expect(percents).toEqual([...percents].sort((a, b) => a - b));
+  });
+
+  it("emits a single handoff progress event for a single-chunk session", async () => {
+    const endpoint = {
+      baseUrl: "https://provider.example/v1",
+      model: "model",
+      apiKey: "secret",
+      apiFormat: "openai_chat" as const,
+    };
+    const chat = vi.fn().mockResolvedValue(VALID_HANDOFF);
+    const session = portableWithContent("transcript");
+
+    const events: MigrationCompressionEvent[] = [];
+    await createMigrationCompressor(endpoint, chat)(session, (event) => {
+      events.push(event);
+    });
+
+    expect(events).toEqual([{ chunkIndex: 0, totalChunks: 1, phase: "handoff" }]);
+  });
+});
+
+describe("migrationCompressionPercent", () => {
+  it("maps chunk events across (totalChunks + 1) units and tops below 100% on handoff", () => {
+    // 3 chunks -> 4 units; handoff is the 3rd-done state (75%), not 100%.
+    expect(migrationCompressionPercent({ chunkIndex: 0, totalChunks: 3, phase: "chunk" })).toBe(25);
+    expect(migrationCompressionPercent({ chunkIndex: 1, totalChunks: 3, phase: "chunk" })).toBe(50);
+    expect(migrationCompressionPercent({ chunkIndex: 2, totalChunks: 3, phase: "chunk" })).toBe(75);
+    expect(migrationCompressionPercent({ chunkIndex: 2, totalChunks: 3, phase: "handoff" })).toBe(75);
+  });
+
+  it("reports 50% for a single-chunk handoff", () => {
+    expect(migrationCompressionPercent({ chunkIndex: 0, totalChunks: 1, phase: "handoff" })).toBe(50);
   });
 });

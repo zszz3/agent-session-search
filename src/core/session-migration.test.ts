@@ -6,8 +6,8 @@ import {
   migrationAgentForSource,
   portableSessionFrom,
   supportedMigrationTargets,
+  type SessionMigrationDependencies,
 } from "./session-migration";
-import type { PreparedMigrationSession } from "./session-migration-compression";
 import type { WrittenMigratedSession } from "./session-migration-writers";
 import type { SessionMessage, SessionSearchResult, SessionSource } from "./types";
 
@@ -93,15 +93,13 @@ function createDependencies() {
   const inspectCli = vi.fn(async () => {
     callOrder.push("inspectCli");
   });
-  const prepare = vi.fn(
-    async (portable): Promise<PreparedMigrationSession> => {
-      callOrder.push("prepare");
-      return {
-        session: portable,
-        strategy: "complete",
-      };
-    },
-  );
+  const prepare = vi.fn<SessionMigrationDependencies["prepare"]>(async (portable) => {
+    callOrder.push("prepare");
+    return {
+      session: portable,
+      strategy: "complete",
+    };
+  });
   const write = vi.fn(async () => {
     callOrder.push("write");
     return writtenMigration();
@@ -454,6 +452,33 @@ describe("migrateSession", () => {
       "indexing",
       "launching",
     ]);
+  });
+
+  it("lifts compression progress into percent-valued compressing events", async () => {
+    const { deps, onProgress } = createDependencies();
+    deps.prepare.mockImplementation(async (portable, onCompressionProgress) => {
+      onCompressionProgress?.({ chunkIndex: 0, totalChunks: 3, phase: "chunk" });
+      onCompressionProgress?.({ chunkIndex: 1, totalChunks: 3, phase: "chunk" });
+      onCompressionProgress?.({ chunkIndex: 2, totalChunks: 3, phase: "handoff" });
+      return { session: portable, strategy: "ai-compressed" };
+    });
+
+    await migrateSession({
+      source: session("claude-cli"),
+      messages: longMessages(),
+      target: "codex",
+      deps,
+    });
+
+    const compressingEvents = onProgress.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.stage === "compressing");
+    expect(compressingEvents.map((event) => event.percent)).toEqual([0, 25, 50, 75]);
+    expect(compressingEvents[1].compression).toEqual({
+      chunkIndex: 0,
+      totalChunks: 3,
+      phase: "chunk",
+    });
   });
 
   it("isolates progress callback errors and preserves the exact stage order", async () => {

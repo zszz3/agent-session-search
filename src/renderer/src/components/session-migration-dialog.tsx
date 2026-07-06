@@ -1,6 +1,11 @@
 import type { ReactElement } from "react";
 import { Copy, X } from "lucide-react";
-import type { MigrationAgent, SessionMigrationResult, SessionSearchResult } from "../../../core/types";
+import type {
+  MigrationAgent,
+  SessionMigrationProgress,
+  SessionMigrationResult,
+  SessionSearchResult,
+} from "../../../core/types";
 import { localize, type LanguageMode } from "../language";
 import { isRemoteSession, migrationAgentLabel, migrationTargetsForSource } from "../session-ui";
 
@@ -8,12 +13,14 @@ export function SessionMigrationDialog({
   session,
   language,
   busy,
+  progress,
   onSelect,
   onClose,
 }: {
   session: SessionSearchResult;
   language: LanguageMode;
   busy: boolean;
+  progress?: SessionMigrationProgress | null;
   onSelect: (target: MigrationAgent) => void;
   onClose: () => void;
 }): ReactElement {
@@ -34,6 +41,7 @@ export function SessionMigrationDialog({
           {l("Create a new local target-agent session from", "从当前会话创建新的本地目标 Agent 会话：")} <strong>{session.displayTitle}</strong>
         </p>
         {remote ? <p className="dialog-copy danger-copy">{l("Remote session migration is not supported yet.", "首版仅支持本地会话迁移。")}</p> : null}
+        {busy ? <MigrationProgressPanel progress={progress ?? null} language={language} /> : null}
         <div className="migration-targets">
           {(["claude", "codex", "codebuddy"] as const).map((target) => {
             const disabled = busy || remote || !targets.includes(target);
@@ -92,6 +100,70 @@ export function SessionMigrationLaunchFailedDialog({
           {l("Source:", "源会话：")} {session.displayTitle}
         </p>
       </div>
+    </div>
+  );
+}
+
+function migrationStageStatus(
+  progress: SessionMigrationProgress | null,
+  language: LanguageMode,
+): string {
+  const l = (en: string, zh: string) => localize(language, en, zh);
+  if (!progress) return l("Preparing migration...", "正在准备迁移...");
+  const target = migrationAgentLabel(progress.target);
+  if (progress.stage === "reading") return l(`Reading session for ${target}...`, `正在读取会话，准备迁移到 ${target}...`);
+  if (progress.stage === "compressing") return l(`Compressing long session for ${target}...`, `正在压缩长会话，准备迁移到 ${target}...`);
+  if (progress.stage === "writing") return l(`Writing ${target} session...`, `正在写入 ${target} 会话...`);
+  if (progress.stage === "indexing") return l("Refreshing index...", "正在刷新索引...");
+  return l(`Opening ${target}...`, `正在打开 ${target}...`);
+}
+
+function compressionDetailText(
+  progress: SessionMigrationProgress,
+  language: LanguageMode,
+): string | null {
+  const compression = progress.compression;
+  if (!compression) return null;
+  const l = (en: string, zh: string) => localize(language, en, zh);
+  if (compression.phase === "chunk") {
+    return l(
+      `Chunk ${compression.chunkIndex + 1}/${compression.totalChunks}`,
+      `压缩分片 ${compression.chunkIndex + 1}/${compression.totalChunks}`,
+    );
+  }
+  return l("Generating handoff summary...", "生成交接摘要...");
+}
+
+function MigrationProgressPanel({
+  progress,
+  language,
+}: {
+  progress: SessionMigrationProgress | null;
+  language: LanguageMode;
+}): ReactElement {
+  const compressing = progress?.stage === "compressing";
+  const percent = compressing ? Math.max(0, Math.min(100, progress?.percent ?? 0)) : 0;
+  const detail = compressing && progress ? compressionDetailText(progress, language) : null;
+  return (
+    <div className="migration-progress" aria-live="polite">
+      <div className="migration-progress-status">{migrationStageStatus(progress, language)}</div>
+      {compressing ? (
+        <>
+          <div
+            className="migration-progress-bar"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="migration-progress-fill" style={{ width: `${percent}%` }} />
+          </div>
+          <div className="migration-progress-meta">
+            <span className="migration-progress-percent">{percent}%</span>
+            {detail ? <span className="migration-progress-detail">{detail}</span> : null}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

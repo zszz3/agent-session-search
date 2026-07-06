@@ -412,7 +412,7 @@ export function App(): ReactElement {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [migrationDialog, setMigrationDialog] = useState<SessionMigrationDialogState>(null);
-  const [, setMigrationProgress] = useState<SessionMigrationProgress | null>(null);
+  const [migrationProgress, setMigrationProgress] = useState<SessionMigrationProgress | null>(null);
   const [deleteTagName, setDeleteTagName] = useState<string | null>(null);
   const [deleteSessionCandidate, setDeleteSessionCandidate] = useState<SessionSearchResult | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
@@ -2008,6 +2008,7 @@ export function App(): ReactElement {
           session={migrationDialog.session}
           language={language}
           busy={actionStatus?.kind === "running"}
+          progress={migrationProgress}
           onSelect={(target) => void runMigration(target)}
           onClose={() => setMigrationDialog(null)}
         />
@@ -2404,7 +2405,10 @@ function migrationStrategyLabel(strategy: SessionMigrationResult["strategy"], la
 function migrationProgressMessage(progress: SessionMigrationProgress, language: LanguageMode): string {
   const target = migrationAgentLabel(progress.target);
   if (progress.stage === "reading") return localize(language, `Reading session for ${target}...`, `正在读取会话，准备迁移到 ${target}...`);
-  if (progress.stage === "compressing") return localize(language, `Compressing long session for ${target}...`, `正在压缩长会话，准备迁移到 ${target}...`);
+  if (progress.stage === "compressing") {
+    const base = localize(language, `Compressing long session for ${target}...`, `正在压缩长会话，准备迁移到 ${target}...`);
+    return progress.percent != null ? `${base} ${progress.percent}%` : base;
+  }
   if (progress.stage === "writing") return localize(language, `Writing ${target} session...`, `正在写入 ${target} 会话...`);
   if (progress.stage === "indexing") return localize(language, "Refreshing index...", "正在刷新索引...");
   return localize(language, `Opening ${target}...`, `正在打开 ${target}...`);

@@ -1,4 +1,5 @@
-import type { PreparedMigrationSession } from "./session-migration-compression";
+import type { MigrationCompressionListener, PreparedMigrationSession } from "./session-migration-compression";
+import { estimatePortableSessionTokens, migrationCompressionPercent, MIGRATION_TOKEN_LIMIT } from "./session-migration";
 import type { WrittenMigratedSession } from "./session-migration-writers";
 import type {
   MigrationAgent,
@@ -10,7 +11,10 @@ import type {
 
 export interface RemoteSessionRestoreDependencies {
   inspectCli: (target: MigrationAgent) => Promise<void> | void;
-  prepare: (session: PortableSession) => Promise<PreparedMigrationSession>;
+  prepare: (
+    session: PortableSession,
+    onProgress?: MigrationCompressionListener,
+  ) => Promise<PreparedMigrationSession>;
   write: (target: MigrationAgent, session: PortableSession) => Promise<WrittenMigratedSession>;
   record: (record: SessionMigrationRecord) => Promise<void> | void;
   refreshIndex: (target: MigrationAgent, targetFilePath: string) => Promise<void>;
@@ -56,7 +60,31 @@ export async function restoreRemotePortableSession({
     projectPath: localProjectPath,
   };
 
-  const prepared = await deps.prepare(localPortable);
+  if (estimatePortableSessionTokens(localPortable) > MIGRATION_TOKEN_LIMIT) {
+    notifyProgress(deps.onProgress, {
+      sessionKey: remoteId,
+      target,
+      stage: "compressing",
+      percent: 0,
+    });
+  }
+
+  // Lift the compressor's granular events into SessionMigrationProgress so the
+  // UI can render a percentage bar during the (slow, multi-call) compression.
+  const migrationOnProgress = deps.onProgress;
+  const compressionListener: MigrationCompressionListener | undefined = migrationOnProgress
+    ? (event) => {
+        notifyProgress(migrationOnProgress, {
+          sessionKey: remoteId,
+          target,
+          stage: "compressing",
+          percent: migrationCompressionPercent(event),
+          compression: event,
+        });
+      }
+    : undefined;
+
+  const prepared = await deps.prepare(localPortable, compressionListener);
 
   notifyProgress(deps.onProgress, {
     sessionKey: remoteId,

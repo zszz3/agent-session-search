@@ -20,4 +20,12 @@ describe("session migration UI wiring", () => {
     expect(dialogSource).toContain("targetSessionId");
     expect(dialogSource).toContain("resumeCommand");
   });
+
+  it("renders a compression progress bar inside the migration dialog", () => {
+    expect(appSource).toContain("progress={migrationProgress}");
+    expect(dialogSource).toContain("MigrationProgressPanel");
+    expect(dialogSource).toContain("migration-progress-bar");
+    expect(dialogSource).toContain("migration-progress-fill");
+    expect(dialogSource).toContain('role="progressbar"');
+  });
 });
