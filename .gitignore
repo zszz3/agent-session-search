@@ -10,5 +10,6 @@ dist/
 .worktrees/
 
 # 本地设计/计划文档，不入库
+*.timestamp-*.mjs
 docs/plans/
 docs/specs/
