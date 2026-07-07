@@ -184,6 +184,8 @@ export interface SearchOptions {
   liveSessionKeys?: string[];
   visibility?: "default" | "favorites" | "hidden" | "pinned";
   sortBy?: SessionSortBy;
+  dateFrom?: number;
+  dateTo?: number;
   limit?: number;
 }
 

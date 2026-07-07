@@ -1737,6 +1737,15 @@ export class SessionStore {
       }
     }
 
+    if (Number.isFinite(options.dateFrom)) {
+      where.push(`${sessionActivitySql("sessions")} >= ?`);
+      args.push(options.dateFrom as number);
+    }
+    if (Number.isFinite(options.dateTo)) {
+      where.push(`${sessionActivitySql("sessions")} <= ?`);
+      args.push(options.dateTo as number);
+    }
+
     if (options.tag) {
       where.push(
         `

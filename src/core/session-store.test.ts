@@ -1052,6 +1052,38 @@ describe("SessionStore", () => {
     expect(results[1].lastActivityAt).toBe(Date.parse("2026-06-02T10:00:00Z"));
   });
 
+  it("filters sessions by activity date range", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:recent",
+        rawId: "recent",
+        timestamp: Date.parse("2026-06-01T10:00:00Z"),
+        fileMtimeMs: Date.parse("2026-06-01T10:00:00Z"),
+      }),
+      [{ role: "user", content: "recent conversation", timestamp: "2026-06-10T10:00:00Z", index: 0 }],
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:old",
+        rawId: "old",
+        timestamp: Date.parse("2026-05-01T10:00:00Z"),
+        fileMtimeMs: Date.parse("2026-05-01T10:00:00Z"),
+      }),
+      [{ role: "user", content: "old conversation", timestamp: "2026-05-20T10:00:00Z", index: 0 }],
+    );
+
+    const page = store.searchSessionPage({
+      query: "",
+      dateFrom: Date.parse("2026-06-01T00:00:00Z"),
+      dateTo: Date.parse("2026-06-30T23:59:59Z"),
+      limit: 10,
+    });
+
+    expect(page.sessions.map((session) => session.sessionKey)).toEqual(["codex:recent"]);
+    expect(page.totalCount).toBe(1);
+  });
+
   it("returns a limited search page with the total matching session count", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(

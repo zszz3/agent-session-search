@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowRightLeft,
   Activity,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
   Clipboard,
@@ -74,6 +75,7 @@ import type {
   UsageQuotaSnapshot,
 } from "../../core/types";
 import { formatCompactNumber, formatTokenCount } from "./format-count";
+import { DATE_RANGE_OPTIONS, dateRangeLabel, dateRangeShortLabel, resolveDateRange, type DateRangeFilter } from "./date-range";
 import {
   filterSessionsByLiveStatus,
   getLiveSessionState,
@@ -399,6 +401,7 @@ export function App(): ReactElement {
   const [projectEnvironmentId, setProjectEnvironmentId] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<ViewMode>("default");
   const [sortBy, setSortBy] = useState<SessionSortBy>("activity");
+  const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
   const [liveStatus, setLiveStatus] = useState<LiveStatusFilter>("all");
   const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_LIMIT);
   const [sessionTotalCount, setSessionTotalCount] = useState(0);
@@ -469,8 +472,8 @@ export function App(): ReactElement {
   const searchRef = useRef<HTMLInputElement>(null);
   const t = useCallback((en: string, zh: string) => localize(language, en, zh), [language]);
   const searchScopeKey = useMemo(
-    () => JSON.stringify([query, source, environmentId, tag ?? "", projectPath ?? "", projectEnvironmentId ?? "", visibility, sortBy, liveStatus]),
-    [query, source, environmentId, tag, projectPath, projectEnvironmentId, visibility, sortBy, liveStatus],
+    () => JSON.stringify([query, source, environmentId, tag ?? "", projectPath ?? "", projectEnvironmentId ?? "", visibility, sortBy, dateRange, liveStatus]),
+    [query, source, environmentId, tag, projectPath, projectEnvironmentId, visibility, sortBy, dateRange, liveStatus],
   );
   const liveSessionKeys = useMemo(
     () => new Set(liveSessions.sessions.map((session) => `${session.family}:${session.rawId}`)),
@@ -482,6 +485,7 @@ export function App(): ReactElement {
   const load = useCallback(async () => {
     const requestId = ++loadSeqRef.current;
     const searchScope = resolveSearchScope(environmentId, projectPath, projectEnvironmentId);
+    const { dateFrom, dateTo } = resolveDateRange(dateRange);
     const options: SearchOptions = {
       query,
       source,
@@ -490,6 +494,8 @@ export function App(): ReactElement {
       environmentId: searchScope.environmentId,
       visibility,
       sortBy,
+      dateFrom,
+      dateTo,
       limit: sessionLimit,
       liveStatus: liveStatus === "all" ? undefined : liveStatus,
       liveSessionKeys: liveStatus === "all" || liveDetectionFailed ? [] : liveSearchKeys,
@@ -508,7 +514,7 @@ export function App(): ReactElement {
         current && !page.sessions.some((session) => session.sessionKey === current) ? null : current,
       );
     });
-  }, [query, source, environmentId, tag, projectPath, projectEnvironmentId, visibility, sortBy, sessionLimit, liveStatus, liveDetectionFailed, liveSearchKeys]);
+  }, [query, source, environmentId, tag, projectPath, projectEnvironmentId, visibility, sortBy, dateRange, sessionLimit, liveStatus, liveDetectionFailed, liveSearchKeys]);
 
   const loadSidebarMetadata = useCallback(async () => {
     const requestId = ++metadataLoadSeqRef.current;
@@ -1880,6 +1886,20 @@ export function App(): ReactElement {
                 ))}
               </select>
             </label>
+            <div className="date-filter" role="group" aria-label={t("Session time range", "会话时间范围")}>
+              <CalendarDays size={14} aria-hidden="true" />
+              {DATE_RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className={dateRange === option.value ? "active" : ""}
+                  onClick={() => setDateRange(option.value)}
+                  title={dateRangeLabel(option.value, language)}
+                  aria-label={dateRangeLabel(option.value, language)}
+                >
+                  {dateRangeShortLabel(option.value, language)}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="top-actions">
             <button

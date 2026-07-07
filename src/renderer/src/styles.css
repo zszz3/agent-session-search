@@ -1072,7 +1072,7 @@ select:focus-visible {
 .toolbar-filters {
   display: flex;
   min-width: 0;
-  max-width: min(520px, 48vw);
+  max-width: min(720px, 58vw);
   flex: 0 1 auto;
   flex-wrap: wrap;
   justify-content: flex-start;
@@ -1197,6 +1197,48 @@ select:focus-visible {
 }
 
 .live-filter button.active {
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+}
+
+.date-filter {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-bg);
+}
+
+.date-filter svg {
+  flex: 0 0 auto;
+  margin: 0 4px;
+  color: var(--text-faint);
+}
+
+.date-filter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.date-filter button:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.date-filter button.active {
   background: var(--accent-soft);
   color: var(--accent-bright);
 }
