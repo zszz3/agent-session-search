@@ -18,7 +18,7 @@ export function SkillsDialog({
   revealLabel,
   onRefresh,
   onUpload,
-  onUploadVisible,
+  onUploadSelected,
   onInstallRemote,
   onFetchVersion,
   onRefreshRemote,
@@ -36,7 +36,7 @@ export function SkillsDialog({
   revealLabel: string;
   onRefresh: () => void;
   onUpload: (skill: InstalledSkill, force?: boolean) => Promise<SkillSyncUploadOutcome | null>;
-  onUploadVisible: (skills: InstalledSkill[]) => Promise<void>;
+  onUploadSelected: (skills: InstalledSkill[]) => Promise<void>;
   onInstallRemote: (remoteSkillId: string) => Promise<void>;
   onFetchVersion: (remoteSkillId: string) => Promise<RemoteSkill>;
   onRefreshRemote: () => void;
@@ -52,6 +52,7 @@ export function SkillsDialog({
   const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>("all");
   const [sortKey, setSortKey] = useState<SkillSortKey>("usage");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedGroupFingerprint, setSelectedGroupFingerprint] = useState<string | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionContent, setVersionContent] = useState<Record<string, string>>({});
@@ -79,11 +80,13 @@ export function SkillsDialog({
     selectedGroup?.versions.find((version) => version.id === selectedVersionId) ?? selectedGroup?.latest ?? null;
   const selectedSkillBinding = selectedSkill ? syncSnapshot.bindings.find((binding) => binding.localSkillPath === selectedSkill.path) : null;
   const selectedGroupBinding = selectedGroup ? bindingForGroup(syncSnapshot, selectedGroup) : null;
-  const uploadableVisibleSkills = filteredSkills.filter((skill) => skill.source !== "codex-system");
+  const uploadableVisibleSkills = useMemo(() => filteredSkills.filter((skill) => skill.source !== "codex-system"), [filteredSkills]);
+  const selectedUploadableSkills = useMemo(() => uploadableVisibleSkills.filter((skill) => selectedSkillIds.has(skill.id)), [selectedSkillIds, uploadableVisibleSkills]);
+  const allUploadableVisibleSelected = uploadableVisibleSkills.length > 0 && selectedUploadableSkills.length === uploadableVisibleSkills.length;
   const syncReady = syncSnapshot.status.kind === "ready";
   const codexCount = snapshot.skills.filter((skill) => skill.agent === "codex").length;
   const claudeCount = snapshot.skills.filter((skill) => skill.agent === "claude").length;
-  const activeItemRef = useRef<HTMLButtonElement>(null);
+  const activeItemRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!filteredSkills.length) {
@@ -96,6 +99,14 @@ export function SkillsDialog({
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedSkill?.id]);
+
+  useEffect(() => {
+    const uploadableIds = new Set(uploadableVisibleSkills.map((skill) => skill.id));
+    setSelectedSkillIds((current) => {
+      const next = new Set([...current].filter((id) => uploadableIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [uploadableVisibleSkills]);
 
   useEffect(() => {
     if (!remoteGroups.length) {
@@ -181,6 +192,28 @@ export function SkillsDialog({
     if (outcome && outcome.status === "needs-confirmation") setUploadConfirm({ skill, conflict: outcome.conflict });
   };
 
+  const toggleSkillSelection = (skill: InstalledSkill) => {
+    if (skill.source === "codex-system") return;
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (next.has(skill.id)) next.delete(skill.id);
+      else next.add(skill.id);
+      return next;
+    });
+  };
+
+  const toggleVisibleSelection = () => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (allUploadableVisibleSelected) {
+        for (const skill of uploadableVisibleSkills) next.delete(skill.id);
+      } else {
+        for (const skill of uploadableVisibleSkills) next.add(skill.id);
+      }
+      return next;
+    });
+  };
+
   const confirmUpload = async () => {
     if (!uploadConfirm) return;
     const { skill } = uploadConfirm;
@@ -242,12 +275,23 @@ export function SkillsDialog({
             <button
               type="button"
               className="settings-action-button"
-              onClick={() => void onUploadVisible(uploadableVisibleSkills)}
-              disabled={!syncReady || loading || uploadableVisibleSkills.length === 0}
-              title={!syncReady ? syncDisabledTitle(syncSnapshot, language) : l("Upload visible non-system skills", "上传当前可见的非系统 Skills")}
+              onClick={toggleVisibleSelection}
+              disabled={loading || uploadableVisibleSkills.length === 0}
+              title={l("Select visible non-system skills", "选择当前可见的非系统 Skills")}
+            >
+              <span>{allUploadableVisibleSelected ? l("Clear selected", "清空选择") : l("Select visible", "选择当前可见")}</span>
+            </button>
+          ) : null}
+          {syncView === "local" ? (
+            <button
+              type="button"
+              className="settings-action-button"
+              onClick={() => void onUploadSelected(selectedUploadableSkills)}
+              disabled={!syncReady || loading || selectedUploadableSkills.length === 0}
+              title={!syncReady ? syncDisabledTitle(syncSnapshot, language) : l("Upload selected non-system skills", "上传选中的非系统 Skills")}
             >
               <Upload size={13} />
-              <span>{l("Upload visible", "上传当前可见")}</span>
+              <span>{l(`Upload selected (${selectedUploadableSkills.length})`, `上传选中（${selectedUploadableSkills.length}）`)}</span>
             </button>
           ) : null}
           <button className="stats-refresh" onClick={syncView === "local" ? onRefresh : onRefreshRemote} disabled={loading} title={l("Refresh skills", "刷新 Skills")} aria-label={l("Refresh skills", "刷新 Skills")}>
@@ -272,12 +316,19 @@ export function SkillsDialog({
             {!loading && syncView === "remote" && remoteGroups.length === 0 ? <div className="skills-empty">{remoteEmptyLabel(syncSnapshot, language)}</div> : null}
             {!loading && syncView === "local"
               ? filteredSkills.map((skill) => (
-                  <button
+                  <div
                     key={skill.id}
                     ref={selectedSkill?.id === skill.id ? activeItemRef : undefined}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     className={`skill-item ${selectedSkill?.id === skill.id ? "active" : ""}`}
                     onClick={() => setSelectedSkillId(skill.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedSkillId(skill.id);
+                      }
+                    }}
                     onContextMenu={(event) => {
                       event.preventDefault();
                       setSelectedSkillId(skill.id);
@@ -285,13 +336,23 @@ export function SkillsDialog({
                     }}
                   >
                     <span className="skill-item-head">
+                      <label className="skill-select" title={skill.source === "codex-system" ? l("System skills are excluded from upload", "系统内置 Skills 不参与上传") : l("Select for upload", "选择上传")}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSkillIds.has(skill.id)}
+                          disabled={skill.source === "codex-system"}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleSkillSelection(skill)}
+                          aria-label={l(`Select ${skill.name}`, `选择 ${skill.name}`)}
+                        />
+                      </label>
                       <strong>{skill.name}</strong>
                       {skill.usageCount ? <span className="skill-usage-count" title={l("Times used", "使用次数")}>{formatCompactNumber(skill.usageCount)}</span> : null}
                       <SkillSourceBadge source={skill.source} language={language} />
                     </span>
                     <span className="skill-item-desc">{skill.description || l("No description", "无描述")}</span>
                     <span className="skill-item-path">{skill.path}</span>
-                  </button>
+                  </div>
                 ))
               : null}
             {!loading && syncView === "remote"

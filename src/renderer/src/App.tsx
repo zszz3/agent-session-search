@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Clipboard,
   Cloud,
-  CloudUpload,
   Code2,
   Copy,
   Download,
@@ -670,16 +669,16 @@ export function App(): ReactElement {
     [loadSkills, t],
   );
 
-  const uploadVisibleSkillsToSync = useCallback(
+  const uploadSelectedSkillsToSync = useCallback(
     async (skills: InstalledSkill[]): Promise<void> => {
       const uploadable = skills.filter((skill) => skill.source !== "codex-system");
       if (uploadable.length === 0) {
-        setSkillsFeedback({ kind: "error", message: t("No visible non-system skills to upload.", "没有可上传的非系统 Skill。") });
+        setSkillsFeedback({ kind: "error", message: t("No selected non-system skills to upload.", "没有选中可上传的非系统 Skill。") });
         return;
       }
 
       setSkillsLoading(true);
-      setSkillsFeedback({ kind: "running", message: t(`Uploading ${uploadable.length} visible skills...`, `正在上传 ${uploadable.length} 个当前可见 Skill...`) });
+      setSkillsFeedback({ kind: "running", message: t(`Uploading ${uploadable.length} selected skills...`, `正在上传 ${uploadable.length} 个选中 Skill...`) });
       let uploaded = 0;
       let skipped = 0;
       let conflicts = 0;
@@ -697,8 +696,8 @@ export function App(): ReactElement {
         }
         await loadSkills({ silent: true });
         const message = t(
-          `Visible skills upload finished: ${uploaded} uploaded, ${skipped} skipped, ${conflicts} need confirmation, ${failed} failed.`,
-          `当前可见 Skills 上传完成：${uploaded} 个已上传，${skipped} 个已跳过，${conflicts} 个需要确认，${failed} 个失败。`,
+          `Selected skills upload finished: ${uploaded} uploaded, ${skipped} skipped, ${conflicts} need confirmation, ${failed} failed.`,
+          `选中 Skills 上传完成：${uploaded} 个已上传，${skipped} 个已跳过，${conflicts} 个需要确认，${failed} 个失败。`,
         );
         setSkillsFeedback({ kind: failed > 0 ? "error" : "success", message });
         window.setTimeout(() => {
@@ -1864,15 +1863,6 @@ export function App(): ReactElement {
               <Cloud size={15} />
             </button>
             <button
-              className="icon-button toolbar-icon-button"
-              onClick={() => void uploadVisibleRemoteSessions()}
-              disabled={actionStatus?.kind === "running" || !displayedResults.some((session) => supportsMigrationSource(session.source))}
-              title={t("Save visible to remote", "保存当前可见到远程")}
-              aria-label={t("Save visible to remote", "保存当前可见到远程")}
-            >
-              <CloudUpload size={15} />
-            </button>
-            <button
               className={`icon-button toolbar-icon-button ${apiConfigOpen ? "active" : ""}`}
               onClick={() => {
                 setSkillsOpen(false);
@@ -2206,7 +2196,7 @@ export function App(): ReactElement {
           revealLabel={FILE_MANAGER_LABEL}
           onRefresh={() => void loadSkills({ refreshUsage: true })}
           onUpload={(skill, force) => uploadSkillToSync(skill, force)}
-          onUploadVisible={(skills) => uploadVisibleSkillsToSync(skills)}
+          onUploadSelected={(skills) => uploadSelectedSkillsToSync(skills)}
           onInstallRemote={(remoteSkillId) => installSyncedSkill(remoteSkillId)}
           onFetchVersion={(remoteSkillId) => fetchSyncedSkillVersion(remoteSkillId)}
           onRefreshRemote={() => void loadSkills({ silent: true })}
@@ -2230,6 +2220,8 @@ export function App(): ReactElement {
             void Promise.all([load(), loadSidebarMetadata()]);
           }}
           onOpenDetail={openRemoteDetail}
+          onUploadVisible={uploadVisibleRemoteSessions}
+          visibleUploadCount={displayedResults.filter((session) => supportsMigrationSource(session.source)).length}
           onClose={() => setRemoteSessionsOpen(false)}
         />
       ) : null}

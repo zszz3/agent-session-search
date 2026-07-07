@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import { ArrowRightLeft, Cloud, Database, FolderOpen, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Cloud, CloudUpload, Database, FolderOpen, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { RemoteSessionDetailSnapshot, RemoteSessionListItem, RemoteSessionStatus } from "../../../core/remote-session-sync";
 import type { MigrationAgent, SessionMigrationResult } from "../../../core/types";
 import { formatRelativeTime } from "../../../core/format-session";
@@ -17,11 +17,15 @@ export function RemoteSessionsDialog({
   onClose,
   onRestored,
   onOpenDetail,
+  onUploadVisible,
+  visibleUploadCount,
 }: {
   language: LanguageMode;
   onClose: () => void;
   onRestored: (result: SessionMigrationResult) => void;
   onOpenDetail: (detail: RemoteSessionDetailSnapshot, query: string) => void;
+  onUploadVisible: () => Promise<void>;
+  visibleUploadCount: number;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   const [status, setStatus] = useState<RemoteSessionStatus | null>(null);
@@ -76,6 +80,16 @@ export function RemoteSessionsDialog({
     try {
       await window.sessionSearch.copyRemoteSessionSetupSql();
       setFeedback({ kind: "success", message: l("Supabase setup SQL copied.", "Supabase 初始化 SQL 已复制。") });
+    } catch (error) {
+      setFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  async function uploadVisible(): Promise<void> {
+    setFeedback({ kind: "running", message: l(`Saving ${visibleUploadCount} visible sessions...`, `正在保存 ${visibleUploadCount} 个当前可见会话...`) });
+    try {
+      await onUploadVisible();
+      await refresh();
     } catch (error) {
       setFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     }
@@ -172,6 +186,10 @@ export function RemoteSessionsDialog({
           <button type="button" className="settings-action-button" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={14} />
             <span>{l("Refresh", "刷新")}</span>
+          </button>
+          <button type="button" className="settings-action-button" onClick={() => void uploadVisible()} disabled={loading || visibleUploadCount === 0}>
+            <CloudUpload size={14} />
+            <span>{l(`Save visible (${visibleUploadCount})`, `保存当前可见（${visibleUploadCount}）`)}</span>
           </button>
           <button type="button" className="settings-action-button" onClick={() => void copySetupSql()}>
             <Database size={14} />
