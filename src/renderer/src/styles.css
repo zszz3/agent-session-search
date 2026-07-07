@@ -2345,7 +2345,7 @@ select:focus-visible {
 
 .skills-toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto auto;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-subtle);
@@ -2574,6 +2574,7 @@ select:focus-visible {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
+  cursor: pointer;
   text-align: left;
 }
 
@@ -2592,6 +2593,21 @@ select:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.skill-select {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.skill-select input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
 }
 
 .skill-item-head strong {

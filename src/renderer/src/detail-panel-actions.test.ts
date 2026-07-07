@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const detailPanelSource = readFileSync(new URL("./components/detail-panel.tsx", import.meta.url), "utf8");
+const remoteSessionsDialogSource = readFileSync(new URL("./components/remote-sessions-dialog.tsx", import.meta.url), "utf8");
 const sessionUiSource = readFileSync(new URL("./session-ui.ts", import.meta.url), "utf8");
 const preloadSource = readFileSync(new URL("../../preload/index.ts", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("../../main/index.ts", import.meta.url), "utf8");
@@ -197,7 +198,9 @@ describe("detail panel actions", () => {
 
   it("exposes visible session bulk remote upload and remote-environment restore actions", () => {
     expect(appSource).toContain("uploadVisibleRemoteSessions");
-    expect(appSource).toContain("Save visible to remote");
+    expect(appSource).not.toContain("CloudUpload");
+    expect(remoteSessionsDialogSource).toContain("onUploadVisible");
+    expect(remoteSessionsDialogSource).toContain("Save visible");
     expect(preloadSource).toContain("restoreRemoteSessionToSourceEnvironment");
     expect(preloadSource).toContain("remote-session:restore-to-source-environment");
     expect(mainSource).toContain('ipcMain.handle("remote-session:restore-to-source-environment"');

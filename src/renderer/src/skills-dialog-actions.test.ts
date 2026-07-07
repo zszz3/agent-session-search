@@ -39,8 +39,9 @@ describe("skills dialog actions", () => {
     expect(supabaseSettings.match(/settings-field skills-sync-field/g)).toHaveLength(2);
     expect(skillsDialogSource).toContain("syncView");
     expect(skillsDialogSource).toContain("onUpload");
-    expect(skillsDialogSource).toContain("onUploadVisible");
-    expect(skillsDialogSource).toContain("Upload visible");
+    expect(skillsDialogSource).toContain("selectedSkillIds");
+    expect(skillsDialogSource).toContain('type="checkbox"');
+    expect(skillsDialogSource).toContain("Upload selected");
     expect(skillsDialogSource).toContain("onInstallRemote");
     expect(skillsDialogSource).toContain("onCopySetupSql");
   });

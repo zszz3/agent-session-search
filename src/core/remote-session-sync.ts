@@ -338,7 +338,7 @@ export class SupabaseRemoteSessionClient {
 
   async checkStatus(): Promise<RemoteSessionStatus> {
     const setupSql = buildRemoteSessionSetupSql();
-    const response = await this.restRequest(`/${REMOTE_SESSION_TABLE}?select=id&limit=1`, { method: "GET" });
+    const response = await this.restRequest(`/${REMOTE_SESSION_TABLE}?select=${REMOTE_SESSION_COLUMNS}&limit=1`, { method: "GET" });
     if (response.ok) return { kind: "ready", setupSql };
     const body = await readResponseBody(response);
     if (isMissingTableError(response.status, body)) {
@@ -347,6 +347,9 @@ export class SupabaseRemoteSessionClient {
         setupSql,
         message: `Supabase table ${REMOTE_SESSION_TABLE} was not found.`,
       };
+    }
+    if (isMissingSchemaColumnError(body)) {
+      return { kind: "error", setupSql, message: latestRemoteSessionSetupSqlMessage(body) };
     }
     return { kind: "error", setupSql, message: supabaseErrorMessage(response.status, body) };
   }
@@ -357,7 +360,10 @@ export class SupabaseRemoteSessionClient {
       { method: "GET" },
     );
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(supabaseErrorMessage(response.status, body));
+    if (!response.ok) {
+      if (isMissingSchemaColumnError(body)) throw new Error(latestRemoteSessionSetupSqlMessage(body));
+      throw new Error(supabaseErrorMessage(response.status, body));
+    }
     return filterRemoteSessions(parseRows(body), query);
   }
 
@@ -367,7 +373,10 @@ export class SupabaseRemoteSessionClient {
       { method: "GET" },
     );
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(supabaseErrorMessage(response.status, body));
+    if (!response.ok) {
+      if (isMissingSchemaColumnError(body)) throw new Error(latestRemoteSessionSetupSqlMessage(body));
+      throw new Error(supabaseErrorMessage(response.status, body));
+    }
     const [session] = parseRows(body);
     if (!session) throw new Error("Remote session was not found.");
     return session;
@@ -386,7 +395,10 @@ export class SupabaseRemoteSessionClient {
       body: JSON.stringify(payload),
     });
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(supabaseErrorMessage(response.status, body));
+    if (!response.ok) {
+      if (isMissingSchemaColumnError(body)) throw new Error(latestRemoteSessionSetupSqlMessage(body));
+      throw new Error(supabaseErrorMessage(response.status, body));
+    }
     const [remoteSession] = parseRows(body);
     if (!remoteSession) throw new Error("Supabase did not return the uploaded remote session.");
     return { status: existing ? "updated" : "uploaded", remoteSession };
@@ -422,7 +434,8 @@ export class SupabaseRemoteSessionClient {
   private async getRemoteSessionOrNull(remoteId: string): Promise<RemoteSessionListItem | null> {
     try {
       return await this.getRemoteSession(remoteId);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && /latest Supabase remote sessions setup SQL/i.test(error.message)) throw error;
       return null;
     }
   }
@@ -675,6 +688,28 @@ function isMissingTableError(status: number, body: unknown): boolean {
     code === "PGRST205" ||
     (typeof message === "string" && /table|relation/i.test(message) && /not found|does not exist/i.test(message))
   );
+}
+
+function isMissingSchemaColumnError(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const code = (body as { code?: unknown }).code;
+  const message = (body as { message?: unknown }).message;
+  return (
+    code === "PGRST204" &&
+    typeof message === "string" &&
+    /source_environment_(id|kind|label)|schema cache|could not find/i.test(message)
+  );
+}
+
+function latestRemoteSessionSetupSqlMessage(body: unknown): string {
+  const message = supabaseErrorMessage(400, body);
+  return [
+    message,
+    "",
+    "Run the latest Supabase remote sessions setup SQL, then try again:",
+    "",
+    buildRemoteSessionSetupSql(),
+  ].join("\n");
 }
 
 function normalizeSupabaseUrl(url: string): string {

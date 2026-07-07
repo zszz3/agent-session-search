@@ -9,6 +9,7 @@ import {
   parsePortableSession,
   remoteSessionContentHash,
   remoteSessionId,
+  SupabaseRemoteSessionClient,
 } from "./remote-session-sync";
 import type { PortableSession, SessionSearchResult } from "./types";
 
@@ -172,5 +173,25 @@ describe("remote session sync model", () => {
     ];
     expect(filterRemoteSessions(sessions, "oauth")).toHaveLength(1);
     expect(filterRemoteSessions(sessions, "missing")).toHaveLength(0);
+  });
+
+  it("reports the latest setup SQL when source environment columns are missing", async () => {
+    const detail = buildRemoteSessionSnapshot(SESSION, MESSAGES, [], 10_000);
+    const { payload, detailJson, portableJson } = buildRemoteSessionPayload({ session: SESSION, detail, portable: PORTABLE, now: 11_000 });
+    const missingColumn = {
+      code: "PGRST204",
+      message: "Could not find the 'source_environment_id' column of 'agent_session_remote_sessions' in the schema cache",
+    };
+    const client = new SupabaseRemoteSessionClient({
+      url: "https://example.supabase.co",
+      anonKey: "anon",
+      fetchImpl: async (url, init) => {
+        if (String(url).includes("/storage/v1/object/")) return new Response("{}", { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify(missingColumn), { status: 400 });
+        return new Response(JSON.stringify(missingColumn), { status: 400 });
+      },
+    });
+
+    await expect(client.uploadSession(payload, detailJson, portableJson)).rejects.toThrow(/latest Supabase remote sessions setup SQL/i);
   });
 });
