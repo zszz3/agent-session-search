@@ -77,6 +77,8 @@ describe("skill sync", () => {
     expect(sql).toContain(`drop index if exists ${AGENT_SESSION_SEARCH_SKILLS_TABLE}_fingerprint_idx;`);
     expect(sql).toContain(`${AGENT_SESSION_SEARCH_SKILLS_TABLE}_fingerprint_version_idx`);
     expect(sql).toContain("(local_fingerprint, version)");
+    expect(sql).toContain("storage.buckets");
+    expect(sql).toContain("agent-session-skills");
     expect(sql).toContain("enable row level security");
     expect(sql).not.toContain("service_role");
   });
@@ -183,6 +185,37 @@ describe("skill sync", () => {
 
     const result = await client.insertSkillVersion(base, 2);
     expect(result).toMatchObject({ id: "remote-9", version: 2, contentHash, markdown: localSkill().markdown });
+  });
+
+  it("stores large skill file bundles in Supabase Storage instead of the table row", async () => {
+    const largeFile = {
+      relativePath: "references/large.md",
+      contentBase64: Buffer.alloc(1_200_000, "a").toString("base64"),
+      mode: 0o644,
+    };
+    const { base } = buildSkillVersionBasePayload(localSkill());
+    base.metadata = { ...base.metadata, skillFiles: [largeFile] };
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const client = new SupabaseSkillSyncClient({
+      url: "https://example.supabase.co",
+      anonKey: "anon",
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : undefined });
+        if (String(url).includes("/storage/v1/object/")) return new Response("{}", { status: 200 });
+        const body = JSON.parse(String(init?.body));
+        expect(body.metadata.skillFiles).toEqual([]);
+        expect(body.metadata.skillFilesObjectKey).toMatch(/^skills\/[0-9a-f]{64}\/v2\/files\.json$/);
+        expect(body.metadata.skillFilesSha256).toMatch(/^[0-9a-f]{64}$/);
+        return new Response(JSON.stringify([{ ...body, id: "remote-large", created_at: "x", updated_at: "y" }]), { status: 201 });
+      },
+    });
+
+    const result = await client.insertSkillVersion(base, 2);
+
+    expect(result.id).toBe("remote-large");
+    expect(calls[0].url).toContain("/storage/v1/object/agent-session-skills/skills/");
+    expect(calls[0].body).toContain("references/large.md");
+    expect(calls.some((call) => call.url.includes(`/rest/v1/${AGENT_SESSION_SEARCH_SKILLS_TABLE}`))).toBe(true);
   });
 
   it("retries a version insert with a fresh number after a unique conflict", async () => {

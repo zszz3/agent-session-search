@@ -5,8 +5,10 @@ import type { SkillSyncBinding } from "./session-store";
 import type { InstalledSkill } from "./skill-manager";
 
 export const AGENT_SESSION_SEARCH_SKILLS_TABLE = "agent_session_search_skills";
+export const AGENT_SESSION_SKILLS_BUCKET = "agent-session-skills";
 const REMOTE_SKILL_VERSION_COLUMNS =
   "id,name,description,agent,source,local_fingerprint,content_hash,uploaded_from_path,version,created_at,updated_at";
+const SKILL_FILES_STORAGE_THRESHOLD_BYTES = 512 * 1024;
 
 // Full row (markdown + bundled files) fetched on demand for preview/install.
 export interface RemoteSkill {
@@ -55,6 +57,11 @@ export interface SkillSyncFile {
   relativePath: string;
   contentBase64: string;
   mode?: number;
+}
+
+interface SkillFilesSnapshot {
+  schemaVersion: 1;
+  files: SkillSyncFile[];
 }
 
 export type SkillSyncStatus =
@@ -146,6 +153,11 @@ export function buildSkillSyncSetupSql(tableName = AGENT_SESSION_SEARCH_SKILLS_T
     "-- Upgrade an existing table created before version history was added.",
     `alter table public.${tableName} add column if not exists content_hash text not null default '';`,
     "",
+    "-- Create the private Storage bucket used for large bundled skill files.",
+    "insert into storage.buckets (id, name, public)",
+    `values ('${AGENT_SESSION_SKILLS_BUCKET}', '${AGENT_SESSION_SKILLS_BUCKET}', false)`,
+    "on conflict (id) do nothing;",
+    "",
     "-- Version history keeps one row per (skill, version); drop the old one-row-per-skill unique index.",
     `drop index if exists ${tableName}_fingerprint_idx;`,
     `create unique index if not exists ${tableName}_fingerprint_version_idx`,
@@ -176,6 +188,14 @@ export function buildSkillSyncSetupSql(tableName = AGENT_SESSION_SEARCH_SKILLS_T
     "  to anon",
     "  using (true)",
     "  with check (true);",
+    "",
+    `drop policy if exists "${AGENT_SESSION_SKILLS_BUCKET}_objects_personal_sync" on storage.objects;`,
+    `create policy "${AGENT_SESSION_SKILLS_BUCKET}_objects_personal_sync"`,
+    "  on storage.objects",
+    "  for all",
+    "  to anon",
+    `  using (bucket_id = '${AGENT_SESSION_SKILLS_BUCKET}')`,
+    `  with check (bucket_id = '${AGENT_SESSION_SKILLS_BUCKET}');`,
   ].join("\n");
 }
 
@@ -306,14 +326,15 @@ export class SupabaseSkillSyncClient {
     if (!response.ok) throw new Error(supabaseErrorMessage(response.status, body));
     const [skill] = parseFullRows(body);
     if (!skill) throw new Error("Remote skill was not found.");
-    return skill;
+    return this.hydrateRemoteSkillFiles(skill);
   }
 
   async insertSkillVersion(base: SkillVersionBasePayload, version: number): Promise<RemoteSkill> {
+    const prepared = await this.prepareSkillVersionPayload(base, version);
     const response = await this.request(`/${AGENT_SESSION_SEARCH_SKILLS_TABLE}`, {
       method: "POST",
       headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ ...base, version }),
+      body: JSON.stringify({ ...prepared, version }),
     });
     const body = await readResponseBody(response);
     if (!response.ok) {
@@ -345,7 +366,8 @@ export class SupabaseSkillSyncClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      return await this.fetchImpl(`${this.baseUrl}/rest/v1${path}`, {
+      const url = path.startsWith("/storage/v1/") ? `${this.baseUrl}${path}` : `${this.baseUrl}/rest/v1${path}`;
+      return await this.fetchImpl(url, {
         ...init,
         signal: controller.signal,
         headers: {
@@ -364,6 +386,94 @@ export class SupabaseSkillSyncClient {
       clearTimeout(timer);
     }
   }
+
+  private async prepareSkillVersionPayload(base: SkillVersionBasePayload, version: number): Promise<SkillVersionBasePayload> {
+    const files = skillSyncFilesFromMetadata(base.metadata ?? {});
+    if (files.length === 0) return base;
+    const filesJson = stableJson({ schemaVersion: 1, files } satisfies SkillFilesSnapshot);
+    if (Buffer.byteLength(filesJson, "utf8") <= SKILL_FILES_STORAGE_THRESHOLD_BYTES) return base;
+
+    const objectKey = `skills/${base.local_fingerprint}/v${version}/files.json`;
+    await this.uploadStorageObject(objectKey, filesJson);
+    return {
+      ...base,
+      metadata: {
+        ...(base.metadata ?? {}),
+        skillFiles: [],
+        skillFilesObjectKey: objectKey,
+        skillFilesSha256: sha256(filesJson),
+        skillFilesCount: files.length,
+        skillFilesBytes: Buffer.byteLength(filesJson, "utf8"),
+      },
+    };
+  }
+
+  private async hydrateRemoteSkillFiles(skill: RemoteSkill): Promise<RemoteSkill> {
+    if (skillSyncFilesFromMetadata(skill.metadata).length > 0) return skill;
+    const objectKey = skill.metadata.skillFilesObjectKey;
+    if (typeof objectKey !== "string" || !objectKey.trim()) return skill;
+    const filesJson = await this.downloadStorageObject(objectKey);
+    const expectedSha = skill.metadata.skillFilesSha256;
+    if (typeof expectedSha === "string" && expectedSha && sha256(filesJson) !== expectedSha) {
+      throw new Error("Remote skill files checksum mismatch.");
+    }
+    const snapshot = parseSkillFilesSnapshot(JSON.parse(filesJson));
+    return {
+      ...skill,
+      metadata: {
+        ...skill.metadata,
+        skillFiles: snapshot.files,
+      },
+    };
+  }
+
+  private async uploadStorageObject(key: string, body: string): Promise<void> {
+    const response = await this.storageRequest(key, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "x-upsert": "true",
+      },
+      body,
+    });
+    const responseBody = await readResponseBody(response);
+    if (!response.ok) throw new Error(skillSyncStorageErrorMessage(response.status, responseBody));
+  }
+
+  private async downloadStorageObject(key: string): Promise<string> {
+    const response = await this.storageRequest(key, { method: "GET" });
+    const text = await response.text();
+    if (!response.ok) throw new Error(skillSyncStorageErrorMessage(response.status, text));
+    return text;
+  }
+
+  private async storageRequest(path: string, init: RequestInit): Promise<Response> {
+    return this.request(`/storage/v1/object/${AGENT_SESSION_SKILLS_BUCKET}/${path}`, {
+      ...init,
+      headers: {
+        apikey: this.anonKey,
+        Authorization: `Bearer ${this.anonKey}`,
+        ...(init.headers ?? {}),
+      },
+    });
+  }
+}
+
+function parseSkillFilesSnapshot(value: unknown): SkillFilesSnapshot {
+  if (!value || typeof value !== "object") throw new Error("Remote skill files snapshot is invalid.");
+  const snapshot = value as Partial<SkillFilesSnapshot>;
+  if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.files)) throw new Error("Remote skill files snapshot is invalid.");
+  return {
+    schemaVersion: 1,
+    files: snapshot.files.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const file = item as Partial<SkillSyncFile>;
+      if (typeof file.relativePath !== "string" || typeof file.contentBase64 !== "string") return [];
+      const mode = typeof file.mode === "number" && Number.isFinite(file.mode) ? file.mode : undefined;
+      return [{ relativePath: file.relativePath, contentBase64: file.contentBase64, ...(mode === undefined ? {} : { mode }) }];
+    }),
+  };
 }
 
 function parseFullRows(body: unknown): RemoteSkill[] {
@@ -476,6 +586,28 @@ function supabaseErrorMessage(status: number, body: unknown): string {
   }
   if (typeof body === "string" && body.trim()) return body;
   return `Supabase request failed with status ${status}.`;
+}
+
+function skillSyncStorageErrorMessage(status: number, body: unknown): string {
+  const message = supabaseErrorMessage(status, body);
+  if (/bucket|storage/i.test(message) || status === 404) {
+    return `${message} Run the latest Supabase skill sync setup SQL from Settings, then try again.`;
+  }
+  return message;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sortJson(item)]));
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function isMissingTableError(status: number, body: unknown): boolean {
