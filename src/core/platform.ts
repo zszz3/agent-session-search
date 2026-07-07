@@ -69,8 +69,6 @@ export interface AppSettings {
   includeTrae: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
-  notifyOnSessionComplete: boolean;
-  notifyMinDurationSeconds: number;
   summaryAutoBackfill: boolean;
   summaryMaxAgeDays: number;
   compressionConcurrency: number;
@@ -113,8 +111,6 @@ export const defaultSettings: AppSettings = {
   includeTrae: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
-  notifyOnSessionComplete: false,
-  notifyMinDurationSeconds: 30,
   summaryAutoBackfill: false,
   summaryMaxAgeDays: 30,
   compressionConcurrency: 8,
@@ -137,7 +133,6 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
     ...merged,
     defaultTerminal: normalizeTerminal(merged.defaultTerminal),
     globalShortcut: normalizeGlobalShortcut(merged.globalShortcut),
-    notifyMinDurationSeconds: normalizeNotifyDuration(merged.notifyMinDurationSeconds),
     summaryMaxAgeDays: normalizeSummaryMaxAgeDays(merged.summaryMaxAgeDays),
     compressionConcurrency: normalizeCompressionConcurrency(merged.compressionConcurrency),
     summarySource: merged.summarySource === "claude" || merged.summarySource === "custom" ? merged.summarySource : "codex",
@@ -155,11 +150,6 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
 
 function normalizeSupabaseSettingUrl(value: string | undefined): string {
   return String(value ?? "").trim().replace(/\/+$/, "");
-}
-
-function normalizeNotifyDuration(value: number): number {
-  if (!Number.isFinite(value) || value < 0) return defaultSettings.notifyMinDurationSeconds;
-  return Math.min(3600, Math.round(value));
 }
 
 function normalizeSummaryMaxAgeDays(value: number): number {

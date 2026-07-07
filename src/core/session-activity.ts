@@ -1,8 +1,5 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { LIVE_SESSION_SNAPSHOT_CACHE_TTL_MS } from "./refresh-policy";
 import type { LiveSession, LiveSessionFamily, LiveSessionSnapshot } from "./types";
 
@@ -22,7 +19,6 @@ export interface LoadLiveSessionOptions {
   runner?: ProcessListRunner;
   now?: Date;
   includeTrae?: boolean;
-  homeDir?: string;
 }
 
 export interface CachedLiveSessionSnapshotLoaderOptions {
@@ -86,7 +82,6 @@ function liveSessionSnapshotCacheKey(options: LoadLiveSessionOptions): string {
   return JSON.stringify({
     platform: options.platform ?? process.platform,
     includeTrae: options.includeTrae !== false,
-    homeDir: options.homeDir ?? "",
   });
 }
 
@@ -94,7 +89,6 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
   const generatedAt = (options.now ?? new Date()).toISOString();
   const platform = options.platform ?? process.platform;
   const runner = options.runner ?? execText;
-  const homeDir = options.homeDir ?? os.homedir();
 
   try {
     const output =
@@ -109,7 +103,7 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
     const [codexSessionFilesByPid, claudeSessionFilesByPid] =
       platform === "win32"
         ? [new Map<number, string>(), new Map<number, string>()]
-        : await Promise.all([loadPlainCodexSessionFiles(lines, runner, homeDir), loadPlainClaudeSessionFiles(lines, runner, homeDir)]);
+        : await Promise.all([loadPlainCodexSessionFiles(lines, runner), loadPlainClaudeSessionFiles(lines, runner)]);
     const traeSessionIdsByPid =
       platform === "win32" || options.includeTrae === false ? new Map<number, string>() : await loadTraeSessionIds(lines, runner);
 
@@ -126,64 +120,34 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
   }
 }
 
-async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner, homeDir: string): Promise<Map<number, string>> {
-  const sessionFiles = new Map<number, string>();
-  const claimedRawIds = claimedRawIdsForFamily(lines, "codex");
-  const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
-  const pids = entries
-    .filter((entry) => isPlainCodexCommand(splitCommandLine(entry.command)))
-    .map((entry) => entry.pid);
-
-  const outputs = await Promise.all(
-    pids.map(async (pid) => {
-      try {
-        return { pid, output: await runner("lsof", ["-p", String(pid)]) };
-      } catch {
-        // A process can exit between ps and lsof; ignore it and keep the rest.
-        return { pid, output: "" };
-      }
-    }),
-  );
-
-  for (const { pid, output } of outputs) {
-    const cwd = extractCwdFromLsof(output);
-    const sessionFile = extractCodexSessionFile(output) ?? latestCodexSessionFileForCwd(cwd, homeDir, claimedRawIds);
-    const rawId = sessionFile ? extractCodexSessionId(sessionFile) : null;
-    if (!sessionFile || !rawId) continue;
-    sessionFiles.set(pid, sessionFile);
-    claimedRawIds.add(rawId);
-  }
-
-  return sessionFiles;
+async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
+  return loadPlainSessionFiles(lines, runner, isPlainCodexCommand, extractCodexSessionFile);
 }
 
-async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner, homeDir: string): Promise<Map<number, string>> {
-  const sessionFiles = new Map<number, string>();
-  const claimedRawIds = claimedRawIdsForFamily(lines, "claude");
-  const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
-  const pids = entries
-    .filter((entry) => isPlainClaudeCommand(splitCommandLine(entry.command)))
-    .map((entry) => entry.pid);
+async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
+  return loadPlainSessionFiles(lines, runner, isPlainClaudeCommand, extractClaudeSessionFile);
+}
 
-  const outputs = await Promise.all(
+async function loadPlainSessionFiles(
+  lines: string[],
+  runner: ProcessListRunner,
+  isPlainCommand: (tokens: string[]) => boolean,
+  extractSessionFile: (lsofOutput: string) => string | null,
+): Promise<Map<number, string>> {
+  const sessionFiles = new Map<number, string>();
+  const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
+  const pids = entries.filter((entry) => isPlainCommand(splitCommandLine(entry.command))).map((entry) => entry.pid);
+
+  await Promise.all(
     pids.map(async (pid) => {
       try {
-        return { pid, output: await runner("lsof", ["-p", String(pid)]) };
+        const sessionFile = extractSessionFile(await runner("lsof", ["-p", String(pid)]));
+        if (sessionFile) sessionFiles.set(pid, sessionFile);
       } catch {
         // A process can exit between ps and lsof; ignore it and keep the rest.
-        return { pid, output: "" };
       }
     }),
   );
-
-  for (const { pid, output } of outputs) {
-    const cwd = extractCwdFromLsof(output);
-    const sessionFile = extractClaudeSessionFile(output) ?? latestClaudeSessionFileForCwd(cwd, homeDir, claimedRawIds);
-    const rawId = sessionFile ? extractClaudeSessionId(sessionFile) : null;
-    if (!sessionFile || !rawId) continue;
-    sessionFiles.set(pid, sessionFile);
-    claimedRawIds.add(rawId);
-  }
 
   return sessionFiles;
 }
@@ -234,17 +198,6 @@ function detectResumeCommand(tokens: string[]): { family: LiveSessionFamily; raw
   }
 
   return null;
-}
-
-function claimedRawIdsForFamily(lines: string[], family: LiveSessionFamily): Set<string> {
-  const claimed = new Set<string>();
-  for (const line of lines) {
-    const entry = parseProcessLine(line);
-    if (!entry) continue;
-    const command = detectResumeCommand(splitCommandLine(entry.command));
-    if (command?.family === family) claimed.add(command.rawId);
-  }
-  return claimed;
 }
 
 function detectPlainCodexCommand(tokens: string[], sessionFile: string | undefined): { family: LiveSessionFamily; rawId: string } | null {
@@ -360,6 +313,10 @@ function normalizedExecutableName(token: string | undefined): string {
   return name.replace(/\.(?:js|cjs|mjs|cmd|exe)$/i, "");
 }
 
+function extractCodexSessionId(sessionFile: string): string | null {
+  return sessionFile.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/)?.[1] ?? null;
+}
+
 function extractCodexSessionFile(lsofOutput: string): string | null {
   for (const line of lsofOutput.split(/\r?\n/)) {
     const match = line.match(/(\S*\.codex\/sessions\/\S+?\.jsonl)\b/);
@@ -368,98 +325,15 @@ function extractCodexSessionFile(lsofOutput: string): string | null {
   return null;
 }
 
-function extractCodexSessionId(sessionFile: string): string | null {
-  return sessionFile.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/)?.[1] ?? null;
+function extractClaudeSessionId(sessionFile: string): string | null {
+  const rawId = sessionFile.split(/[\\/]/).pop()?.replace(/\.jsonl$/, "").trim();
+  return rawId || null;
 }
 
 function extractClaudeSessionFile(lsofOutput: string): string | null {
   for (const line of lsofOutput.split(/\r?\n/)) {
     const match = line.match(/(\S*\.claude\/projects\/\S+?\.jsonl)\b/);
     if (match?.[1]) return match[1];
-  }
-  return null;
-}
-
-function extractClaudeSessionId(sessionFile: string): string | null {
-  const rawId = path.basename(sessionFile, ".jsonl").trim();
-  return rawId || null;
-}
-
-function extractCwdFromLsof(lsofOutput: string): string | null {
-  for (const line of lsofOutput.split(/\r?\n/)) {
-    if (!/\bcwd\b/.test(line)) continue;
-    const start = line.indexOf("/");
-    if (start >= 0) return line.slice(start).trim();
-  }
-  return null;
-}
-
-function latestClaudeSessionFileForCwd(cwd: string | null, homeDir: string, claimedRawIds: Set<string>): string | null {
-  if (!cwd) return null;
-  return newestJsonlFile(path.join(homeDir, ".claude", "projects", encodeClaudeProjectDir(cwd)), (filePath) => {
-    const rawId = extractClaudeSessionId(filePath);
-    return Boolean(rawId && !claimedRawIds.has(rawId));
-  });
-}
-
-function latestCodexSessionFileForCwd(cwd: string | null, homeDir: string, claimedRawIds: Set<string>): string | null {
-  if (!cwd) return null;
-  return newestJsonlFile(path.join(homeDir, ".codex", "sessions"), (filePath) => {
-    const rawId = extractCodexSessionId(filePath);
-    return Boolean(rawId && !claimedRawIds.has(rawId) && codexSessionCwd(filePath) === cwd);
-  });
-}
-
-function encodeClaudeProjectDir(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
-}
-
-function newestJsonlFile(root: string, matches: (filePath: string) => boolean = () => true): string | null {
-  if (!fs.existsSync(root)) return null;
-  const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
-  const stack = [root];
-
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (!dir) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const filePath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(filePath);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-      try {
-        candidates.push({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs });
-      } catch {
-        // Ignore files that disappear while scanning.
-      }
-    }
-  }
-
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return candidates.find((candidate) => matches(candidate.filePath))?.filePath ?? null;
-}
-
-function codexSessionCwd(filePath: string): string | null {
-  try {
-    const firstLine = fs.readFileSync(filePath, "utf-8").split(/\r?\n/, 1)[0];
-    if (!firstLine) return null;
-    const parsed = JSON.parse(firstLine) as {
-      type?: unknown;
-      payload?: { cwd?: unknown };
-      git?: { cwd?: unknown };
-    };
-    if (parsed.type === "session_meta" && typeof parsed.payload?.cwd === "string") return parsed.payload.cwd;
-    if (!parsed.type && typeof parsed.git?.cwd === "string") return parsed.git.cwd;
-  } catch {
-    return null;
   }
   return null;
 }

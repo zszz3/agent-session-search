@@ -40,6 +40,35 @@ describe("live session detection", () => {
     ]);
   });
 
+  it("maps plain Codex and Claude processes through their open session files during the default live snapshot", async () => {
+    const lsofCalls: string[][] = [];
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "223 /opt/homebrew/bin/codex\n224 /opt/homebrew/bin/claude";
+        if (command === "lsof") {
+          lsofCalls.push(args);
+          if (args.join(" ") === "-p 223") {
+            return "codex 223 user 10r REG 1,4 0 1 /tmp/.codex/sessions/2026/06/01/rollout-2026-06-01T19-11-30-019e82e1-b60d-7b12-95c3-d33e1d05f0a9.jsonl\n";
+          }
+          if (args.join(" ") === "-p 224") {
+            return "claude 224 user 10r REG 1,4 0 1 /tmp/.claude/projects/-work-app/claude-live-1.jsonl\n";
+          }
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([
+      { family: "codex", rawId: "019e82e1-b60d-7b12-95c3-d33e1d05f0a9", pid: 223 },
+      { family: "claude", rawId: "claude-live-1", pid: 224 },
+    ]);
+    expect(lsofCalls).toEqual([
+      ["-p", "223"],
+      ["-p", "224"],
+    ]);
+  });
+
   it("maps a plain running Codex process through its open session file", () => {
     expect(
       detectLiveSessionsFromProcessLines(
@@ -75,100 +104,10 @@ describe("live session detection", () => {
     ]);
   });
 
-  it("falls back to the newest Claude project session for a plain process cwd", async () => {
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-live-cwd-"));
-    const projectDir = path.join(homeDir, ".claude", "projects", "-work-app");
-    const sessionFile = path.join(projectDir, "claude-cwd-live.jsonl");
-    fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(sessionFile, JSON.stringify({ type: "user", message: { content: "hello" } }) + "\n");
-
-    const snapshot = await loadLiveSessionSnapshot({
-      platform: "darwin",
-      homeDir,
-      runner: async (command, args) => {
-        if (command === "/bin/ps") return "401 /opt/homebrew/bin/claude";
-        if (command === "lsof" && args.join(" ") === "-p 401") {
-          return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nclaude 401 user cwd DIR 1,4 0 1 /work/app\n";
-        }
-        return "";
-      },
-    });
-
-    expect(snapshot.sessions).toEqual([{ family: "claude", rawId: "claude-cwd-live", pid: 401 }]);
-
-    fs.rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("does not reuse an already detected Claude resume session for cwd fallback", async () => {
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-live-claimed-"));
-    const projectDir = path.join(homeDir, ".claude", "projects", "-work-app");
-    fs.mkdirSync(projectDir, { recursive: true });
-    const resumedFile = path.join(projectDir, "resumed-session.jsonl");
-    const plainFile = path.join(projectDir, "plain-session.jsonl");
-    fs.writeFileSync(plainFile, JSON.stringify({ type: "user", message: { content: "plain" } }) + "\n");
-    fs.writeFileSync(resumedFile, JSON.stringify({ type: "user", message: { content: "resumed" } }) + "\n");
-    const newer = new Date("2026-06-24T12:01:00Z");
-    const older = new Date("2026-06-24T12:00:00Z");
-    fs.utimesSync(resumedFile, newer, newer);
-    fs.utimesSync(plainFile, older, older);
-
-    const snapshot = await loadLiveSessionSnapshot({
-      platform: "darwin",
-      homeDir,
-      runner: async (command, args) => {
-        if (command === "/bin/ps") return "501 /opt/homebrew/bin/claude --resume resumed-session\n502 /opt/homebrew/bin/claude";
-        if (command === "lsof" && args.join(" ") === "-p 502") {
-          return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nclaude 502 user cwd DIR 1,4 0 1 /work/app\n";
-        }
-        return "";
-      },
-    });
-
-    expect(snapshot.sessions).toEqual([
-      { family: "claude", rawId: "resumed-session", pid: 501 },
-      { family: "claude", rawId: "plain-session", pid: 502 },
-    ]);
-
-    fs.rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("falls back to the newest Codex session with the process cwd", async () => {
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codex-live-cwd-"));
-    const sessionsDir = path.join(homeDir, ".codex", "sessions", "2026", "06", "24");
-    const sessionFile = path.join(sessionsDir, "rollout-2026-06-24T12-00-00-019ef947-9168-7690-91e2-df63063e00bc.jsonl");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(
-      sessionFile,
-      JSON.stringify({
-        type: "session_meta",
-        timestamp: "2026-06-24T12:00:00.000Z",
-        payload: { id: "019ef947-9168-7690-91e2-df63063e00bc", cwd: "/work/app" },
-      }) + "\n",
-    );
-
-    const snapshot = await loadLiveSessionSnapshot({
-      platform: "darwin",
-      homeDir,
-      runner: async (command, args) => {
-        if (command === "/bin/ps") return "402 /opt/homebrew/bin/codex";
-        if (command === "lsof" && args.join(" ") === "-p 402") {
-          return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\ncodex 402 user cwd DIR 1,4 0 1 /work/app\n";
-        }
-        return "";
-      },
-    });
-
-    expect(snapshot.sessions).toEqual([{ family: "codex", rawId: "019ef947-9168-7690-91e2-df63063e00bc", pid: 402 }]);
-
-    fs.rmSync(homeDir, { recursive: true, force: true });
-  });
-
   it("does not inspect Codex Desktop app helper processes as CLI sessions", async () => {
     let lsofCalls = 0;
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codex-desktop-ignore-"));
     const snapshot = await loadLiveSessionSnapshot({
       platform: "darwin",
-      homeDir,
       runner: async (command, args) => {
         if (command === "/bin/ps") {
           return [
@@ -191,8 +130,6 @@ describe("live session detection", () => {
 
     expect(snapshot.sessions).toEqual([]);
     expect(lsofCalls).toBe(1);
-
-    fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
   it("maps a running Trae app process through its workspace state database", async () => {

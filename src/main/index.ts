@@ -7,7 +7,6 @@ import {
   ipcMain,
   Menu,
   nativeImage,
-  Notification,
   screen,
   Tray,
   type IpcMainInvokeEvent,
@@ -50,7 +49,6 @@ import {
 import { loadUsageQuotaSnapshot } from "../core/quota";
 import { focusLiveSessionTerminal } from "../core/session-focus";
 import { createCachedLiveSessionSnapshotLoader } from "../core/session-activity";
-import { type TrackedLiveSession, updateLiveTracker } from "../core/live-transitions";
 import { resolveSummaryEndpoint, summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
 import {
   isLocalCliEndpoint,
@@ -112,7 +110,6 @@ import {
   AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS,
   INITIAL_INDEX_DELAY_MS,
   INITIAL_SKILL_USAGE_REFRESH_DELAY_MS,
-  LIVE_SESSION_REFRESH_INTERVAL_MS,
 } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
@@ -475,8 +472,6 @@ let activeIndexRun: Promise<IndexStatus> | null = null;
 let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
 let initialSkillUsageTimer: ReturnType<typeof setTimeout> | null = null;
 let autoSkillUsageTimer: ReturnType<typeof setInterval> | null = null;
-let liveNotifyTimer: ReturnType<typeof setInterval> | null = null;
-let liveTracker = new Map<string, TrackedLiveSession>();
 let registeredGlobalShortcut: string | null = null;
 let remoteWatchManager: RemoteWatchManager | null = null;
 let remoteEnvironmentLifecycle: RemoteEnvironmentLifecycle | null = null;
@@ -1110,86 +1105,7 @@ async function runIndexSync(): Promise<IndexStatus> {
   return activeIndexRun;
 }
 
-const LIVE_NOTIFY_INTERVAL_MS = LIVE_SESSION_REFRESH_INTERVAL_MS;
 const loadCachedLiveSessionSnapshot = createCachedLiveSessionSnapshotLoader();
-
-const LIVE_FAMILY_LABEL: Record<TrackedLiveSession["family"], string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  tclaude: "TClaude",
-  tcodex: "TCodex",
-  codebuddy: "CodeBuddy",
-  trae: "Trae",
-};
-
-async function pollLiveSessionsForNotifications(): Promise<void> {
-  const settings = getSettings();
-  if (!settings.notifyOnSessionComplete) {
-    // Reset so re-enabling does not retroactively report sessions that ended while off.
-    if (liveTracker.size > 0) liveTracker = new Map();
-    return;
-  }
-
-  let sessions;
-  try {
-    const snapshot = await loadCachedLiveSessionSnapshot({ includeTrae: settings.includeTrae });
-    if (snapshot.error) return;
-    sessions = snapshot.sessions;
-  } catch {
-    return;
-  }
-
-  const { tracker, completed } = updateLiveTracker(liveTracker, sessions, Date.now());
-  liveTracker = tracker;
-  if (completed.length === 0) return;
-
-  const minDurationMs = settings.notifyMinDurationSeconds * 1000;
-  for (const session of completed) {
-    if (session.durationMs < minDurationMs) continue;
-    const familyLabel = LIVE_FAMILY_LABEL[session.family] ?? session.family;
-    const resolved = store?.findByRawId(session.rawId) ?? null;
-    const descriptor = resolved?.displayTitle || resolved?.firstQuestion || resolved?.projectPath || "";
-    const minutes = Math.max(1, Math.round(session.durationMs / 60_000));
-    showDesktopNotification(`${familyLabel} session finished`, descriptor ? truncateNotificationBody(descriptor) : `Ran for ~${minutes} min`);
-  }
-}
-
-// The app runs as the unsigned Electron binary, so macOS denies UNUserNotification
-// (the native Notification fails silently). osascript shows a banner without
-// per-app authorization; other platforms use the native API.
-function showDesktopNotification(title: string, body: string): void {
-  if (process.platform === "darwin") {
-    const escape = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    execFile("osascript", ["-e", `display notification "${escape(body)}" with title "${escape(title)}"`], () => {
-      // Ignore failures (e.g. notifications disabled for the script runner).
-    });
-    return;
-  }
-  if (Notification.isSupported()) {
-    const notification = new Notification({ title, body });
-    notification.on("click", () => showWindow());
-    notification.show();
-  }
-}
-
-function truncateNotificationBody(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > 120 ? `${trimmed.slice(0, 119)}…` : trimmed;
-}
-
-function startLiveNotifyPolling(): void {
-  if (liveNotifyTimer) return;
-  liveNotifyTimer = setInterval(() => {
-    void pollLiveSessionsForNotifications();
-  }, LIVE_NOTIFY_INTERVAL_MS);
-}
-
-function stopLiveNotifyPolling(): void {
-  if (!liveNotifyTimer) return;
-  clearInterval(liveNotifyTimer);
-  liveNotifyTimer = null;
-  liveTracker = new Map();
-}
 
 let summaryBackfillRunning = false;
 
@@ -1888,7 +1804,6 @@ app.whenReady().then(() => {
   setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
   startAutoIndexRefresh();
   startAutoSkillUsageRefresh();
-  startLiveNotifyPolling();
 });
 
 app.on("window-all-closed", () => {
@@ -1902,7 +1817,6 @@ app.on("activate", () => {
 app.on("before-quit", () => {
   stopAutoIndexRefresh();
   stopAutoSkillUsageRefresh();
-  stopLiveNotifyPolling();
   remoteEnvironmentLifecycle?.stopAll();
   void stopCodexChatProxy();
   globalShortcut.unregisterAll();
