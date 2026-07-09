@@ -104,6 +104,34 @@ describe("live session detection", () => {
     ]);
   });
 
+  it("infers a plain running Claude session from its cwd when lsof does not expose the session file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-live-"));
+    const home = path.join(root, "home");
+    const cwd = path.join(root, "work app");
+    const projectDir = path.join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9-]/g, "-"));
+    const sessionFile = path.join(projectDir, "claude-inferred-1.jsonl");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(sessionFile, '{"type":"mode","sessionId":"claude-inferred-1"}\n');
+    fs.utimesSync(sessionFile, new Date("2026-07-09T23:00:00Z"), new Date("2026-07-09T23:00:00Z"));
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      homeDir: home,
+      runner: async (command, args) => {
+        if (command === "/bin/ps" && args[0] === "-axo") return "424 /opt/homebrew/bin/claude code";
+        if (command === "/bin/ps" && args.join(" ") === "-o lstart= -p 424") return "Wed Jul  8 21:00:00 2026";
+        if (command === "lsof" && args.join(" ") === "-p 424") {
+          return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nclaude 424 user cwd DIR 1,4 0 1 ${cwd}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "claude", rawId: "claude-inferred-1", pid: 424 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("does not inspect Codex Desktop app helper processes as CLI sessions", async () => {
     let lsofCalls = 0;
     const snapshot = await loadLiveSessionSnapshot({

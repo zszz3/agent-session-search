@@ -1,10 +1,14 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { LIVE_SESSION_SNAPSHOT_CACHE_TTL_MS } from "./refresh-policy";
 import type { LiveSession, LiveSessionFamily, LiveSessionSnapshot } from "./types";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => import("node:sqlite").DatabaseSync };
+const CLAUDE_SESSION_START_SKEW_MS = 2 * 60 * 1000;
 
 type ProcessListRunner = (command: string, args: string[]) => Promise<string>;
 type LiveSessionSnapshotLoader = (options?: LoadLiveSessionOptions) => Promise<LiveSessionSnapshot>;
@@ -19,6 +23,7 @@ export interface LoadLiveSessionOptions {
   runner?: ProcessListRunner;
   now?: Date;
   includeTrae?: boolean;
+  homeDir?: string;
 }
 
 export interface CachedLiveSessionSnapshotLoaderOptions {
@@ -82,6 +87,7 @@ function liveSessionSnapshotCacheKey(options: LoadLiveSessionOptions): string {
   return JSON.stringify({
     platform: options.platform ?? process.platform,
     includeTrae: options.includeTrae !== false,
+    homeDir: options.homeDir ?? os.homedir(),
   });
 }
 
@@ -103,7 +109,7 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
     const [codexSessionFilesByPid, claudeSessionFilesByPid] =
       platform === "win32"
         ? [new Map<number, string>(), new Map<number, string>()]
-        : await Promise.all([loadPlainCodexSessionFiles(lines, runner), loadPlainClaudeSessionFiles(lines, runner)]);
+        : await Promise.all([loadPlainCodexSessionFiles(lines, runner), loadPlainClaudeSessionFiles(lines, runner, options.homeDir ?? os.homedir())]);
     const traeSessionIdsByPid =
       platform === "win32" || options.includeTrae === false ? new Map<number, string>() : await loadTraeSessionIds(lines, runner);
 
@@ -124,8 +130,12 @@ async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRu
   return loadPlainSessionFiles(lines, runner, isPlainCodexCommand, extractCodexSessionFile);
 }
 
-async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
-  return loadPlainSessionFiles(lines, runner, isPlainClaudeCommand, extractClaudeSessionFile);
+async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner, homeDir = os.homedir()): Promise<Map<number, string>> {
+  return loadPlainSessionFiles(lines, runner, isPlainClaudeCommand, extractClaudeSessionFile, async (pid, lsofOutput) => {
+    const cwd = extractProcessCwd(lsofOutput);
+    if (!cwd) return null;
+    return findLatestClaudeSessionFileForCwd(homeDir, cwd, await loadProcessStartedAtMs(pid, runner));
+  });
 }
 
 async function loadPlainSessionFiles(
@@ -133,6 +143,7 @@ async function loadPlainSessionFiles(
   runner: ProcessListRunner,
   isPlainCommand: (tokens: string[]) => boolean,
   extractSessionFile: (lsofOutput: string) => string | null,
+  fallbackSessionFile?: (pid: number, lsofOutput: string) => Promise<string | null> | string | null,
 ): Promise<Map<number, string>> {
   const sessionFiles = new Map<number, string>();
   const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
@@ -141,7 +152,8 @@ async function loadPlainSessionFiles(
   await Promise.all(
     pids.map(async (pid) => {
       try {
-        const sessionFile = extractSessionFile(await runner("lsof", ["-p", String(pid)]));
+        const lsofOutput = await runner("lsof", ["-p", String(pid)]);
+        const sessionFile = extractSessionFile(lsofOutput) ?? (await fallbackSessionFile?.(pid, lsofOutput));
         if (sessionFile) sessionFiles.set(pid, sessionFile);
       } catch {
         // A process can exit between ps and lsof; ignore it and keep the rest.
@@ -150,6 +162,38 @@ async function loadPlainSessionFiles(
   );
 
   return sessionFiles;
+}
+
+async function loadProcessStartedAtMs(pid: number, runner: ProcessListRunner): Promise<number | null> {
+  try {
+    const startedAtMs = Date.parse((await runner("/bin/ps", ["-o", "lstart=", "-p", String(pid)])).trim());
+    return Number.isFinite(startedAtMs) ? startedAtMs : null;
+  } catch {
+    return null;
+  }
+}
+
+function findLatestClaudeSessionFileForCwd(homeDir: string, cwd: string, processStartedAtMs: number | null): string | null {
+  const projectDir = path.join(homeDir, ".claude", "projects", encodeClaudeProjectDir(cwd));
+  let newest: { filePath: string; mtimeMs: number } | null = null;
+
+  try {
+    for (const entry of fs.readdirSync(projectDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      const filePath = path.join(projectDir, entry.name);
+      const stat = fs.statSync(filePath);
+      if (processStartedAtMs !== null && stat.mtimeMs < processStartedAtMs - CLAUDE_SESSION_START_SKEW_MS) continue;
+      if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { filePath, mtimeMs: stat.mtimeMs };
+    }
+  } catch {
+    return null;
+  }
+
+  return newest?.filePath ?? null;
+}
+
+function encodeClaudeProjectDir(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
 async function loadTraeSessionIds(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
@@ -334,6 +378,15 @@ function extractClaudeSessionFile(lsofOutput: string): string | null {
   for (const line of lsofOutput.split(/\r?\n/)) {
     const match = line.match(/(\S*\.claude\/projects\/\S+?\.jsonl)\b/);
     if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function extractProcessCwd(lsofOutput: string): string | null {
+  for (const line of lsofOutput.split(/\r?\n/)) {
+    if (!/\s+cwd\s+/.test(line)) continue;
+    const start = line.indexOf("/");
+    if (start >= 0) return line.slice(start).trim();
   }
   return null;
 }
