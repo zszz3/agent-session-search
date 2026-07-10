@@ -4,7 +4,7 @@
 
 **Goal:** Add local recent-search history and make standalone case-insensitive `AND` equivalent to the existing implicit AND search.
 
-**Architecture:** A focused renderer helper owns history normalization and resilient localStorage access. `SearchBox` owns the dropdown while the App records a query only when a main-list result is opened; `SessionStore` normalizes explicit AND before its existing FTS and fallback matching paths.
+**Architecture:** A focused renderer helper owns history normalization and resilient localStorage access. `SearchBox` keeps typing entirely local, runs and records a query only on Enter, while `SessionStore` normalizes explicit AND before its existing FTS and fallback matching paths.
 
 **Tech Stack:** TypeScript, React, SQLite FTS5, localStorage, Vitest
 
@@ -123,7 +123,7 @@ git add src/renderer/src/search-history.ts src/renderer/src/search-history.test.
 git commit -m "feat: store recent searches locally"
 ```
 
-### Task 3: Add the history dropdown and record-on-open behavior
+### Task 3: Add the history dropdown and Enter-to-search behavior
 
 **Files:**
 - Modify: `src/renderer/src/App.tsx`
@@ -133,7 +133,7 @@ git commit -m "feat: store recent searches locally"
 
 - [ ] **Step 1: Add failing renderer contract tests**
 
-Assert `SearchBox` imports and uses `readSearchHistory`, `deleteSearch`, and `clearSearchHistory`; renders `recent-search-dropdown`, `recent-search-item`, and clear/delete actions; keeps Enter wired directly to `onSubmit(value)`; and immediately commits a clicked history item. Assert the App uses `recordSearch` only in the main search-result open wrapper.
+Assert `SearchBox` imports and uses `readSearchHistory`, `recordSearch`, `deleteSearch`, and `clearSearchHistory`; renders `recent-search-dropdown`, `recent-search-item`, and clear/delete actions; does not debounce or invoke the App while typing; and calls `onSearch(value)` plus `recordSearch` only from the Enter path.
 
 - [ ] **Step 2: Run renderer tests and verify failure**
 
@@ -150,13 +150,14 @@ const [history, setHistory] = useState(() => readSearchHistory(window.localStora
 const [focused, setFocused] = useState(false);
 ```
 
-Keep Enter direct:
+Run and record only on Enter:
 
 ```ts
-onSubmit(value);
+onSearch(value);
+setHistory((current) => recordSearch(window.localStorage, current, value));
 ```
 
-History selection sets the displayed value, commits immediately, and closes the dropdown without recording. The App's main-result open wrapper records the current non-empty query before calling `openDetail`. Use `onMouseDown={(event) => event.preventDefault()}` on the dropdown so its controls run before input blur.
+History selection only sets the displayed value and closes the dropdown. It does not search or record until Enter is pressed. Use `onMouseDown={(event) => event.preventDefault()}` on the dropdown so its controls run before input blur.
 
 - [ ] **Step 4: Add compact dropdown styles**
 

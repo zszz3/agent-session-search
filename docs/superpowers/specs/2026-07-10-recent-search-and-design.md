@@ -10,8 +10,8 @@ This change adds:
 
 - up to 10 recent non-empty searches stored locally;
 - a recent-search dropdown when the empty search input receives focus;
-- click-to-run, per-item deletion, and clear-all actions;
-- recording a non-empty query when it actually leads to opening a search result;
+- click-to-fill, per-item deletion, and clear-all actions;
+- explicit Enter-to-search behavior that records the submitted query;
 - case-insensitive standalone `AND` as an alias for the existing implicit AND behavior.
 
 It does not add quoted phrases, exclusion operators, role search, cloud synchronization, or a general query parser.
@@ -44,23 +44,23 @@ History matching remains case-sensitive for display fidelity: `Codex` and `codex
 
 When the input is focused and its value is empty, show a dropdown containing recent searches. Each item provides:
 
-- a main button that fills the input and immediately commits the selected search;
+  - a main button that fills the input without running the selected search;
 - a delete button that removes only that item without running it.
 
 A `Clear recent searches / 清空最近搜索` action removes all entries. The dropdown closes when the input loses focus, Escape is pressed, a history item is chosen, or the user begins typing a non-empty value. Pointer interactions inside the dropdown must complete before blur closes it.
 
 No dropdown is shown when history is empty.
 
-## Open and Record Behavior
+## Search and Record Behavior
 
-Search remains live and has no separate submission state.
+Search runs only when the user explicitly presses Enter.
 
-- Enter always keeps the existing behavior and opens the selected session immediately.
-- Double-clicking a result or using the existing keyboard open action behaves the same way.
-- When a result is actually opened from the main search list and the current query is non-empty, record the trimmed query.
-- Opening a session from unrelated surfaces such as the AI assistant does not record the main search query.
-- Choosing a recent search only fills and commits the query so live results refresh; it does not reorder or record the history until a result is opened.
-- Empty searches are never recorded.
+- Typing updates only SearchBox-local state and does not query SQLite or rerender the result list.
+- Plain Enter sends the current input to the App, runs the search, and records a non-empty trimmed query.
+- Plain Enter no longer opens the selected session.
+- Choosing a recent search only fills the input; the user presses Enter to run it.
+- Empty Enter clears the active search but does not add a history entry.
+- Existing double-click, Space, and modified keyboard actions continue to open or resume sessions.
 
 ## Explicit AND Semantics
 
@@ -80,11 +80,11 @@ A query containing only `AND` normalizes to an empty query and behaves like an e
 
 ## Data Flow
 
-1. Typing updates local SearchBox state and retains the existing debounce.
-2. The renderer sends the original display query in `SearchOptions`.
-3. `SessionStore.searchSessionPage` normalizes standalone `AND` before FTS and fallback matching.
-4. Results render through the existing list and selection flow.
-5. Opening a main-list result records the trimmed query locally.
+1. Typing updates only local SearchBox state.
+2. Enter records the trimmed non-empty query and sends the original display query to the App.
+3. The renderer sends that query in `SearchOptions`.
+4. `SessionStore.searchSessionPage` normalizes standalone `AND` before FTS and fallback matching.
+5. Results render through the existing list and selection flow.
 
 ## Error Handling
 
@@ -114,10 +114,10 @@ A query containing only `AND` normalizes to an empty query and behaves like an e
 ### Renderer contract tests
 
 - the dropdown renders history items, deletion, and clear-all controls;
-- Enter retains the existing immediate-open behavior;
-- opening a main-list result records a non-empty query;
-- opening an unrelated session does not record the current query;
-- selecting history immediately fills and commits the search without recording it.
+- typing does not call the App search callback;
+- Enter runs and records a non-empty search;
+- empty Enter clears results without recording history;
+- selecting history fills the input without running or recording it.
 
 ## Compatibility
 

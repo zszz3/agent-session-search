@@ -329,13 +329,10 @@ function loadInitialSidebarSections(): SidebarSectionsState {
   return readSidebarSections(window.localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY));
 }
 
-const SEARCH_DEBOUNCE_MS = 300;
-
 // The search input keeps its typed value in local state so each keystroke only
 // re-renders this tiny component instead of the whole App tree (sidebar, stats,
-// and the full result list). The committed query is pushed to the parent on a
-// debounce, and that commit is wrapped in startTransition so the heavy result
-// re-render stays interruptible and never blocks the next keystroke.
+// and the full result list). The query is pushed to the parent only when the
+// user presses Enter, so typing never triggers background search work.
 const SearchBox = forwardRef<
   HTMLInputElement,
   {
@@ -343,43 +340,28 @@ const SearchBox = forwardRef<
     recentLabel: string;
     clearRecentLabel: string;
     deleteRecentLabel: string;
-    onQueryChange: (value: string) => void;
-    onSubmit: (value: string) => void;
+    onSearch: (value: string) => void;
   }
->(function SearchBox({ placeholder, recentLabel, clearRecentLabel, deleteRecentLabel, onQueryChange, onSubmit }, ref) {
+>(function SearchBox({ placeholder, recentLabel, clearRecentLabel, deleteRecentLabel, onSearch }, ref) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>(() =>
     typeof window === "undefined" ? [] : readSearchHistory(window.localStorage),
   );
   const [focused, setFocused] = useState(false);
-  const commitTimerRef = useRef<number | undefined>(undefined);
-
-  function cancelPendingCommit(): void {
-    if (commitTimerRef.current === undefined) return;
-    window.clearTimeout(commitTimerRef.current);
-    commitTimerRef.current = undefined;
-  }
-
-  useEffect(
-    () => () => {
-      if (commitTimerRef.current !== undefined) window.clearTimeout(commitTimerRef.current);
-    },
-    [],
-  );
 
   function handleChange(next: string): void {
     setValue(next);
     setFocused(true);
-    cancelPendingCommit();
-    commitTimerRef.current = window.setTimeout(() => {
-      startTransition(() => onQueryChange(next));
-    }, SEARCH_DEBOUNCE_MS);
   }
 
   function selectRecentSearch(query: string): void {
-    cancelPendingCommit();
     setValue(query);
-    onQueryChange(query);
+    setFocused(false);
+  }
+
+  function runSearch(): void {
+    onSearch(value);
+    setHistory((current) => recordSearch(window.localStorage, current, value));
     setFocused(false);
   }
 
@@ -404,13 +386,13 @@ const SearchBox = forwardRef<
             setFocused(false);
             event.currentTarget.blur();
           } else if (!event.metaKey && !event.ctrlKey && event.key === "Enter") {
-            onSubmit(value);
+            runSearch();
           }
         }}
         placeholder={placeholder}
         autoFocus
       />
-      <span className="kbd-hint">{RUNTIME_PLATFORM === "darwin" ? "⌘K" : "Ctrl+K"}</span>
+      <span className="kbd-hint" title={placeholder}>Enter</span>
       <span className="kbd-hint" title="Resume selected session in the default terminal">
         {RUNTIME_PLATFORM === "darwin" ? "⌘↵" : "Ctrl+Enter"}
       </span>
@@ -1067,13 +1049,13 @@ export function App(): ReactElement {
         const session = displayedResults.find((item) => item.sessionKey === selectedKey);
         if (session) {
           event.preventDefault();
-          openSearchResult(session);
+          void openDetail(session);
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [displayedResults, selectedKey, detail, remoteDetail, dialog, migrationDialog, deleteSessionCandidate, deletingSession, deleteTagName, contextMenu, skillsOpen, apiConfigOpen, aiAssistantOpen, settingsOpen, sshDialogOpen, remoteSessionsOpen, actionStatus, query, t]);
+  }, [displayedResults, selectedKey, detail, remoteDetail, dialog, migrationDialog, deleteSessionCandidate, deletingSession, deleteTagName, contextMenu, skillsOpen, apiConfigOpen, aiAssistantOpen, settingsOpen, sshDialogOpen, remoteSessionsOpen, actionStatus, t]);
 
   useEffect(() => {
     if (!selectedKey) return;
@@ -1191,14 +1173,6 @@ export function App(): ReactElement {
         setActionStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
       }
     }
-  }
-
-  function openSearchResult(session: SessionSearchResult, searchQuery = query): void {
-    const normalizedQuery = searchQuery.trim();
-    if (normalizedQuery) {
-      recordSearch(window.localStorage, readSearchHistory(window.localStorage), normalizedQuery);
-    }
-    void openDetail(session);
   }
 
   function closeDetail(): void {
@@ -1681,10 +1655,10 @@ export function App(): ReactElement {
   // Stable callbacks for SessionRow so the memoized rows don't re-render on every
   // App render (e.g. when a search commits). The latest closures are read via a
   // ref so the callbacks can stay referentially stable without going stale.
-  const rowHandlersRef = useRef({ openSearchResult, beginRename, toggleFavorite });
-  rowHandlersRef.current = { openSearchResult, beginRename, toggleFavorite };
+  const rowHandlersRef = useRef({ openDetail, beginRename, toggleFavorite });
+  rowHandlersRef.current = { openDetail, beginRename, toggleFavorite };
   const handleRowSelect = useCallback((sessionKey: string) => setSelectedKey(sessionKey), []);
-  const handleRowOpen = useCallback((session: SessionSearchResult) => rowHandlersRef.current.openSearchResult(session), []);
+  const handleRowOpen = useCallback((session: SessionSearchResult) => void rowHandlersRef.current.openDetail(session), []);
   const handleRowRename = useCallback((session: SessionSearchResult) => rowHandlersRef.current.beginRename(session), []);
   const handleRowFavorite = useCallback((session: SessionSearchResult) => void rowHandlersRef.current.toggleFavorite(session), []);
   const handleRowContextMenu = useCallback((event: ReactMouseEvent, session: SessionSearchResult) => {
@@ -1912,10 +1886,7 @@ export function App(): ReactElement {
             recentLabel={t("Recent searches", "最近搜索")}
             clearRecentLabel={t("Clear", "清空")}
             deleteRecentLabel={t("Delete recent search", "删除最近搜索")}
-            onQueryChange={setQuery}
-            onSubmit={(searchQuery) => {
-              if (selected) openSearchResult(selected, searchQuery);
-            }}
+            onSearch={setQuery}
           />
           <div className="toolbar-filters">
             {selectedProject ? (
