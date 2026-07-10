@@ -16,6 +16,8 @@ const getSession = mcp.getSession as (
 ) => (SearchResult & { messages: Array<{ content: string }>; totalMessages: number; returned: number; nextOffset: number | null }) | null;
 const listProjects = mcp.listProjects as (db: Db) => Array<{ project: string; sessions: number }>;
 const listTags = mcp.listTags as (db: Db) => string[];
+type LatestResult = { sessionKey: string; title: string; source: string; project: string; timestamp: string; summary: string | null };
+const getLatestSessions = mcp.getLatestSessions as (db: Db, args?: Record<string, unknown>) => LatestResult[];
 type WriteResult = { ok: boolean; error?: string; tags?: string[]; favorited?: boolean; pinned?: boolean; hidden?: boolean };
 const tagSession = mcp.tagSession as (db: Db, args: Record<string, unknown>) => WriteResult;
 const toggleFavorite = mcp.toggleFavorite as (db: Db, args: Record<string, unknown>) => WriteResult;
@@ -157,6 +159,28 @@ describe("MCP write functions", () => {
     const result = tagSession(db, { sessionKey: "missing", action: "add", tag: "x" });
     expect(result.ok).toBe(false);
     expect(result.error).toBe("Session not found.");
+  });
+
+  it("get_latest_sessions returns the most recently indexed sessions", () => {
+    const { db } = seedStore();
+    // codex:multi has fileMtimeMs 30 (highest), so it should be first.
+    const latest = getLatestSessions(db, { limit: 3 });
+    expect(latest[0].sessionKey).toBe("codex:multi");
+    expect(latest.length).toBe(3);
+  });
+
+  it("get_latest_sessions filters by source", () => {
+    const { db } = seedStore();
+    const latest = getLatestSessions(db, { source: "codex-cli", limit: 10 });
+    expect(latest.every((r) => r.source === "codex-cli")).toBe(true);
+    expect(latest.length).toBe(3);
+  });
+
+  it("get_latest_sessions filters by projectPath substring", () => {
+    const { db } = seedStore();
+    const latest = getLatestSessions(db, { projectPath: "other" });
+    expect(latest).toHaveLength(1);
+    expect(latest[0].sessionKey).toBe("codex:def");
   });
 
   it("rejects an empty tag and an invalid action", () => {

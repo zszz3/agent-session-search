@@ -99,7 +99,19 @@ else
   ok "Global command registered"
 fi
 
-# ── 6. launch ──────────────────────────────────────────────────
+# ── 6. register MCP server ─────────────────────────────────────
+# Register the agent-session-search MCP server in Claude Code and Codex so
+# they can search/manage past sessions and run migrate_session from chat.
+SETUP_MCP="$(npm prefix -g 2>/dev/null)/bin/agent-session-search-setup-mcp"
+if [ -x "$SETUP_MCP" ]; then
+  info "Registering MCP server in Claude Code / Codex …"
+  "$SETUP_MCP" || warn "MCP registration failed (non-fatal — you can run 'agent-session-search-setup-mcp' manually later)"
+  ok "MCP server registered"
+else
+  warn "setup-mcp command not found — MCP server not registered. Run 'node bin/setup-mcp.cjs' manually after install."
+fi
+
+# ── 7. launch ──────────────────────────────────────────────────
 # If the app is already running, shut it down first so start.sh always
 # launches a fresh instance. The Electron main process runs
 # out/main/index.js; matching on that path avoids killing the standalone

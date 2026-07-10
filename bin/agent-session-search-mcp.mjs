@@ -141,6 +141,31 @@ export function listTags(db) {
   return db.prepare("SELECT name FROM tags ORDER BY lower(name)").all().map((row) => row.name);
 }
 
+// Returns the most recently active sessions (by file mtime / last activity).
+// This lets an agent find "the session I'm currently in" or "my latest codex
+// session" without a sessionKey — the missing piece for natural-language
+// migration like "把这次会话迁移到 claude".
+export function getLatestSessions(db, { source = "", projectPath = "", limit = 5 } = {}) {
+  const cap = clamp(limit, 1, 20);
+  const filters = [];
+  const params = [];
+  if (source) {
+    filters.push("s.source = ?");
+    params.push(source);
+  }
+  if (projectPath) {
+    filters.push("s.project_path LIKE ?");
+    params.push(`%${projectPath}%`);
+  }
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const rows = db
+    .prepare(
+      `SELECT ${resultColumns(db, "s.")} FROM sessions s ${where} ORDER BY s.file_mtime_ms DESC LIMIT ?`,
+    )
+    .all(...params, cap);
+  return rows.map(toResult);
+}
+
 // --- Write operations -----------------------------------------------------
 // These mirror the semantics of SessionStore's write methods, reimplemented in
 // raw SQL because this bin runs standalone (outside the app bundle) and can't
@@ -356,6 +381,24 @@ async function runServer() {
   );
 
   server.registerTool(
+    "get_latest_sessions",
+    {
+      description:
+        "获取最近活跃的会话（按修改时间倒序）。Get the most recently active sessions by mtime. " +
+        "用于找到「当前会话」「最近的 codex/claude 会话」等，不需要 sessionKey。" +
+        "典型场景：用户说「把这次会话迁移到 claude」「迁移最近的 codex 会话」时，" +
+        "先调本工具拿到 sessionKey，再调 migrate_session。" +
+        "可选按 source（如 codex-cli、claude-cli）和 projectPath 过滤。",
+      inputSchema: {
+        source: z.string().describe("Optional source filter, e.g. codex-cli or claude-cli.").optional(),
+        projectPath: z.string().describe("Optional project path substring to filter by.").optional(),
+        limit: z.number().describe("Max results (1-20, default 5).").optional(),
+      },
+    },
+    async (args) => jsonContent(getLatestSessions(db, args)),
+  );
+
+  server.registerTool(
     "tag_session",
     {
       description:
@@ -407,10 +450,14 @@ async function runServer() {
     "migrate_session",
     {
       description:
-        "Migrate a local Claude/Codex/CodeBuddy session into a target agent's session format. Writes the target session file, indexes it so it is immediately searchable, records the migration, and returns a resumeCommand. Does NOT auto-open a terminal (launched is always false); run the returned resumeCommand yourself.",
+        "跨 Agent 迁移会话（Migrate session across agents）。把一个本地会话（Claude Code / Codex / CodeBuddy）迁移到另一个目标 Agent，生成目标 Agent 能直接 resume 的会话文件。" +
+        "典型场景：用户说「把这个会话迁移到 Claude/Codex/CodeBuddy」「把当前对话搬过去」「迁移会话」时调用此工具。" +
+        "流程：先用 search_sessions 找到源会话的 sessionKey，再调用本工具传入 sessionKey 和 target。" +
+        "迁移完成后返回 resumeCommand（如 cd /repo && claude --resume <id>），launched 恒为 false，需要用户自行在终端执行该命令。" +
+        "仅支持本地会话（environmentKind=local），远程会话不可迁移。",
       inputSchema: {
-        sessionKey: z.string().describe("The sessionKey of the local source session to migrate."),
-        target: z.enum(["claude", "codex", "codebuddy"]).describe("Target agent to migrate into."),
+        sessionKey: z.string().describe("要迁移的源会话 sessionKey，可通过 search_sessions 获取。"),
+        target: z.enum(["claude", "codex", "codebuddy"]).describe("目标 Agent：迁移到 claude（Claude Code）、codex（Codex）还是 codebuddy（CodeBuddy）。"),
       },
     },
     async (args) => {

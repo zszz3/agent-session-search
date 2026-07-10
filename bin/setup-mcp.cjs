@@ -23,36 +23,58 @@ function nodeMajor(version) {
   return parseInt(String(version).replace(/^v/, "").split(".")[0], 10) || 0;
 }
 
-// The MCP server needs node >= 22 (node:sqlite). The default `node` on PATH may be
-// older, so resolve an absolute path to a recent enough node and bake it into the
-// config; fall back to bare "node" only if nothing better is found.
+// The MCP server needs node >= 22 (node:sqlite). Crucially, node 22's bundled
+// SQLite includes the fts5 module that the SessionStore depends on, while some
+// node 23 builds ship SQLite without fts5 — so we prefer node 22 specifically
+// and only fall back to other >=22 versions when 22 is unavailable.
 function nodeCommand() {
+  const candidates = [];
+
+  // The node running this script (e.g. the one start.sh resolved via nvm).
   const base = path.basename(process.execPath).toLowerCase();
-  if ((base === "node" || base === "node.exe") && nodeMajor(process.versions.node) >= 22) {
-    return process.execPath;
+  if (base === "node" || base === "node.exe") {
+    candidates.push(process.execPath);
   }
-  try {
-    const version = require("node:child_process").execSync("node -v", { encoding: "utf8" }).trim();
-    if (nodeMajor(version) >= 22) return "node";
-  } catch {
-    // No node on PATH; keep searching.
-  }
-  const nvmCandidates = [];
+
+  // nvm installs, highest version first.
   const nvmRoot = path.join(homeDir(), ".nvm", "versions", "node");
   try {
     for (const dir of fs.readdirSync(nvmRoot)) {
-      if (nodeMajor(dir) >= 22) nvmCandidates.push(path.join(nvmRoot, dir, "bin", "node"));
+      candidates.push(path.join(nvmRoot, dir, "bin", "node"));
     }
   } catch {
     // No nvm; ignore.
   }
-  // Highest nvm version first, then common install locations.
-  nvmCandidates.sort((a, b) => (a < b ? 1 : -1));
-  const candidates = [...nvmCandidates, "/opt/homebrew/bin/node", "/usr/local/bin/node"];
+
+  // Common install locations.
+  candidates.push("/opt/homebrew/bin/node", "/usr/local/bin/node", "node");
+
+  // First pass: prefer node 22.x (fts5 is reliably available there).
   for (const candidate of candidates) {
     try {
-      if (!fs.existsSync(candidate)) continue;
-      const version = require("node:child_process").execSync(`${JSON.stringify(candidate)} -v`, { encoding: "utf8" }).trim();
+      let version;
+      if (candidate === "node") {
+        version = require("node:child_process").execSync("node -v", { encoding: "utf8" }).trim();
+      } else {
+        if (!fs.existsSync(candidate)) continue;
+        version = require("node:child_process").execSync(`${JSON.stringify(candidate)} -v`, { encoding: "utf8" }).trim();
+      }
+      if (nodeMajor(version) === 22) return candidate;
+    } catch {
+      // Not runnable; try the next candidate.
+    }
+  }
+
+  // Second pass: any node >= 22 (last resort — may lack fts5 on node 23+).
+  for (const candidate of candidates) {
+    try {
+      let version;
+      if (candidate === "node") {
+        version = require("node:child_process").execSync("node -v", { encoding: "utf8" }).trim();
+      } else {
+        if (!fs.existsSync(candidate)) continue;
+        version = require("node:child_process").execSync(`${JSON.stringify(candidate)} -v`, { encoding: "utf8" }).trim();
+      }
       if (nodeMajor(version) >= 22) return candidate;
     } catch {
       // Not runnable; try the next candidate.
