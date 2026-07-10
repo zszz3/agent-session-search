@@ -305,6 +305,8 @@ export function remotePortableSessionFrom(session: SessionSearchResult, messages
     projectPath: session.projectPath,
     startedAt: new Date(session.timestamp).toISOString(),
     messages: portableMessages,
+    isSubagent: session.isSubagent === true,
+    parentSessionId: session.parentSessionId ?? null,
   };
 }
 
@@ -632,6 +634,8 @@ export function parsePortableSession(value: unknown): PortableSession {
     projectPath: session.projectPath,
     startedAt: session.startedAt,
     messages: session.messages.filter(isSessionMessage),
+    isSubagent: session.isSubagent === true,
+    parentSessionId: typeof session.parentSessionId === "string" ? session.parentSessionId : null,
   };
 }
 

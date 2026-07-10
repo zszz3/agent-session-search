@@ -25,6 +25,29 @@ function payload(kind: RemoteSessionFilePayload["kind"], filePath: string, conte
 }
 
 describe("remote session loader", () => {
+  it("detects remote Claude subagent payloads from structured metadata and path", () => {
+    const loaded = loadRemoteSessionPayloads(env, [
+      payload(
+        "claude-project",
+        "/home/me/.claude/projects/-repo/parent-1/subagents/agent-child-1.jsonl",
+        JSON.stringify({
+          type: "user",
+          agentId: "child-1",
+          sessionId: "parent-1",
+          isSidechain: true,
+          cwd: "/repo",
+          message: { role: "user", content: "remote child" },
+        }),
+      ),
+    ]);
+
+    expect(loaded[0].session).toMatchObject({
+      rawId: "child-1",
+      isSubagent: true,
+      parentSessionId: "parent-1",
+    });
+  });
+
   it("loads remote Codex sessions with environment-scoped keys", () => {
     const loaded = loadRemoteSessionPayloads(env, [
       payload(

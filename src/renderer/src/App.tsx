@@ -2950,6 +2950,24 @@ function SettingsDialog({
                 </header>
                 <label className="settings-field settings-toggle">
                   <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Hide subagent sessions", "隐藏 Subagent 会话")}</span>
+                    <span className="settings-field-sub">
+                      {l(
+                        "Exclude subagents from session lists, project counts, and statistics.",
+                        "从会话列表、项目数量和统计中排除 Subagent。",
+                      )}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.hideSubagentSessions)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ hideSubagentSessions: event.currentTarget.checked })}
+                  />
+                </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
                     <span className="settings-field-title">Include ~/.claude-internal</span>
                     <span className="settings-field-sub">{l("Adds a separate Claude Extra source filter.", "添加独立的 Claude Extra 来源过滤项。")}</span>
                   </div>

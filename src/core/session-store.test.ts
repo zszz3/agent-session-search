@@ -64,6 +64,37 @@ const traceEvents: SessionTraceEvent[] = [
 ];
 
 describe("SessionStore", () => {
+  it("persists subagent relationships and excludes them consistently when requested", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:root", rawId: "root", isSubagent: false }), messages, [], []);
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:child",
+        rawId: "child",
+        isSubagent: true,
+        parentSessionId: "root",
+        tokenUsage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 15 },
+      }),
+      [{ role: "user", content: "subagent task", timestamp: "2026-06-01T10:00:00Z", index: 0 }],
+      [],
+      [],
+    );
+
+    expect(store.searchSessionPage({ excludeSubagents: false }).totalCount).toBe(2);
+    expect(store.searchSessionPage({ excludeSubagents: true })).toMatchObject({ totalCount: 1 });
+    expect(store.searchSessions({ excludeSubagents: true }).map((session) => session.sessionKey)).toEqual(["codex:root"]);
+    expect(store.listProjects({ excludeSubagents: true })[0].sessionCount).toBe(1);
+    expect(store.getStats({ period: "allTime", excludeSubagents: true }).total).toMatchObject({
+      sessionCount: 1,
+      messageCount: 2,
+    });
+    expect(store.getSession("codex:child")).toMatchObject({
+      isSubagent: true,
+      parentSessionId: "root",
+    });
+    store.close();
+  });
+
   function migrationRecord(overrides: Partial<SessionMigrationRecord> = {}): SessionMigrationRecord {
     return {
       id: "migration-1",
@@ -145,6 +176,9 @@ describe("SessionStore", () => {
       environmentId: "local",
       environmentKind: "local",
       environmentLabel: "Local",
+      fileMtimeMs: 0,
+      isSubagent: false,
+      parentSessionId: null,
     });
     expect(store.listEnvironments()).toEqual([expect.objectContaining({ id: "local", label: "Local" })]);
   });

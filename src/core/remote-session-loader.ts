@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { loadClaudeCliSessionRows, loadCodexSessionRows, parseCodexSessionMetaLine, parseJsonlText } from "./session-loader";
-import type { CodexConversationLine, LoadedSession, SessionEnvironment, SessionSearchResult } from "./types";
+import type { ClaudeConversationLine, CodexConversationLine, LoadedSession, SessionEnvironment, SessionSearchResult } from "./types";
 
 export type RemoteSessionFileKind = "codex-session" | "codex-index" | "claude-project" | "claude-session-index";
 
@@ -30,13 +30,17 @@ export function loadRemoteSessionPayloads(environment: SessionEnvironment, paylo
       });
       if (candidate) loaded.push(scopeRemoteSession(candidate, environment, "codex"));
     } else if (payload.kind === "claude-project") {
-      const rawId = path.basename(payload.path, ".jsonl");
+      const rows = parseJsonlText(payload.content);
+      const relation = claudeRemoteRelation(payload.path, rows);
+      const rawId = relation.agentId || path.basename(payload.path, ".jsonl");
       const index = claudeIndexMap.get(rawId);
-      const candidate = loadClaudeCliSessionRows(payload.path, parseJsonlText(payload.content), {
+      const candidate = loadClaudeCliSessionRows(payload.path, rows, {
         rawId,
         cwd: index?.cwd,
         startedAt: index?.startedAt,
         stat: { mtimeMs: payload.mtimeMs, size: payload.size },
+        isSubagent: relation.isSubagent,
+        parentSessionId: relation.parentSessionId,
       });
       if (candidate) loaded.push(scopeRemoteSession(candidate, environment, "claude"));
     }
@@ -66,11 +70,35 @@ export function loadRemoteSessionDetailPayload(
       cwd: summary.projectPath,
       startedAt: summary.timestamp,
       stat: { mtimeMs: payload.mtimeMs, size: payload.size },
+      isSubagent: summary.isSubagent,
+      parentSessionId: summary.parentSessionId,
     });
     return candidate ? scopeRemoteSession(candidate, environment, "claude") : null;
   }
 
   return null;
+}
+
+function claudeRemoteRelation(
+  filePath: string,
+  rows: unknown[],
+): { isSubagent: boolean; parentSessionId: string | null; agentId: string | null } {
+  const relationRow = rows.find(
+    (row): row is ClaudeConversationLine =>
+      Boolean(row && typeof row === "object" && ("sessionId" in row || "agentId" in row || "isSidechain" in row)),
+  );
+  const pathParts = filePath.split(/[\\/]/);
+  const subagentsIndex = pathParts.lastIndexOf("subagents");
+  const inSubagentsDirectory = subagentsIndex >= 0;
+  const isSubagent = inSubagentsDirectory || relationRow?.isSidechain === true;
+  const pathParent = subagentsIndex > 0 ? pathParts[subagentsIndex - 1] : null;
+  return {
+    isSubagent,
+    parentSessionId: isSubagent ? relationRow?.sessionId || pathParent : null,
+    agentId: isSubagent
+      ? relationRow?.agentId || path.basename(filePath, ".jsonl").replace(/^agent-?/, "")
+      : null,
+  };
 }
 
 function scopeRemoteSession(loaded: LoadedSession, environment: SessionEnvironment, family: "codex" | "claude"): LoadedSession {

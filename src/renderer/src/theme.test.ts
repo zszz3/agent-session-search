@@ -28,6 +28,14 @@ describe("language storage", () => {
 });
 
 describe("theme controls", () => {
+  it("offers a persisted subagent visibility toggle in settings", () => {
+    const settingsDialog = appSource.slice(appSource.indexOf("function SettingsDialog"));
+    expect(settingsDialog).toContain("Hide subagent sessions");
+    expect(settingsDialog).toContain("隐藏 Subagent 会话");
+    expect(settingsDialog).toContain("checked={Boolean(settings?.hideSubagentSessions)}");
+    expect(settingsDialog).toContain("onSettingsChange({ hideSubagentSessions: event.currentTarget.checked })");
+  });
+
   it("keeps light and dark mode selection inside settings", () => {
     const toolbar = appSource.slice(
       appSource.indexOf('<header className="toolbar">'),

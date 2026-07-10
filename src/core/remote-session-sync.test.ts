@@ -7,6 +7,7 @@ import {
   filterRemoteSessions,
   parseDetailSnapshot,
   parsePortableSession,
+  remotePortableSessionFrom,
   remoteSessionContentHash,
   remoteSessionId,
   SupabaseRemoteSessionClient,
@@ -141,6 +142,15 @@ describe("remote session sync model", () => {
     expect(parseDetailSnapshot(detail).messages).toHaveLength(2);
     expect(parsePortableSession(PORTABLE).sourceAgent).toBe("codex");
     expect(() => parsePortableSession({ ...PORTABLE, sourceAgent: "hermes" })).toThrow("unsupported");
+  });
+
+  it("preserves subagent relationships in portable sessions and defaults older payloads", () => {
+    const portable = remotePortableSessionFrom(
+      { ...SESSION, isSubagent: true, parentSessionId: "parent-1" },
+      PORTABLE.messages,
+    );
+    expect(parsePortableSession(portable)).toMatchObject({ isSubagent: true, parentSessionId: "parent-1" });
+    expect(parsePortableSession(PORTABLE)).toMatchObject({ isSubagent: false, parentSessionId: null });
   });
 
   it("filters remote sessions by title, summary, tags, and search text", () => {

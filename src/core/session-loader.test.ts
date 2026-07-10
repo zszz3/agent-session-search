@@ -16,6 +16,30 @@ import {
 import { TRACE_DETAIL_PREVIEW_MAX_CHARS } from "./trace-detail";
 
 describe("Codex session loading", () => {
+  it("detects current and legacy subagent metadata without treating ordinary forks as subagents", () => {
+    expect(
+      parseCodexSessionMetaLine({
+        type: "session_meta",
+        payload: {
+          id: "child-current",
+          source: { subagent: { thread_spawn: { parent_thread_id: "parent-current", depth: 1 } } },
+        },
+      }),
+    ).toMatchObject({ isSubagent: true, parentSessionId: "parent-current" });
+    expect(
+      parseCodexSessionMetaLine({
+        type: "session_meta",
+        payload: { id: "child-legacy", thread_source: "subagent", parent_thread_id: "parent-legacy" },
+      }),
+    ).toMatchObject({ isSubagent: true, parentSessionId: "parent-legacy" });
+    expect(
+      parseCodexSessionMetaLine({
+        type: "session_meta",
+        payload: { id: "ordinary-fork", forked_from_id: "some-session", originator: "codex-tui", session_id: "ordinary-fork" },
+      }),
+    ).toMatchObject({ isSubagent: false, parentSessionId: null });
+  });
+
   it("skips unchanged source files before parsing JSONL", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codex-skip-"));
     const filePath = path.join(root, "sessions", "2026", "06", "26", "rollout.jsonl");
@@ -576,6 +600,44 @@ describe("Codex session loading", () => {
 });
 
 describe("Claude session loading", () => {
+  it("discovers Claude subagent files and links them to the parent session", () => {
+    const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-subagent-"));
+    const projectDir = path.join(claudeDir, "projects", "-repo");
+    const subagentsDir = path.join(projectDir, "parent-1", "subagents");
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(subagentsDir, "agent-child-1.jsonl"),
+      [
+        JSON.stringify({
+          type: "user",
+          agentId: "child-1",
+          sessionId: "parent-1",
+          isSidechain: true,
+          cwd: "/repo",
+          message: { role: "user", content: "Inspect the parser" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          agentId: "child-1",
+          sessionId: "parent-1",
+          isSidechain: true,
+          message: { role: "assistant", content: "Parser inspected" },
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadClaudeCliSessions(claudeDir);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session).toMatchObject({
+      rawId: "child-1",
+      projectPath: "/repo",
+      isSubagent: true,
+      parentSessionId: "parent-1",
+    });
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+  });
+
   it("reads ai-title metadata without exposing it as a message or changing the explicit source", () => {
     const loaded = loadClaudeCliSessionRows(
       "/tmp/claude-title.jsonl",

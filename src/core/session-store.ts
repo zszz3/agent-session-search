@@ -13,6 +13,7 @@ import type {
   EnvironmentSyncState,
   EnvironmentUpsertInput,
   IndexedSession,
+  ProjectQueryOptions,
   ProjectSummary,
   SearchOptions,
   SessionMigrationRecord,
@@ -87,6 +88,8 @@ interface SessionRow {
   ai_summary_model: string | null;
   ai_summary_at: number | null;
   ai_summary_basis: number | null;
+  is_subagent: 0 | 1;
+  parent_session_id: string | null;
 }
 
 interface EnvironmentRow {
@@ -201,9 +204,10 @@ export class SessionStore {
           INSERT INTO sessions (
             session_key, raw_id, source, environment_id, project_path, file_path, original_title, first_question,
             timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
-            input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at
+            input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at,
+            is_subagent, parent_session_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
@@ -223,7 +227,9 @@ export class SessionStore {
             cached_input_tokens = excluded.cached_input_tokens,
             reasoning_output_tokens = excluded.reasoning_output_tokens,
             total_tokens = excluded.total_tokens,
-            indexed_at = excluded.indexed_at
+            indexed_at = excluded.indexed_at,
+            is_subagent = excluded.is_subagent,
+            parent_session_id = excluded.parent_session_id
         `,
         )
         .run(
@@ -247,6 +253,8 @@ export class SessionStore {
           tokenUsage.reasoningOutputTokens,
           tokenUsage.totalTokens,
           indexedAt,
+          session.isSubagent ? 1 : 0,
+          session.parentSessionId ?? null,
         );
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
@@ -319,7 +327,7 @@ export class SessionStore {
       .prepare(
         `
         SELECT raw_id, source, environment_id, project_path, file_path, original_title, first_question,
-          timestamp, file_mtime_ms, file_size, pr_url, pr_number
+          timestamp, file_mtime_ms, file_size, pr_url, pr_number, is_subagent, parent_session_id
         FROM sessions
         WHERE session_key = ?
       `,
@@ -339,6 +347,8 @@ export class SessionStore {
         | "file_size"
         | "pr_url"
         | "pr_number"
+        | "is_subagent"
+        | "parent_session_id"
       >
       | undefined;
     if (!row) return false;
@@ -355,6 +365,8 @@ export class SessionStore {
       row.file_size === session.fileSize &&
       (row.pr_url ?? null) === (session.prUrl ?? null) &&
       (row.pr_number ?? null) === (session.prNumber ?? null)
+      && row.is_subagent === (session.isSubagent ? 1 : 0)
+      && (row.parent_session_id ?? null) === (session.parentSessionId ?? null)
     );
   }
 
@@ -670,7 +682,8 @@ export class SessionStore {
       .run(state, lastSyncedAt, lastError, Date.now(), id);
   }
 
-  listProjects(): ProjectSummary[] {
+  listProjects(options: ProjectQueryOptions = {}): ProjectSummary[] {
+    const subagentPredicate = options.excludeSubagents ? "AND sessions.is_subagent = 0" : "";
     const rows = this.db
       .prepare(
         `
@@ -684,6 +697,7 @@ export class SessionStore {
         FROM sessions
         LEFT JOIN environments ON environments.id = sessions.environment_id
         WHERE trim(project_path) != ''
+          ${subagentPredicate}
         GROUP BY sessions.project_path, sessions.environment_id
       `,
       )
@@ -1055,15 +1069,18 @@ export class SessionStore {
     const range = resolveStatsRange(options, now);
     const summariesBySource = new Map<SessionSource, SessionStatsSummary>();
 
-    for (const row of this.aggregateActiveSessionsBySource(range)) {
+    for (const row of this.aggregateActiveSessionsBySource(range, options.excludeSubagents ?? false)) {
       summaryForSource(summariesBySource, row.source).sessionCount = row.session_count;
     }
-    for (const row of this.aggregateMessagesBySource(range)) {
+    for (const row of this.aggregateMessagesBySource(range, options.excludeSubagents ?? false)) {
       summaryForSource(summariesBySource, row.source).messageCount = row.message_count;
     }
 
-    const tokenRows = this.aggregateTokenEventsBySource(range);
-    const tokenSourceRows = range.since === null && tokenRows.length === 0 ? this.aggregateSessionTokensBySource() : tokenRows;
+    const tokenRows = this.aggregateTokenEventsBySource(range, options.excludeSubagents ?? false);
+    const tokenSourceRows =
+      range.since === null && tokenRows.length === 0
+        ? this.aggregateSessionTokensBySource(options.excludeSubagents ?? false)
+        : tokenRows;
     for (const row of tokenSourceRows) {
       const summary = summaryForSource(summariesBySource, row.source);
       summary.inputTokens = row.input_tokens;
@@ -1221,7 +1238,9 @@ export class SessionStore {
         cached_input_tokens INTEGER NOT NULL DEFAULT 0,
         reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
         total_tokens INTEGER NOT NULL DEFAULT 0,
-        indexed_at INTEGER NOT NULL DEFAULT 0
+        indexed_at INTEGER NOT NULL DEFAULT 0,
+        is_subagent INTEGER NOT NULL DEFAULT 0,
+        parent_session_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS environments (
@@ -1384,6 +1403,15 @@ export class SessionStore {
     this.addColumnIfMissing("sessions", "ai_summary_at", "INTEGER");
     this.addColumnIfMissing("sessions", "ai_summary_basis", "INTEGER");
     this.addColumnIfMissing("sessions", "indexed_at", "INTEGER NOT NULL DEFAULT 0");
+    const addedSubagentColumn = this.addColumnIfMissing("sessions", "is_subagent", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("sessions", "parent_session_id", "TEXT");
+    if (addedSubagentColumn) {
+      this.db
+        .prepare(
+          "UPDATE sessions SET file_mtime_ms = 0 WHERE source IN ('claude-cli', 'claude-app', 'claude-internal', 'tclaude-cli', 'codex-cli', 'codex-app', 'codex-internal', 'tcodex-cli')",
+        )
+        .run();
+    }
     this.addColumnIfMissing("skill_sync_bindings", "remote_version", "INTEGER NOT NULL DEFAULT 1");
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_environment
@@ -1396,11 +1424,13 @@ export class SessionStore {
     this.ensureLocalEnvironment();
   }
 
-  private addColumnIfMissing(tableName: string, columnName: string, definition: string): void {
+  private addColumnIfMissing(tableName: string, columnName: string, definition: string): boolean {
     const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === columnName)) {
       this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+      return true;
     }
+    return false;
   }
 
   private ensureLocalEnvironment(): void {
@@ -1488,13 +1518,16 @@ export class SessionStore {
       .run(sessionKey, tag.id);
   }
 
-  private aggregateActiveSessionsBySource(range: StatsRange): Array<{ source: SessionSource; session_count: number }> {
+  private aggregateActiveSessionsBySource(range: StatsRange, excludeSubagents: boolean): Array<{ source: SessionSource; session_count: number }> {
+    const subagentWhere = excludeSubagents ? "WHERE is_subagent = 0" : "";
+    const subagentAnd = excludeSubagents ? "AND sessions.is_subagent = 0" : "";
     if (range.since === null) {
       return this.db
         .prepare(
           `
           SELECT source, COUNT(*) AS session_count
           FROM sessions
+          ${subagentWhere}
           GROUP BY source
           ORDER BY source
         `,
@@ -1510,12 +1543,12 @@ export class SessionStore {
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
           JOIN messages ON messages.session_key = sessions.session_key
-          WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ?
+          WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
           UNION
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
           JOIN token_events ON token_events.session_key = sessions.session_key
-          WHERE token_events.timestamp >= ? AND token_events.timestamp <= ?
+          WHERE token_events.timestamp >= ? AND token_events.timestamp <= ? ${subagentAnd}
         )
         SELECT source, COUNT(DISTINCT session_key) AS session_count
         FROM active
@@ -1526,13 +1559,16 @@ export class SessionStore {
       .all(range.since, range.until, range.since, range.until) as Array<{ source: SessionSource; session_count: number }>;
   }
 
-  private aggregateMessagesBySource(range: StatsRange): Array<{ source: SessionSource; message_count: number }> {
+  private aggregateMessagesBySource(range: StatsRange, excludeSubagents: boolean): Array<{ source: SessionSource; message_count: number }> {
+    const subagentWhere = excludeSubagents ? "WHERE is_subagent = 0" : "";
+    const subagentAnd = excludeSubagents ? "AND sessions.is_subagent = 0" : "";
     if (range.since === null) {
       return this.db
         .prepare(
           `
           SELECT source, COALESCE(SUM(message_count), 0) AS message_count
           FROM sessions
+          ${subagentWhere}
           GROUP BY source
           ORDER BY source
         `,
@@ -1547,7 +1583,7 @@ export class SessionStore {
         SELECT sessions.source AS source, COUNT(*) AS message_count
         FROM messages
         JOIN sessions ON sessions.session_key = messages.session_key
-        WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ?
+        WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
         GROUP BY sessions.source
         ORDER BY sessions.source
       `,
@@ -1555,7 +1591,7 @@ export class SessionStore {
       .all(range.since, range.until) as Array<{ source: SessionSource; message_count: number }>;
   }
 
-  private aggregateTokenEventsBySource(range: StatsRange): Array<{
+  private aggregateTokenEventsBySource(range: StatsRange, excludeSubagents: boolean): Array<{
     source: SessionSource;
     input_tokens: number;
     output_tokens: number;
@@ -1563,7 +1599,10 @@ export class SessionStore {
     reasoning_output_tokens: number;
     total_tokens: number;
   }> {
-    const whereClause = range.since === null ? "" : "WHERE token_events.timestamp >= ? AND token_events.timestamp <= ?";
+    const conditions: string[] = [];
+    if (range.since !== null) conditions.push("token_events.timestamp >= ? AND token_events.timestamp <= ?");
+    if (excludeSubagents) conditions.push("sessions.is_subagent = 0");
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const args = range.since === null ? [] : [range.since, range.until];
     return this.db
       .prepare(
@@ -1630,7 +1669,7 @@ export class SessionStore {
     }>;
   }
 
-  private aggregateSessionTokensBySource(): Array<{
+  private aggregateSessionTokensBySource(excludeSubagents: boolean): Array<{
     source: SessionSource;
     input_tokens: number;
     output_tokens: number;
@@ -1649,6 +1688,7 @@ export class SessionStore {
           COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
           COALESCE(SUM(total_tokens), 0) AS total_tokens
         FROM sessions
+        ${excludeSubagents ? "WHERE is_subagent = 0" : ""}
         GROUP BY source
         ORDER BY source
       `,
@@ -1700,6 +1740,8 @@ export class SessionStore {
     else if (options.visibility === "favorites") where.push("hidden = 0 AND favorited = 1");
     else if (options.visibility === "pinned") where.push("hidden = 0 AND pinned = 1");
     else where.push("hidden = 0");
+
+    if (options.excludeSubagents) where.push("is_subagent = 0");
 
     if (options.projectPath) {
       where.push("project_path = ?");
@@ -1898,6 +1940,8 @@ export class SessionStore {
       messageCount: row.message_count,
       aiSummary: row.ai_summary?.trim() || null,
       aiSummaryStale: Boolean(row.ai_summary) && row.file_mtime_ms > (row.ai_summary_basis ?? 0),
+      isSubagent: row.is_subagent === 1,
+      parentSessionId: row.parent_session_id,
     };
   }
 

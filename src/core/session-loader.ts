@@ -69,11 +69,18 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
   title?: string;
   gitBranch?: string;
   originator?: string;
+  isSubagent: boolean;
+  parentSessionId: string | null;
 } | null {
   if (!parsed || typeof parsed !== "object") return null;
 
   const line = parsed as CodexConversationLine;
   if (line.type === "session_meta" && line.payload?.id) {
+    const structuredSource =
+      line.payload.source && typeof line.payload.source === "object" ? line.payload.source : null;
+    const structuredParent = structuredSource?.subagent?.thread_spawn?.parent_thread_id;
+    const legacyParent = line.payload.thread_source === "subagent" ? line.payload.parent_thread_id : undefined;
+    const parentSessionId = structuredParent || legacyParent || null;
     return {
       id: line.payload.id,
       projectPath: line.payload.cwd || "",
@@ -81,6 +88,8 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
       title: line.payload.title,
       gitBranch: line.payload.git?.branch,
       originator: line.payload.originator,
+      isSubagent: parentSessionId !== null,
+      parentSessionId,
     };
   }
 
@@ -89,6 +98,8 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
       id: line.id,
       projectPath: line.git?.cwd || "",
       ts: new Date(line.timestamp).getTime(),
+      isSubagent: false,
+      parentSessionId: null,
     };
   }
 
@@ -722,6 +733,8 @@ function createIndexedSession(input: {
   gitBranch?: string | null;
   tokenUsage?: TokenUsage;
   stat?: VirtualSessionFileStat;
+  isSubagent?: boolean;
+  parentSessionId?: string | null;
 }): IndexedSession {
   const stat = input.stat ?? safeStat(input.filePath);
   return {
@@ -739,6 +752,8 @@ function createIndexedSession(input: {
     prNumber: input.prNumber ?? null,
     gitBranch: input.gitBranch ?? null,
     tokenUsage: input.tokenUsage ?? emptyTokenUsage(),
+    isSubagent: input.isSubagent ?? false,
+    parentSessionId: input.parentSessionId ?? null,
   };
 }
 
@@ -799,6 +814,8 @@ export function loadCodexSessionRows(
     timestamp: options.updatedAt ? new Date(options.updatedAt).getTime() : meta.ts,
     gitBranch: meta.gitBranch,
     tokenUsage,
+    isSubagent: meta.isSubagent,
+    parentSessionId: meta.parentSessionId,
     stat: options.stat,
   });
 
@@ -875,7 +892,15 @@ function loadClaudeMessages(filePath: string): SessionMessage[] {
 export function loadClaudeCliSessionRows(
   filePath: string,
   rows: unknown[],
-  options: { rawId?: string; cwd?: string; startedAt?: number; source?: SessionSource; stat?: VirtualSessionFileStat } = {},
+  options: {
+    rawId?: string;
+    cwd?: string;
+    startedAt?: number;
+    source?: SessionSource;
+    stat?: VirtualSessionFileStat;
+    isSubagent?: boolean;
+    parentSessionId?: string | null;
+  } = {},
 ): LoadedSession | null {
   const rawId = options.rawId || path.basename(filePath, ".jsonl");
   const messages = extractMessages(rows, "claude");
@@ -899,6 +924,8 @@ export function loadClaudeCliSessionRows(
       gitBranch,
       tokenUsage,
       stat: options.stat,
+      isSubagent: options.isSubagent,
+      parentSessionId: options.parentSessionId,
     }),
     messages,
     tokenEvents,
@@ -954,6 +981,33 @@ export function* loadClaudeCliSessionsIterator(
         stat,
       });
       if (loaded) yield loaded;
+    }
+
+    for (const parentEntry of fs.readdirSync(projectPath, { withFileTypes: true })) {
+      if (!parentEntry.isDirectory()) continue;
+      const subagentsDir = path.join(projectPath, parentEntry.name, "subagents");
+      if (!fs.existsSync(subagentsDir)) continue;
+      for (const file of fs.readdirSync(subagentsDir)) {
+        if (!file.endsWith(".jsonl")) continue;
+        const filePath = path.join(subagentsDir, file);
+        const stat = safeStat(filePath);
+        if (shouldSkipFile(options, filePath, stat)) continue;
+        const rows = readJsonl(filePath);
+        const relationRow = rows.find(
+          (row): row is ClaudeConversationLine => Boolean(row && typeof row === "object" && ("sessionId" in row || "agentId" in row)),
+        );
+        const rawId = relationRow?.agentId || file.replace(/\.jsonl$/, "").replace(/^agent-?/, "");
+        const parentSessionId = relationRow?.sessionId || parentEntry.name;
+        const loaded = loadClaudeCliSessionRows(filePath, rows, {
+          rawId,
+          cwd: index.get(parentSessionId)?.cwd,
+          source,
+          stat,
+          isSubagent: true,
+          parentSessionId,
+        });
+        if (loaded) yield loaded;
+      }
     }
   }
 }
