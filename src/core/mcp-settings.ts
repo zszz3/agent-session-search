@@ -16,20 +16,30 @@ const CONFIG_CANDIDATE_DIRS = ["Agent-Session-Search", "agent-session-search"];
 export interface McpSettingsOptions {
   env?: Record<string, string | undefined>;
   home?: string;
+  platform?: NodeJS.Platform;
 }
 
 export function resolveMcpConfigPath(options: McpSettingsOptions = {}): string | null {
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
+  const platform = options.platform ?? process.platform;
 
   // An explicit override always wins, so tests and alternate installs can point
   // at a specific config without searching.
   const override = env.AGENT_SESSION_SEARCH_CONFIG?.trim();
   if (override) return override;
 
-  for (const dir of CONFIG_CANDIDATE_DIRS) {
-    const candidate = path.join(home, "Library", "Application Support", dir, "config.json");
-    if (existsSync(candidate)) return candidate;
+  const roots = platform === "darwin"
+    ? [path.join(home, "Library", "Application Support")]
+    : platform === "win32"
+      ? [env.APPDATA?.trim(), path.join(home, "AppData", "Roaming")]
+      : [env.XDG_CONFIG_HOME?.trim(), path.join(home, ".config")];
+
+  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
+    for (const dir of CONFIG_CANDIDATE_DIRS) {
+      const candidate = path.join(root, dir, "config.json");
+      if (existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -39,7 +49,7 @@ export function resolveMcpConfigPath(options: McpSettingsOptions = {}): string |
 // Returns null when no config file exists (the MCP server then uses defaults).
 export function readMcpAppSettings(options: McpSettingsOptions = {}): AppSettings {
   const env = options.env ?? process.env;
-  const configPath = resolveMcpConfigPath({ env, home: options.home });
+  const configPath = resolveMcpConfigPath({ env, home: options.home, platform: options.platform });
   let raw: Record<string, unknown> = {};
   if (configPath) {
     try {

@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { SessionStore } from "./session-store";
@@ -23,6 +26,24 @@ type WriteResult = { ok: boolean; error?: string; tags?: string[]; favorited?: b
 const tagSession = mcp.tagSession as (db: Db, args: Record<string, unknown>) => WriteResult;
 const toggleFavorite = mcp.toggleFavorite as (db: Db, args: Record<string, unknown>) => WriteResult;
 const setVisibility = mcp.setVisibility as (db: Db, args: Record<string, unknown>) => WriteResult;
+
+async function withMcpConfig(
+  config: Record<string, unknown>,
+  run: (root: string) => Promise<void>,
+): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-server-config-"));
+  const configPath = path.join(root, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
+  const previous = process.env.AGENT_SESSION_SEARCH_CONFIG;
+  process.env.AGENT_SESSION_SEARCH_CONFIG = configPath;
+  try {
+    await run(root);
+  } finally {
+    if (previous === undefined) delete process.env.AGENT_SESSION_SEARCH_CONFIG;
+    else process.env.AGENT_SESSION_SEARCH_CONFIG = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string) => import("node:sqlite").DatabaseSync };
@@ -267,12 +288,33 @@ describe("MCP migrate_session tool", () => {
     ]);
   });
 
-  it("accepts tclaude at the handler boundary and reaches the core migration facade", async () => {
-    const { db } = seedStore();
-    const result = await migrateSession(db, { sessionKey: "codex:abc", target: "tclaude" });
-    expect(result.ok).toBe(false);
-    expect(result.error).not.toContain("target must be one of");
-    expect(result.error).toContain("project path does not exist");
+  it("reads an isolated enabled TClaude setting and reaches CLI inspection", async () => {
+    await withMcpConfig({ includeTclaude: true, tclaudeBinary: "/missing/test-tclaude" }, async (root) => {
+      const { db, store } = seedStore();
+      const projectPath = path.join(root, "project");
+      fs.mkdirSync(projectPath);
+      db.prepare("UPDATE sessions SET project_path = ? WHERE session_key = ?").run(projectPath, "codex:abc");
+      try {
+        const result = await migrateSession(db, { sessionKey: "codex:abc", target: "tclaude" });
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe("TClaude CLI binary not found: /missing/test-tclaude");
+      } finally {
+        store.close();
+      }
+    });
+  });
+
+  it("reads an isolated disabled TClaude setting and rejects before CLI inspection", async () => {
+    await withMcpConfig({ includeTclaude: false, tclaudeBinary: "/missing/test-tclaude" }, async () => {
+      const { db, store } = seedStore();
+      try {
+        const result = await migrateSession(db, { sessionKey: "codex:abc", target: "tclaude" });
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe("TClaude migration target is disabled in Settings.");
+      } finally {
+        store.close();
+      }
+    });
   });
 
   it("rejects a missing sessionKey before touching the bundle", async () => {
