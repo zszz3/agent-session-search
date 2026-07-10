@@ -1847,13 +1847,13 @@ export class SessionStore {
       const rows = this.db
         .prepare(
           `
-          SELECT session_key, snippet(session_fts, 3, '', '', '...', 18) AS snippet
+          SELECT session_key
           FROM session_fts
           WHERE session_fts MATCH ?
         `,
         )
-        .all(expression) as Array<{ session_key: string; snippet: string | null }>;
-      return new Map(rows.map((row) => [row.session_key, row.snippet]));
+        .all(expression) as Array<{ session_key: string }>;
+      return new Map(rows.map((row) => [row.session_key, null]));
     } catch {
       return new Map();
     }
@@ -1920,6 +1920,7 @@ export class SessionStore {
     }
 
     for (const session of sessions) {
+      session.matchSnippet ??= session.matchHits?.[0]?.snippet ?? null;
       if ((session.messageMatchCount ?? 0) > 0) continue;
       if (allTermsIn(`${session.displayTitle} ${session.originalTitle} ${session.firstQuestion}`, terms)) {
         session.metadataMatch = "title";
