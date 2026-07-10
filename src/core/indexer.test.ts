@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, syncLoadedSessionsInBatches } from "./indexer";
 import { createInMemoryStore } from "./session-store";
 import { writeMigratedSession } from "./session-migration-writers";
-import type { IndexedSession, LoadedSession, MigrationAgent, PortableSession } from "./types";
+import type { IndexedSession, LoadedSession, MigrationTarget, PortableSession, SessionSource } from "./types";
 
 function session(index: number): LoadedSession {
   const id = `session-${index}`;
@@ -115,25 +115,42 @@ describe("indexer", () => {
     }
   });
 
-  it.each(["claude", "codex", "codebuddy"] as const)("indexes one migrated %s session file without a full scan", async (target: MigrationAgent) => {
-    const store = createInMemoryStore();
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-session-search-index-migration-"));
-    try {
-      const written = await writeMigratedSession({
-        target,
-        homeDir,
-        now: new Date("2026-06-24T10:00:00.000Z"),
-        session: portableSession(),
-      });
+  it.each([
+    { target: "claude", source: "claude-cli" },
+    { target: "tclaude", source: "tclaude-cli" },
+    { target: "claude-internal", source: "claude-internal" },
+    { target: "codex", source: "codex-cli" },
+    { target: "tcodex", source: "tcodex-cli" },
+    { target: "codex-internal", source: "codex-internal" },
+    { target: "codebuddy", source: "codebuddy-cli" },
+  ] as const satisfies readonly { target: MigrationTarget; source: SessionSource }[])(
+    "indexes one migrated $target session file as its concrete source without a full scan",
+    async ({ target, source }) => {
+      const store = createInMemoryStore();
+      const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `agent-session-search-index-migration-${target}-`));
+      try {
+        const written = await writeMigratedSession({
+          target,
+          homeDir,
+          now: new Date("2026-06-24T10:00:00.000Z"),
+          session: portableSession(),
+        });
 
-      const status = indexMigratedSessionFile(store, target, written.filePath);
+        const status = indexMigratedSessionFile(store, target, written.filePath);
 
-      expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
-      expect(store.searchSessions({ query: "migrated question", limit: 10 })).toHaveLength(1);
-    } finally {
-      fs.rmSync(homeDir, { recursive: true, force: true });
-    }
-  });
+        expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
+        const indexed = store.searchSessions({ source, limit: 10 });
+        expect(indexed).toHaveLength(1);
+        expect(indexed[0]).toMatchObject({
+          source,
+          sessionKey: `${target}:${written.sessionId}`,
+        });
+      } finally {
+        store.close();
+        fs.rmSync(homeDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 function writeCodexSession(homeDir: string, id: string, question: string, title: string): string {

@@ -2,14 +2,15 @@ import * as fs from "node:fs";
 import {
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
-  loadCodexSessionFile,
+  loadCodexSessionRows,
   loadDefaultSessions,
   loadDefaultSessionsIterator,
   parseJsonlText,
   type SessionLoadOptions,
 } from "./session-loader";
+import { migrationTargetDescriptor } from "./migration-targets";
 import type { SessionStore } from "./session-store";
-import type { LoadedSession, MigrationAgent } from "./types";
+import type { LoadedSession, MigrationTarget } from "./types";
 
 export interface IndexStatus {
   running: boolean;
@@ -158,7 +159,7 @@ function findSessionFileSnapshot(
 
 export function indexMigratedSessionFile(
   store: SessionStore,
-  target: MigrationAgent,
+  target: MigrationTarget,
   filePath: string,
 ): IndexStatus {
   const loaded = loadMigratedSessionFile(target, filePath);
@@ -176,8 +177,12 @@ export function indexMigratedSessionFile(
   };
 }
 
-function loadMigratedSessionFile(target: MigrationAgent, filePath: string): LoadedSession | null {
-  if (target === "codex") return loadCodexSessionFile(filePath);
-  if (target === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
-  return loadClaudeCliSessionRows(filePath, parseJsonlText(fs.readFileSync(filePath, "utf8")));
+function loadMigratedSessionFile(target: MigrationTarget, filePath: string): LoadedSession | null {
+  const descriptor = migrationTargetDescriptor(target);
+  const rows = parseJsonlText(fs.readFileSync(filePath, "utf8"));
+  if (descriptor.family === "codex") {
+    return loadCodexSessionRows(filePath, rows, { sourceOverride: descriptor.source });
+  }
+  if (descriptor.family === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
+  return loadClaudeCliSessionRows(filePath, rows, { source: descriptor.source });
 }
