@@ -7,6 +7,7 @@ const remoteSessionsDialogSource = readFileSync(new URL("./components/remote-ses
 const sessionUiSource = readFileSync(new URL("./session-ui.ts", import.meta.url), "utf8");
 const preloadSource = readFileSync(new URL("../../preload/index.ts", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("../../main/index.ts", import.meta.url), "utf8");
+const summaryEndpointSource = readFileSync(new URL("../../core/summary-endpoint.ts", import.meta.url), "utf8");
 
 function mainHandlerSource(channel: string): string {
   const marker = `ipcMain.handle("${channel}"`;
@@ -233,15 +234,21 @@ describe("detail panel actions", () => {
   });
 
   it("hydrates profile defaults before resolving AI summary providers", () => {
+    // The resolver now delegates to the shared summary-endpoint module, but the
+    // main process still hydrates profile defaults (including the DB-stored API
+    // key) before resolving, and wires the temp-session cleaner.
     const resolverStart = mainSource.indexOf("async function resolveSummaryEndpointFromSettings");
     expect(resolverStart).toBeGreaterThanOrEqual(0);
     const resolverEnd = mainSource.indexOf("const SUMMARY_HEAD_MESSAGES", resolverStart);
     const resolver = mainSource.slice(resolverStart, resolverEnd);
 
     expect(resolver).toContain("await getHydratedSettings()");
-    expect(resolver).toContain('settings.summarySource === "claude"');
-    expect(resolver).toContain("claude_exec");
-    expect(resolver).toContain("codex_exec");
+    expect(resolver).toContain("resolveSummaryEndpointFromSettingsShared");
+    expect(resolver).toContain("onTemporarySession");
+    // The claude/codex exec format strings live in the shared module now.
+    expect(summaryEndpointSource).toContain('settings.summarySource === "claude"');
+    expect(summaryEndpointSource).toContain("claude_exec");
+    expect(summaryEndpointSource).toContain("codex_exec");
     expect(mainHandlerSource("session:summarize")).toContain("await resolveSummaryEndpointFromSettings()");
     expect(mainHandlerSource("session:summarize-missing")).toContain("await resolveSummaryEndpointFromSettings()");
   });

@@ -25,12 +25,13 @@
   ],
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && npm run build:mcp && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "node bin/install-claude-statusline.cjs",
-    "prepare": "electron-vite build"
+    "prepare": "npm run build:mcp && electron-vite build",
+    "build:mcp": "node scripts/build-mcp-bundle.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
@@ -51,6 +52,7 @@
     "electron-vite": "^2.3.0",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "esbuild": "^0.21.5"
   }
 }

@@ -211,3 +211,39 @@ describe("MCP write functions", () => {
     expect(setVisibility(db, { sessionKey: "missing", visibility: "hidden" }).ok).toBe(false);
   });
 });
+
+describe("MCP migrate_session tool", () => {
+  type MigrationResult = {
+    ok: boolean;
+    error?: string;
+    target?: string;
+    targetSessionId?: string;
+    targetFilePath?: string;
+    strategy?: string;
+    resumeCommand?: string;
+    indexed?: boolean;
+    launched?: boolean;
+  };
+  const migrateSession = mcp.migrateSession as (db: Db, args: Record<string, unknown>) => Promise<MigrationResult>;
+
+  it("rejects a missing sessionKey before touching the bundle", async () => {
+    const { db } = seedStore();
+    const result = await migrateSession(db, { target: "codex" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("sessionKey");
+  });
+
+  it("rejects an invalid target before touching the bundle", async () => {
+    const { db } = seedStore();
+    const result = await migrateSession(db, { sessionKey: "codex:abc", target: "gemini" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("target");
+  });
+
+  it("returns ok=false with an error when the session does not exist", async () => {
+    const { db } = seedStore();
+    const result = await migrateSession(db, { sessionKey: "codex:missing", target: "codex" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("not found");
+  });
+});

@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_RESULTS = 50;
 const MAX_MESSAGES = 200;
@@ -232,6 +232,55 @@ export function setVisibility(db, { sessionKey, visibility } = {}) {
   };
 }
 
+// The migration logic lives in src/core/mcp-migration.ts and is bundled (via
+// scripts/build-mcp-bundle.mjs) so this standalone bin can call it without
+// --experimental-strip-types. The bundle is resolved relative to this file.
+let migrationBundle = null;
+async function loadMigrationBundle() {
+  if (migrationBundle) return migrationBundle;
+  const candidates = [
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "out", "mcp", "migration-entry.js"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "migration-entry.js"),
+  ];
+  let lastError = null;
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      migrationBundle = await import(pathToFileURL(candidate).href);
+      return migrationBundle;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(
+    "MCP migration bundle not found. Run `npm run build:mcp` first." +
+    (lastError ? ` (${lastError instanceof Error ? lastError.message : String(lastError)})` : ""),
+  );
+}
+
+// SDK-free, unit-testable wrapper. Accepts a raw DatabaseSync (the same handle
+// the query/write tools use) and delegates to the bundled migration facade.
+export async function migrateSession(db, { sessionKey, target } = {}) {
+  if (!sessionKey || typeof sessionKey !== "string") {
+    return { ok: false, error: "sessionKey is required." };
+  }
+  const targets = ["claude", "codex", "codebuddy"];
+  if (!targets.includes(target)) {
+    return { ok: false, error: 'target must be one of "claude", "codex", "codebuddy".' };
+  }
+  const bundle = await loadMigrationBundle();
+  const store = new bundle.SessionStore(db);
+  try {
+    const result = await bundle.migrateSessionForMcp(
+      { sessionKey, target },
+      { store },
+    );
+    return { ok: true, ...result };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function jsonContent(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
@@ -350,6 +399,22 @@ async function runServer() {
     },
     async (args) => {
       const result = setVisibility(db, args);
+      return result.ok ? jsonContent(result) : errorContent(result.error);
+    },
+  );
+
+  server.registerTool(
+    "migrate_session",
+    {
+      description:
+        "Migrate a local Claude/Codex/CodeBuddy session into a target agent's session format. Writes the target session file, indexes it so it is immediately searchable, records the migration, and returns a resumeCommand. Does NOT auto-open a terminal (launched is always false); run the returned resumeCommand yourself.",
+      inputSchema: {
+        sessionKey: z.string().describe("The sessionKey of the local source session to migrate."),
+        target: z.enum(["claude", "codex", "codebuddy"]).describe("Target agent to migrate into."),
+      },
+    },
+    async (args) => {
+      const result = await migrateSession(db, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
   );

@@ -49,7 +49,11 @@ import {
 import { loadUsageQuotaSnapshot } from "../core/quota";
 import { focusLiveSessionTerminal } from "../core/session-focus";
 import { createCachedLiveSessionSnapshotLoader } from "../core/session-activity";
-import { resolveSummaryEndpoint, summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
+import { summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
+import {
+  buildCodexExecEndpoint as buildCodexExecEndpointShared,
+  resolveSummaryEndpointFromSettings as resolveSummaryEndpointFromSettingsShared,
+} from "../core/summary-endpoint";
 import {
   isLocalCliEndpoint,
   runAiAssistantFallback,
@@ -1188,13 +1192,7 @@ const SUMMARY_PROVIDER_ERROR =
   "AI summary has no usable provider. Select Codex, Claude Code, or configure a direct summary API provider in Settings.";
 
 function buildCodexExecEndpoint(settings: AppSettings): SummaryEndpoint {
-  return {
-    baseUrl: "",
-    model: "codex",
-    apiKey: "",
-    apiFormat: "codex_exec",
-    command: settings.codexBinary,
-    cwd: process.cwd(),
+  return buildCodexExecEndpointShared(settings, {
     onTemporarySession: (sessionKey) => {
       try {
         store.deleteSession(sessionKey);
@@ -1202,46 +1200,19 @@ function buildCodexExecEndpoint(settings: AppSettings): SummaryEndpoint {
         // Best-effort cleanup if an ephemeral Codex call is indexed before it exits.
       }
     },
-  };
+  });
 }
 
 async function resolveSummaryEndpointFromSettings(): Promise<SummaryEndpoint | null> {
   const settings = await getHydratedSettings();
-  if (settings.summarySource === "custom") {
-    return resolveSummaryEndpoint([settings.summaryApiConfig]);
-  }
-  if (settings.summarySource === "claude") {
-    return {
-      baseUrl: "",
-      model: "claude",
-      apiKey: "",
-      apiFormat: "claude_exec",
-      command: settings.claudeBinary,
-      cwd: process.cwd(),
-      onTemporarySession: (sessionKey) => {
-        try {
-          store.deleteSession(sessionKey);
-        } catch {
-          // Best-effort cleanup if a Claude summary session is indexed before it exits.
-        }
-      },
-    };
-  }
-  return {
-    baseUrl: "",
-    model: "codex",
-    apiKey: "",
-    apiFormat: "codex_exec",
-    command: settings.codexBinary,
-    cwd: process.cwd(),
-    onTemporarySession: (sessionKey) => {
-      try {
-        store.deleteSession(sessionKey);
-      } catch {
-        // Best-effort cleanup if an ephemeral Codex call is indexed before it exits.
-      }
-    },
+  const onTemporarySession = (sessionKey: string): void => {
+    try {
+      store.deleteSession(sessionKey);
+    } catch {
+      // Best-effort cleanup if an ephemeral summary call is indexed before it exits.
+    }
   };
+  return resolveSummaryEndpointFromSettingsShared(settings, { onTemporarySession });
 }
 
 const SUMMARY_HEAD_MESSAGES = 24;
