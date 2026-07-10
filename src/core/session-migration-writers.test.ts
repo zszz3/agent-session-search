@@ -5,11 +5,11 @@ import * as path from "node:path";
 import {
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
-  loadCodexSessionFile,
+  loadCodexSessionRows,
   parseJsonlText,
 } from "./session-loader";
 import { writeMigratedSession } from "./session-migration-writers";
-import type { MigrationAgent, PortableSession } from "./types";
+import type { LoadedSession, MigrationTarget, PortableSession, SessionSource } from "./types";
 
 const SESSION_ID = "10000000-0000-4000-8000-000000000001";
 const MESSAGE_IDS = [
@@ -18,6 +18,20 @@ const MESSAGE_IDS = [
   "20000000-0000-4000-8000-000000000003",
 ];
 const NOW = new Date("2026-06-23T06:07:08.901Z");
+const TARGETS = [
+  { target: "claude", root: ".claude", source: "claude-cli", family: "claude" },
+  { target: "tclaude", root: ".tclaude", source: "tclaude-cli", family: "claude" },
+  { target: "claude-internal", root: ".claude-internal", source: "claude-internal", family: "claude" },
+  { target: "codex", root: ".codex", source: "codex-cli", family: "codex" },
+  { target: "tcodex", root: ".tcodex", source: "tcodex-cli", family: "codex" },
+  { target: "codex-internal", root: ".codex-internal", source: "codex-internal", family: "codex" },
+  { target: "codebuddy", root: ".codebuddy", source: "codebuddy-cli", family: "codebuddy" },
+] as const satisfies readonly {
+  target: MigrationTarget;
+  root: string;
+  source: SessionSource;
+  family: "claude" | "codex" | "codebuddy";
+}[];
 
 function portable(): PortableSession {
   return {
@@ -51,64 +65,97 @@ function readRows(filePath: string): Array<Record<string, any>> {
 }
 
 function expectRoundTrip(
-  target: MigrationAgent,
+  target: MigrationTarget,
+  source: SessionSource,
   sessionId: string,
   filePath: string,
   rows: Array<Record<string, any>>,
 ): void {
-  const loaded =
-    target === "codex"
-      ? loadCodexSessionFile(filePath)
-      : target === "claude"
-        ? loadClaudeCliSessionRows(filePath, rows)
-        : loadCodeBuddyCliSessionFile(filePath);
+  const loaded = loadWrittenSession(target, source, filePath, rows);
 
   expect(loaded?.session).toMatchObject({
     rawId: sessionId,
     projectPath: portable().projectPath,
     originalTitle: portable().title,
-    source: target === "codex" ? "codex-cli" : target === "claude" ? "claude-cli" : "codebuddy-cli",
+    source,
   });
   expect(loaded?.messages.map(({ role, content, timestamp }) => ({ role, content, timestamp }))).toEqual(
     portable().messages.map(({ role, content, timestamp }) => ({ role, content, timestamp })),
   );
 }
 
+function loadWrittenSession(
+  target: MigrationTarget,
+  source: SessionSource,
+  filePath: string,
+  rows: Array<Record<string, any>>,
+): LoadedSession | null {
+  if (target === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
+  if (target === "codex" || target === "tcodex" || target === "codex-internal") {
+    return loadCodexSessionRows(filePath, rows, { sourceOverride: source });
+  }
+  return loadClaudeCliSessionRows(filePath, rows, { source });
+}
+
 describe("writeMigratedSession", () => {
-  it.each(["codex", "claude", "codebuddy"] as const)(
-    "creates the temporary and final %s files with mode 0600",
-    async (target) => {
+  it.each(TARGETS)(
+    "creates the temporary and final $target files with mode 0600",
+    async ({ target, root, family }) => {
       const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `migration-writer-mode-${target}-`));
       let temporaryMode = 0;
-      const targetDirectory = target === "codex"
-        ? path.join(homeDir, ".codex", "sessions", "2026", "06", "23")
-        : target === "claude"
-          ? path.join(homeDir, ".claude", "projects", "-Users----My-Project")
+      const targetDirectory = family === "codex"
+        ? path.join(homeDir, root, "sessions", "2026", "06", "23")
+        : family === "claude"
+          ? path.join(homeDir, root, "projects", "-Users----My-Project")
           : path.join(homeDir, ".codebuddy", "projects", "Users----My-Project");
       fs.mkdirSync(targetDirectory, { recursive: true });
       const previousUmask = process.umask(0o777);
 
-      let result;
       try {
-        result = await writeMigratedSession({
+        let result;
+        try {
+          result = await writeMigratedSession({
+            target,
+            session: portable(),
+            homeDir,
+            now: NOW,
+            idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+            beforeValidate: (filePath) => {
+              temporaryMode = fs.statSync(filePath).mode & 0o777;
+              fs.chmodSync(filePath, 0o644);
+            },
+          });
+        } finally {
+          process.umask(previousUmask);
+        }
+
+        expect(temporaryMode).toBe(0o600);
+        expect(fs.statSync(result.filePath).mode & 0o777).toBe(0o600);
+      } finally {
+        fs.rmSync(homeDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(TARGETS)(
+    "writes $target under $root and round-trips with its concrete source",
+    async ({ target, root, source, family }) => {
+      const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `migration-writer-roundtrip-${target}-`));
+      try {
+        const result = await writeMigratedSession({
           target,
           session: portable(),
           homeDir,
           now: NOW,
-          idFactory: idFactory(target === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
-          beforeValidate: (filePath) => {
-            temporaryMode = fs.statSync(filePath).mode & 0o777;
-            fs.chmodSync(filePath, 0o644);
-          },
+          idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
         });
+
+        expect(path.relative(homeDir, result.filePath).split(path.sep)[0]).toBe(root);
+        const rows = readRows(result.filePath);
+        expectRoundTrip(target, source, result.sessionId, result.filePath, rows);
       } finally {
-        process.umask(previousUmask);
+        fs.rmSync(homeDir, { recursive: true, force: true });
       }
-
-      expect(temporaryMode).toBe(0o600);
-      expect(fs.statSync(result.filePath).mode & 0o777).toBe(0o600);
-
-      fs.rmSync(homeDir, { recursive: true, force: true });
     },
   );
 
@@ -157,7 +204,7 @@ describe("writeMigratedSession", () => {
       "output_text",
       "input_text",
     ]);
-    expectRoundTrip("codex", result.sessionId, result.filePath, rows);
+    expectRoundTrip("codex", "codex-cli", result.sessionId, result.filePath, rows);
 
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
@@ -197,7 +244,7 @@ describe("writeMigratedSession", () => {
         version: "migration",
       });
     }
-    expectRoundTrip("claude", result.sessionId, result.filePath, rows);
+    expectRoundTrip("claude", "claude-cli", result.sessionId, result.filePath, rows);
 
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
@@ -232,7 +279,7 @@ describe("writeMigratedSession", () => {
       portable().messages.map((message) => new Date(message.timestamp).getTime()),
     );
     expect(messages.map((row) => row.content[0].type)).toEqual(["input_text", "output_text", "input_text"]);
-    expectRoundTrip("codebuddy", result.sessionId, result.filePath, rows);
+    expectRoundTrip("codebuddy", "codebuddy-cli", result.sessionId, result.filePath, rows);
 
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
@@ -249,28 +296,30 @@ describe("writeMigratedSession", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it("deletes the temporary file and leaves no final file when validation fails", async () => {
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-writer-validation-"));
+  it.each(TARGETS)("deletes $target output when validation fails", async ({ target, family }) => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `migration-writer-validation-${target}-`));
     let temporaryFile = "";
+    try {
+      await expect(
+        writeMigratedSession({
+          target,
+          session: portable(),
+          homeDir,
+          now: NOW,
+          idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+          validate: (filePath) => {
+            temporaryFile = filePath;
+            return null;
+          },
+        }),
+      ).rejects.toThrow(/validation/i);
 
-    await expect(
-      writeMigratedSession({
-        target: "codex",
-        session: portable(),
-        homeDir,
-        now: NOW,
-        idFactory: idFactory([SESSION_ID]),
-        validate: (filePath) => {
-          temporaryFile = filePath;
-          return null;
-        },
-      }),
-    ).rejects.toThrow(/validation/i);
-
-    expect(temporaryFile).not.toBe("");
-    expect(fs.existsSync(temporaryFile)).toBe(false);
-    expect(filesUnder(homeDir)).toEqual([]);
-    fs.rmSync(homeDir, { recursive: true, force: true });
+      expect(temporaryFile).not.toBe("");
+      expect(fs.existsSync(temporaryFile)).toBe(false);
+      expect(filesUnder(homeDir)).toEqual([]);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it("deletes the temporary file and leaves no final file when atomic rename fails", async () => {
@@ -300,52 +349,50 @@ describe("writeMigratedSession", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it("rejects a tampered Codex title before rename and cleans the temporary file", async () => {
-    await expectTamperedSessionRejected("codex", (rows) => {
-      rows[0].payload.title = "被篡改的标题";
-    });
-  });
-
-  it("rejects a tampered CodeBuddy message timestamp before rename and cleans the temporary file", async () => {
-    await expectTamperedSessionRejected("codebuddy", (rows) => {
-      rows[1].timestamp += 1;
-    });
-  });
-
-  it("rejects a broken Claude parent UUID chain before rename and cleans the temporary file", async () => {
-    await expectTamperedSessionRejected("claude", (rows) => {
-      rows[2].parentUuid = null;
-    });
-  });
+  it.each(TARGETS)(
+    "rejects tampered $target native content before rename and cleans the temporary file",
+    async ({ target, family }) => {
+      await expectTamperedSessionRejected(target, (rows) => {
+        if (family === "codex") rows[0].payload.title = "被篡改的标题";
+        else if (family === "claude") rows[2].parentUuid = null;
+        else rows[1].timestamp += 1;
+      });
+    },
+  );
 });
 
 async function expectTamperedSessionRejected(
-  target: MigrationAgent,
+  target: MigrationTarget,
   mutate: (rows: Array<Record<string, any>>) => void,
 ): Promise<void> {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `migration-writer-tamper-${target}-`));
   let temporaryFile = "";
 
-  await expect(
-    writeMigratedSession({
-      target,
-      session: portable(),
-      homeDir,
-      now: NOW,
-      idFactory: idFactory(target === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
-      beforeValidate: (filePath) => {
-        temporaryFile = filePath;
-        const rows = parseJsonlText(fs.readFileSync(filePath, "utf8")) as Array<Record<string, any>>;
-        mutate(rows);
-        fs.writeFileSync(filePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
-      },
-    }),
-  ).rejects.toThrow(/validation/i);
+  try {
+    await expect(
+      writeMigratedSession({
+        target,
+        session: portable(),
+        homeDir,
+        now: NOW,
+        idFactory: idFactory(target === "codex" || target === "tcodex" || target === "codex-internal"
+          ? [SESSION_ID]
+          : [SESSION_ID, ...MESSAGE_IDS]),
+        beforeValidate: (filePath) => {
+          temporaryFile = filePath;
+          const rows = parseJsonlText(fs.readFileSync(filePath, "utf8")) as Array<Record<string, any>>;
+          mutate(rows);
+          fs.writeFileSync(filePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+        },
+      }),
+    ).rejects.toThrow(/validation/i);
 
-  expect(temporaryFile).not.toBe("");
-  expect(fs.existsSync(temporaryFile)).toBe(false);
-  expect(filesUnder(homeDir)).toEqual([]);
-  fs.rmSync(homeDir, { recursive: true, force: true });
+    expect(temporaryFile).not.toBe("");
+    expect(fs.existsSync(temporaryFile)).toBe(false);
+    expect(filesUnder(homeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
 }
 
 function filesUnder(root: string): string[] {

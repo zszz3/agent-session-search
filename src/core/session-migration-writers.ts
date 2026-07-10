@@ -5,13 +5,14 @@ import * as path from "node:path";
 import {
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
-  loadCodexSessionFile,
+  loadCodexSessionRows,
   parseJsonlText,
 } from "./session-loader";
-import type { LoadedSession, MigrationAgent, PortableSession } from "./types";
+import { migrationTargetDescriptor } from "./migration-targets";
+import type { LoadedSession, MigrationTarget, PortableSession } from "./types";
 
 export interface WriteMigratedSessionOptions {
-  target: MigrationAgent;
+  target: MigrationTarget;
   session: PortableSession;
   homeDir?: string;
   now?: Date;
@@ -62,13 +63,14 @@ export async function writeMigratedSession(options: WriteMigratedSessionOptions)
 }
 
 function serializeSession(
-  target: MigrationAgent,
+  target: MigrationTarget,
   session: PortableSession,
   sessionId: string,
   createId: () => string,
 ): unknown[] {
-  if (target === "codex") return serializeCodex(session, sessionId);
-  if (target === "claude") return serializeClaude(session, sessionId, createId);
+  const family = migrationTargetDescriptor(target).family;
+  if (family === "codex") return serializeCodex(session, sessionId);
+  if (family === "claude") return serializeClaude(session, sessionId, createId);
   return serializeCodeBuddy(session, sessionId, createId);
 }
 
@@ -183,26 +185,38 @@ function serializeCodeBuddy(
 }
 
 export function targetFilePath(
-  target: MigrationAgent,
+  target: MigrationTarget,
   projectPath: string,
   sessionId: string,
   homeDir: string,
   now: Date,
 ): string {
-  if (target === "codex") {
+  const family = migrationTargetDescriptor(target).family;
+  const root = TARGET_ROOTS[target];
+  if (family === "codex") {
     const year = String(now.getUTCFullYear()).padStart(4, "0");
     const month = String(now.getUTCMonth() + 1).padStart(2, "0");
     const day = String(now.getUTCDate()).padStart(2, "0");
     const safeTimestamp = now.toISOString().replace(/[:.]/g, "-");
-    return path.join(homeDir, ".codex", "sessions", year, month, day, `rollout-${safeTimestamp}-${sessionId}.jsonl`);
+    return path.join(homeDir, root, "sessions", year, month, day, `rollout-${safeTimestamp}-${sessionId}.jsonl`);
   }
 
-  if (target === "claude") {
-    return path.join(homeDir, ".claude", "projects", encodeClaudeProjectDir(projectPath), `${sessionId}.jsonl`);
+  if (family === "claude") {
+    return path.join(homeDir, root, "projects", encodeClaudeProjectDir(projectPath), `${sessionId}.jsonl`);
   }
 
-  return path.join(homeDir, ".codebuddy", "projects", encodeCodeBuddyProjectDir(projectPath), `${sessionId}.jsonl`);
+  return path.join(homeDir, root, "projects", encodeCodeBuddyProjectDir(projectPath), `${sessionId}.jsonl`);
 }
+
+const TARGET_ROOTS: Record<MigrationTarget, string> = {
+  claude: ".claude",
+  tclaude: ".tclaude",
+  "claude-internal": ".claude-internal",
+  codex: ".codex",
+  tcodex: ".tcodex",
+  "codex-internal": ".codex-internal",
+  codebuddy: ".codebuddy",
+};
 
 function encodeClaudeProjectDir(projectPath: string): string {
   return encodeProjectDirectory(projectPath);
@@ -241,7 +255,7 @@ async function writeJsonlAndSync(filePath: string, rows: unknown[]): Promise<voi
   }
 }
 
-function readJsonlStrict(filePath: string, target: MigrationAgent): unknown[] {
+function readJsonlStrict(filePath: string, target: MigrationTarget): unknown[] {
   const rows: unknown[] = [];
   const content = fs.readFileSync(filePath, "utf8");
   for (const line of content.split("\n")) {
@@ -256,14 +270,15 @@ function readJsonlStrict(filePath: string, target: MigrationAgent): unknown[] {
 }
 
 function validateNativeStructure(
-  target: MigrationAgent,
+  target: MigrationTarget,
   rows: unknown[],
   sessionId: string,
   session: PortableSession,
 ): void {
-  if (target === "codex") {
+  const family = migrationTargetDescriptor(target).family;
+  if (family === "codex") {
     validateCodexStructure(rows, sessionId, session);
-  } else if (target === "claude") {
+  } else if (family === "claude") {
     validateClaudeStructure(rows, sessionId, session);
   } else {
     validateCodeBuddyStructure(rows, sessionId, session);
@@ -387,38 +402,41 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function failValidation(target: MigrationAgent, detail: string): never {
+function failValidation(target: MigrationTarget, detail: string): never {
   throw new Error(`Migrated ${target} session failed validation: ${detail}.`);
 }
 
 function loadWrittenSession(
-  target: MigrationAgent,
+  target: MigrationTarget,
   filePath: string,
   sessionId: string,
   session: PortableSession,
 ): LoadedSession | null {
-  if (target === "codex") return loadCodexSessionFile(filePath);
-  if (target === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
-
+  const descriptor = migrationTargetDescriptor(target);
   const rows = parseJsonlText(fs.readFileSync(filePath, "utf8"));
+  if (descriptor.family === "codex") {
+    return loadCodexSessionRows(filePath, rows, { sourceOverride: descriptor.source });
+  }
+  if (descriptor.family === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
   return loadClaudeCliSessionRows(filePath, rows, {
     rawId: sessionId,
     cwd: session.projectPath,
     startedAt: new Date(session.startedAt).getTime(),
+    source: descriptor.source,
   });
 }
 
 function validateRoundTrip(
   loaded: LoadedSession | null,
-  target: MigrationAgent,
+  target: MigrationTarget,
   sessionId: string,
   portable: PortableSession,
 ): void {
-  const expectedSource = target === "codex" ? "codex-cli" : target === "claude" ? "claude-cli" : "codebuddy-cli";
+  const descriptor = migrationTargetDescriptor(target);
   const messagesMatch = loaded?.messages.length === portable.messages.length
     && loaded.messages.every((message, index) => {
       const expected = portable.messages[index];
-      const timestampMatches = target === "codebuddy"
+      const timestampMatches = descriptor.family === "codebuddy"
         ? new Date(message.timestamp).getTime() === new Date(expected.timestamp).getTime()
         : message.timestamp === expected.timestamp;
       return message.role === expected.role
@@ -428,7 +446,7 @@ function validateRoundTrip(
 
   if (
     !loaded
-    || loaded.session.source !== expectedSource
+    || loaded.session.source !== descriptor.source
     || loaded.session.rawId !== sessionId
     || loaded.session.projectPath !== portable.projectPath
     || loaded.session.originalTitle !== portable.title
