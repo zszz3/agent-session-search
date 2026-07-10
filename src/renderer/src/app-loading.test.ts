@@ -12,6 +12,18 @@ function sourceBlock(startNeedle: string, endNeedles: string[]): string {
 }
 
 describe("app loading performance", () => {
+  it("keeps recent history and two-step Enter behavior inside the isolated search box", () => {
+    const searchBox = sourceBlock("const SearchBox = forwardRef", ["export function App"]);
+    expect(searchBox).toContain("readSearchHistory(window.localStorage)");
+    expect(searchBox).toContain("recordSearch(window.localStorage");
+    expect(searchBox).toContain("deleteSearch(window.localStorage");
+    expect(searchBox).toContain("clearSearchHistory(window.localStorage)");
+    expect(searchBox).toContain("recent-search-dropdown");
+    expect(searchBox).toContain("trimmed === lastSubmittedRef.current");
+    expect(searchBox).toContain("onQueryChange(value)");
+    expect(searchBox).toContain("selectRecentSearch(query)");
+  });
+
   it("keeps session search isolated from sidebar metadata and stats refreshes", () => {
     const loadSessionsBlock = sourceBlock("const load = useCallback(async () =>", [
       "const loadSidebarMetadata = useCallback",

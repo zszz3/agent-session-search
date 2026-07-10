@@ -20,6 +20,7 @@ import {
   FolderOpen,
   Gauge,
   GitBranch,
+  History,
   KeyRound,
   Keyboard,
   Languages,
@@ -91,6 +92,7 @@ import {
 import { LANGUAGE_STORAGE_KEY, localize, readInitialLanguage, type LanguageMode } from "./language";
 import { readInitialTheme, THEME_STORAGE_KEY, type ThemeMode } from "./theme";
 import { loadSkillsPanelData } from "./skills-load";
+import { clearSearchHistory, deleteSearch, readSearchHistory, recordSearch } from "./search-history";
 import type {
   ActionStatus,
   ContextMenuState,
@@ -338,12 +340,26 @@ const SearchBox = forwardRef<
   HTMLInputElement,
   {
     placeholder: string;
+    recentLabel: string;
+    clearRecentLabel: string;
+    deleteRecentLabel: string;
     onQueryChange: (value: string) => void;
     onSubmit: () => void;
   }
->(function SearchBox({ placeholder, onQueryChange, onSubmit }, ref) {
+>(function SearchBox({ placeholder, recentLabel, clearRecentLabel, deleteRecentLabel, onQueryChange, onSubmit }, ref) {
   const [value, setValue] = useState("");
+  const [history, setHistory] = useState<string[]>(() =>
+    typeof window === "undefined" ? [] : readSearchHistory(window.localStorage),
+  );
+  const [focused, setFocused] = useState(false);
   const commitTimerRef = useRef<number | undefined>(undefined);
+  const lastSubmittedRef = useRef("");
+
+  function cancelPendingCommit(): void {
+    if (commitTimerRef.current === undefined) return;
+    window.clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = undefined;
+  }
 
   useEffect(
     () => () => {
@@ -354,11 +370,37 @@ const SearchBox = forwardRef<
 
   function handleChange(next: string): void {
     setValue(next);
-    if (commitTimerRef.current !== undefined) window.clearTimeout(commitTimerRef.current);
+    setFocused(true);
+    if (next.trim() !== lastSubmittedRef.current) lastSubmittedRef.current = "";
+    cancelPendingCommit();
     commitTimerRef.current = window.setTimeout(() => {
       startTransition(() => onQueryChange(next));
     }, SEARCH_DEBOUNCE_MS);
   }
+
+  function submitOrOpen(): void {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === lastSubmittedRef.current) {
+      onSubmit();
+      return;
+    }
+    cancelPendingCommit();
+    onQueryChange(value);
+    setHistory((current) => recordSearch(window.localStorage, current, value));
+    lastSubmittedRef.current = trimmed;
+    setFocused(false);
+  }
+
+  function selectRecentSearch(query: string): void {
+    cancelPendingCommit();
+    setValue(query);
+    onQueryChange(query);
+    setHistory((current) => recordSearch(window.localStorage, current, query));
+    lastSubmittedRef.current = query.trim();
+    setFocused(false);
+  }
+
+  const showHistory = focused && value.length === 0 && history.length > 0;
 
   return (
     <div className="searchbox">
@@ -367,8 +409,17 @@ const SearchBox = forwardRef<
         ref={ref}
         value={value}
         onChange={(event) => handleChange(event.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setFocused(false);
+        }}
         onKeyDown={(event) => {
-          if (!event.metaKey && !event.ctrlKey && event.key === "Enter") onSubmit();
+          if (event.key === "Escape") {
+            setFocused(false);
+            event.currentTarget.blur();
+          } else if (!event.metaKey && !event.ctrlKey && event.key === "Enter") {
+            submitOrOpen();
+          }
         }}
         placeholder={placeholder}
         autoFocus
@@ -377,6 +428,41 @@ const SearchBox = forwardRef<
       <span className="kbd-hint" title="Resume selected session in the default terminal">
         {RUNTIME_PLATFORM === "darwin" ? "⌘↵" : "Ctrl+Enter"}
       </span>
+      {showHistory ? (
+        <div className="recent-search-dropdown" onMouseDown={(event) => event.preventDefault()}>
+          <div className="recent-search-header">
+            <span>{recentLabel}</span>
+            <button
+              type="button"
+              onClick={() => setHistory(clearSearchHistory(window.localStorage))}
+            >
+              {clearRecentLabel}
+            </button>
+          </div>
+          <div className="recent-search-list">
+            {history.map((query) => (
+              <div className="recent-search-item" key={query}>
+                <button type="button" className="recent-search-select" onClick={() => selectRecentSearch(query)} title={query}>
+                  <History size={14} />
+                  <span>{query}</span>
+                </button>
+                <button
+                  type="button"
+                  className="recent-search-delete"
+                  aria-label={`${deleteRecentLabel}: ${query}`}
+                  title={deleteRecentLabel}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setHistory((current) => deleteSearch(window.localStorage, current, query));
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -1829,6 +1915,9 @@ export function App(): ReactElement {
           <SearchBox
             ref={searchRef}
             placeholder={searchPlaceholder}
+            recentLabel={t("Recent searches", "最近搜索")}
+            clearRecentLabel={t("Clear", "清空")}
+            deleteRecentLabel={t("Delete recent search", "删除最近搜索")}
             onQueryChange={setQuery}
             onSubmit={() => {
               if (selected) void openDetail(selected);

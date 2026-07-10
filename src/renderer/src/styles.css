@@ -1166,6 +1166,107 @@ select:focus-visible {
   color: var(--accent-bright);
 }
 
+.recent-search-dropdown {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  right: -1px;
+  left: -1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-popover);
+}
+
+.recent-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.recent-search-header button,
+.recent-search-item button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.recent-search-header button {
+  padding: 5px 7px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.recent-search-header button:hover,
+.recent-search-header button:focus-visible {
+  background: var(--panel-active);
+  color: var(--text);
+}
+
+.recent-search-list {
+  overflow-y: auto;
+  max-height: 280px;
+  padding: 4px;
+}
+
+.recent-search-item {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.recent-search-item:hover,
+.recent-search-item:focus-within {
+  background: var(--panel-active);
+}
+
+.recent-search-select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.recent-search-select span {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-search-delete {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 5px !important;
+  opacity: 0;
+}
+
+.recent-search-item:hover .recent-search-delete,
+.recent-search-delete:focus-visible {
+  opacity: 1;
+}
+
+.recent-search-delete:hover,
+.recent-search-delete:focus-visible {
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
+}
+
 .live-filter {
   display: inline-flex;
   align-items: center;
