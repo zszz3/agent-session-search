@@ -30,7 +30,7 @@
 - **AI / Agent 辅助检索历史会话**：
   可以使用 AI 摘要增强历史会话检索，也支持自然语言找会话；同时开放 MCP 能力,让 Claude Code / Codex / CodeBuddy 可以在对话里直接搜索、读取历史会话,并对会话打标签、收藏、设置可见性。
 - **跨 Agent 迁移会话**：
-  **支持把 Claude / Codex / CodeBuddy 会话迁移到Claude / Codex / CodeBuddy，并在迁移后继续工作，非常好用！！！**。
+  支持把 Claude Code、Codex、CodeBuddy、TClaude、TCodex、Claude Code Internal 和 Codex Internal 的本地会话迁移到任一上述本地 Agent，并在迁移后继续工作。四个扩展 CLI 的迁移按钮仅在 Settings -> Optional sources 中启用对应开关后显示，同一开关也会启用索引。迁移仅支持本地会话；远程恢复目标仍为 Claude Code、Codex 和 CodeBuddy。
 - **远程保存和跨设备恢复会话**：
   支持使用自己的 Supabase 项目手动上传会话快照，在另一台设备搜索远程会话、查看完整详情，并恢复到 Claude Code / Codex / CodeBuddy 中继续工作。
 - **统一查看 Agent 用量和额度**：

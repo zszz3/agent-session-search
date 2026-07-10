@@ -30,7 +30,7 @@
 - **AI / Agent-assisted session retrieval**:
   Use AI summaries to improve history search, ask for sessions in natural language, and expose MCP capabilities so Claude Code / Codex / CodeBuddy can search, read, tag, favorite, and set the visibility of session history directly in chat.
 - **Cross-agent session migration**:
-  Migrate Claude / Codex / CodeBuddy sessions into another agent and continue from the migrated session.
+  Migrate local sessions from Claude Code, Codex, CodeBuddy, TClaude, TCodex, Claude Code Internal, or Codex Internal into any of those local agents and continue working. Migration buttons for the four extended CLIs appear only when their corresponding switches are enabled under Settings -> Optional sources; the same switches also enable indexing. Migration is local-only; remote restore targets remain Claude Code, Codex, and CodeBuddy.
 - **Remote session storage and cross-device restore**:
   Upload session snapshots manually to your own Supabase project, search and inspect them on another device, and restore them into Claude Code / Codex / CodeBuddy.
 - **Unified agent usage and quota view**:
