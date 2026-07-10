@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/Electron-42-47848F?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" alt="React">
   <img src="https://img.shields.io/badge/Node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white" alt="Node">
+  <a href="https://github.com/zszz3/agent-session-search/stargazers"><img src="https://img.shields.io/github/stars/zszz3/agent-session-search?style=flat&logo=github" alt="GitHub Stars"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
