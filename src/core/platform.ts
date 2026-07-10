@@ -57,6 +57,7 @@ export interface AppSettings {
   codeBuddyBinary: string;
   tclaudeBinary: string;
   tcodexBinary: string;
+  claudeInternalBinary: string;
   includeClaudeInternal: boolean;
   includeCodexInternal: boolean;
   includeTclaude: boolean;
@@ -100,6 +101,7 @@ export const defaultSettings: AppSettings = {
   codeBuddyBinary: "codebuddy",
   tclaudeBinary: "tclaude",
   tcodexBinary: "tcodex",
+  claudeInternalBinary: "claude-internal",
   includeClaudeInternal: false,
   includeCodexInternal: false,
   includeTclaude: false,
