@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -47,6 +48,96 @@ async function withMcpConfig(
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string) => import("node:sqlite").DatabaseSync };
+
+type JsonRpcResponse = {
+  id?: number;
+  result?: {
+    serverInfo?: { name?: string };
+    tools?: Array<{ name: string }>;
+  };
+};
+
+async function runMcpWithMigrationBundle(bundleSource: string): Promise<{
+  initialize: JsonRpcResponse;
+  toolsList: JsonRpcResponse;
+  stderr: string;
+}> {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mcp-stale-bundle-")));
+  const binDir = path.join(root, "bin");
+  const bundleDir = path.join(root, "out", "mcp");
+  const dbPath = path.join(root, "sessions.db");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.copyFileSync(path.resolve("bin", "agent-session-search-mcp.mjs"), path.join(binDir, "agent-session-search-mcp.mjs"));
+  fs.writeFileSync(path.join(bundleDir, "migration-entry.js"), bundleSource, "utf8");
+  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n', "utf8");
+  fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
+
+  const db = new DatabaseSync(dbPath);
+  const store = new SessionStore(db);
+  store.close();
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(binDir, "agent-session-search-mcp.mjs")], {
+        env: { ...process.env, AGENT_SESSION_SEARCH_DB: dbPath },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const responses = new Map<number, JsonRpcResponse>();
+      let stdout = "";
+      let stderr = "";
+      let toolsRequested = false;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        child.kill();
+        if (error) reject(error);
+        else resolve({ initialize: responses.get(1)!, toolsList: responses.get(2)!, stderr });
+      };
+      const timeout = setTimeout(() => finish(new Error(`MCP probe timed out. stderr: ${stderr}`)), 5_000);
+
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        const lines = stdout.split("\n");
+        stdout = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const response = JSON.parse(line) as JsonRpcResponse;
+          if (typeof response.id === "number") responses.set(response.id, response);
+          if (response.id === 1 && !toolsRequested) {
+            toolsRequested = true;
+            child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+            child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
+          }
+          if (response.id === 2) finish();
+        }
+      });
+      child.once("error", (error) => finish(error));
+      child.once("exit", (code, signal) => {
+        if (!settled) finish(new Error(`MCP exited before tools/list (code=${code}, signal=${signal}). stderr: ${stderr}`));
+      });
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1" },
+          },
+        })}\n`,
+      );
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 function seedStore(): { db: import("node:sqlite").DatabaseSync; store: SessionStore } {
   const db = new DatabaseSync(":memory:");
@@ -286,6 +377,34 @@ describe("MCP migrate_session tool", () => {
       "claude-internal",
       "codex-internal",
     ]);
+  });
+
+  it("keeps base tools available when the migration bundle is stale", async () => {
+    const result = await runMcpWithMigrationBundle("export class SessionStore {}\n");
+
+    expect(result.initialize.result?.serverInfo?.name).toBe("agent-session-search");
+    expect(result.toolsList.result?.tools?.map((tool) => tool.name)).toEqual([
+      "search_sessions",
+      "get_session",
+      "list_projects",
+      "list_tags",
+      "get_latest_sessions",
+      "tag_session",
+      "toggle_favorite",
+      "set_visibility",
+    ]);
+    expect(result.stderr).toContain("migration tools disabled");
+    expect(result.stderr).toContain("MIGRATION_TARGET_IDS");
+    expect(result.stderr).toContain("npm run build:mcp");
+  });
+
+  it("registers migrate_session when the migration bundle is current", async () => {
+    const bundleSource = fs.readFileSync(path.resolve("out", "mcp", "migration-entry.js"), "utf8");
+    const result = await runMcpWithMigrationBundle(bundleSource);
+
+    expect(result.initialize.result?.serverInfo?.name).toBe("agent-session-search");
+    expect(result.toolsList.result?.tools?.map((tool) => tool.name)).toContain("migrate_session");
+    expect(result.stderr).not.toContain("migration tools disabled");
   });
 
   it("reads an isolated enabled TClaude setting and reaches CLI inspection", async () => {

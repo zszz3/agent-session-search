@@ -261,6 +261,22 @@ export function setVisibility(db, { sessionKey, visibility } = {}) {
 // scripts/build-mcp-bundle.mjs) so this standalone bin can call it without
 // --experimental-strip-types. The bundle is resolved relative to this file.
 let migrationBundle = null;
+
+function validateMigrationBundle(bundle) {
+  if (
+    !Array.isArray(bundle?.MIGRATION_TARGET_IDS) ||
+    bundle.MIGRATION_TARGET_IDS.length === 0 ||
+    !bundle.MIGRATION_TARGET_IDS.every((value) => typeof value === "string")
+  ) {
+    throw new Error("migration bundle is missing MIGRATION_TARGET_IDS");
+  }
+  for (const name of ["isMigrationTarget", "SessionStore", "migrateSessionForMcp"]) {
+    if (typeof bundle[name] !== "function") {
+      throw new Error(`migration bundle is missing ${name}`);
+    }
+  }
+}
+
 async function loadMigrationBundle() {
   if (migrationBundle) return migrationBundle;
   const candidates = [
@@ -271,7 +287,9 @@ async function loadMigrationBundle() {
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
     try {
-      migrationBundle = await import(pathToFileURL(candidate).href);
+      const candidateBundle = await import(pathToFileURL(candidate).href);
+      validateMigrationBundle(candidateBundle);
+      migrationBundle = candidateBundle;
       return migrationBundle;
     } catch (error) {
       lastError = error;
@@ -342,7 +360,15 @@ async function runServer() {
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   const server = new McpServer({ name: "agent-session-search", version: "0.1.0" });
-  const migrateTargetSchema = await migrationTargetSchema(z);
+  let migrateTargetSchema = null;
+  try {
+    migrateTargetSchema = await migrationTargetSchema(z);
+  } catch (error) {
+    process.stderr.write(
+      `agent-session-search MCP migration tools disabled: ${error instanceof Error ? error.message : String(error)}. ` +
+        "Run `npm run build:mcp` in the Agent-Session-Search install directory, then restart the MCP client.\n",
+    );
+  }
 
   server.registerTool(
     "search_sessions",
@@ -454,8 +480,9 @@ async function runServer() {
     },
   );
 
-  server.registerTool(
-    "migrate_session",
+  if (migrateTargetSchema) {
+    server.registerTool(
+      "migrate_session",
     {
       description:
         "跨 Agent 迁移会话（Migrate session across agents）。把一个本地会话（Claude Code / Codex / CodeBuddy）迁移到另一个目标 Agent，生成目标 Agent 能直接 resume 的会话文件。" +
@@ -473,7 +500,8 @@ async function runServer() {
       const result = await migrateSession(db, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
-  );
+    );
+  }
 
   await server.connect(new StdioServerTransport());
 }
