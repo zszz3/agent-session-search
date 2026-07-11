@@ -23,6 +23,8 @@ describe("app loading performance", () => {
     expect(searchBox).not.toContain("setTimeout");
     expect(searchBox).not.toContain("SEARCH_DEBOUNCE_MS");
     expect(searchBox).toContain("selectRecentSearch(query)");
+    const handleChange = searchBox.slice(searchBox.indexOf("function handleChange"), searchBox.indexOf("function selectRecentSearch"));
+    expect(handleChange).toContain('if (value.length > 0 && next.length === 0) onSearch("")');
   });
 
   it("fills recent searches without running them until Enter", () => {
