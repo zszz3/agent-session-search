@@ -162,8 +162,8 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain("throw new Error(\"SSH environment is not available for this remote session.\")");
     expect(mainSource).toContain("openResumeInTerminal(session, getSettings(), { sshArgs })");
     expect(mainSource).toContain("openResumeInSpecificTerminal(session, getSettings(), \"iTerm\", { sshArgs })");
-    expect(mainSource).toContain("if (!isLocalSession(session)) return false");
-    expect(mainSource).toContain("if (!isLocalSession(session)) {");
+    expect(mainSource).toContain("if (!isLocalSessionEnvironment(session)) return false");
+    expect(mainSource).toContain("if (!isLocalSessionEnvironment(session)) {");
     expect(mainSource).toContain("return { route: \"resume\" as const };");
   });
 
@@ -204,8 +204,27 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain('event.sender.send("session:migration-progress"');
     expect(mainHandlerSource("session:migrate")).not.toContain("ensureRemoteSessionDetailsLoaded");
     expect(mainHandlerSource("session:migrate")).not.toContain("runIndexSync");
-    expect(mainHandlerSource("session:migrate")).toContain("indexMigratedSessionFile");
-    expect(mainHandlerSource("session:migrate")).toContain("fallbackMigrationResumeDisplayCommand");
+    expect(mainSource).toContain("indexMigratedSessionFile");
+    expect(mainSource).toContain("getSafeMigrationResumeCommand");
+  });
+
+  it("keeps the migration IPC handler on one immutable settings snapshot and delegates behavior", () => {
+    const handler = mainHandlerSource("session:migrate");
+    expect(handler.match(/getHydratedSettings\(\)/g)).toHaveLength(1);
+    expect(handler).toContain("Object.freeze(await getHydratedSettings())");
+    expect(handler).toContain("runLocalSessionMigration");
+    expect(handler).toContain("localSessionMigrationRuntime(event)");
+    expect(handler).not.toContain("getSettings()");
+    expect(preloadSource).toContain("target: MigrationTarget");
+  });
+
+  it("builds remote restore commands with POSIX syntax regardless of the local platform", () => {
+    const remoteCommand = mainSource.slice(
+      mainSource.indexOf("function remoteMigrationResumeDisplayCommand"),
+      mainSource.indexOf("async function writeMigratedSessionToSshEnvironment"),
+    );
+    expect(remoteCommand).toContain('getMigrationResumeProcessSpec(target, sessionId, projectPath, getSettings(), { platform: "linux" })');
+    expect(remoteCommand).not.toContain("fallbackMigrationResumeDisplayCommand(target");
   });
 
   it("exposes visible session bulk remote upload and remote-environment restore actions", () => {

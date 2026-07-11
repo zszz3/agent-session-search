@@ -8,6 +8,7 @@ import {
   type SkillUsageSource,
 } from "./skill-usage";
 import { truncateTraceDetail } from "./trace-detail";
+import { migrationTargetDescriptor } from "./migration-targets";
 import type {
   EnvironmentKind,
   EnvironmentSyncState,
@@ -159,7 +160,7 @@ interface SessionMigrationRow {
   id: string;
   source_session_key: string;
   source_agent: SessionMigrationRecord["sourceAgent"];
-  target_agent: SessionMigrationRecord["targetAgent"];
+  target_agent: string;
   target_session_id: string;
   target_file_path: string;
   strategy: SessionMigrationRecord["strategy"];
@@ -1058,7 +1059,7 @@ export class SessionStore {
       id: row.id,
       sourceSessionKey: row.source_session_key,
       sourceAgent: row.source_agent,
-      targetAgent: row.target_agent,
+      targetAgent: migrationTargetDescriptor(row.target_agent).id,
       targetSessionId: row.target_session_id,
       targetFilePath: row.target_file_path,
       strategy: row.strategy,

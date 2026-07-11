@@ -1,17 +1,19 @@
-import type { MigrationAgent, ProjectSummary, SearchOptions, SessionSearchResult, SessionSource, SessionStatsPeriod } from "../../core/types";
+import type { MigrationAgent, MigrationTarget, ProjectSummary, SearchOptions, SessionSearchResult, SessionSource, SessionStatsPeriod } from "../../core/types";
 import { migrationAgentForSource, supportedMigrationTargets } from "../../core/session-migration";
+import { enabledMigrationTargets, migrationTargetDescriptor, type MigrationTargetSettings } from "../../core/migration-targets";
 import type { AppSettings } from "../../core/platform";
 import type { ResumeRouteResult } from "../../core/resume-router";
 import { localize, type LanguageMode } from "./language";
 import { liveStateLabel, type LiveSessionState, type LiveStatusFilter } from "./live-filter";
+import { isLocalSessionEnvironment } from "../../core/session-environment";
 
 export const SOURCE_LABEL: Record<SessionSource, string> = {
   "claude-cli": "Claude Code",
   "claude-app": "Claude Code",
-  "claude-internal": "Claude Extra",
+  "claude-internal": "Claude Code Internal",
   "codex-cli": "Codex",
   "codex-app": "Codex",
-  "codex-internal": "Codex Extra",
+  "codex-internal": "Codex Internal",
   "tclaude-cli": "TClaude",
   "tcodex-cli": "TCodex",
   "codebuddy-cli": "CodeBuddy CLI",
@@ -31,8 +33,8 @@ const BASE_SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"]
 export function sourceFilters(settings: AppSettings | null): Array<{ label: string; value: SearchOptions["source"] }> {
   return [
     ...BASE_SOURCE_FILTERS,
-    ...(settings?.includeClaudeInternal ? [{ label: "Claude Extra", value: "claude-internal" as const }] : []),
-    ...(settings?.includeCodexInternal ? [{ label: "Codex Extra", value: "codex-internal" as const }] : []),
+    ...(settings?.includeClaudeInternal ? [{ label: migrationTargetDescriptor("claude-internal").label, value: "claude-internal" as const }] : []),
+    ...(settings?.includeCodexInternal ? [{ label: migrationTargetDescriptor("codex-internal").label, value: "codex-internal" as const }] : []),
     ...(settings?.includeTclaude ? [{ label: "TClaude", value: "tclaude-cli" as const }] : []),
     ...(settings?.includeTcodex ? [{ label: "TCodex", value: "tcodex-cli" as const }] : []),
     ...(settings?.includeCodeBuddyCli ? [{ label: "CodeBuddy CLI", value: "codebuddy-cli" as const }] : []),
@@ -63,14 +65,19 @@ export function supportsMigrationSource(source: SessionSource): boolean {
   return supportedMigrationTargets(source).length > 0;
 }
 
-export function migrationTargetsForSource(source: SessionSource): MigrationAgent[] {
-  return supportedMigrationTargets(source);
+export function migrationTargetsForSource(source: SessionSource, settings: MigrationTargetSettings): MigrationTarget[] {
+  return supportedMigrationTargets(source, enabledMigrationTargets(settings));
 }
 
-export function migrationAgentLabel(agent: MigrationAgent): string {
-  if (agent === "claude") return "Claude Code";
-  if (agent === "codex") return "Codex";
-  return "CodeBuddy";
+export function migrationTargetsForSession(
+  session: Pick<SessionSearchResult, "source" | "environmentId" | "environmentKind">,
+  settings: MigrationTargetSettings,
+): MigrationTarget[] {
+  return isLocalSessionEnvironment(session) ? migrationTargetsForSource(session.source, settings) : [];
+}
+
+export function migrationAgentLabel(target: MigrationTarget): string {
+  return migrationTargetDescriptor(target).label;
 }
 
 export function sourceMigrationAgent(source: SessionSource): MigrationAgent | null {
@@ -115,7 +122,7 @@ export function resumeRouteMessage(result: ResumeRouteResult, language: Language
 }
 
 export function isRemoteSession(session: Pick<SessionSearchResult, "environmentId" | "environmentKind">): boolean {
-  return session.environmentKind === "ssh" && session.environmentId !== "local";
+  return !isLocalSessionEnvironment(session);
 }
 
 export function environmentBadgeLabel(

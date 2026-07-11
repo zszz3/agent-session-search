@@ -58,6 +58,7 @@ export interface SessionMessage {
 }
 
 export type MigrationAgent = "claude" | "codex" | "codebuddy";
+export type MigrationTarget = MigrationAgent | "tclaude" | "tcodex" | "claude-internal" | "codex-internal";
 export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";
 export type SessionMigrationStage = "reading" | "compressing" | "writing" | "indexing" | "launching";
 
@@ -89,7 +90,7 @@ export interface PortableSession {
 
 export interface SessionMigrationProgress {
   sessionKey: string;
-  target: MigrationAgent;
+  target: MigrationTarget;
   stage: SessionMigrationStage;
   // 0-100 progress within the current stage. Only meaningful during
   // "compressing" (the only stage with multiple discrete units of work).
@@ -99,7 +100,7 @@ export interface SessionMigrationProgress {
 }
 
 export interface SessionMigrationResult {
-  target: MigrationAgent;
+  target: MigrationTarget;
   targetSessionId: string;
   targetFilePath: string;
   strategy: SessionMigrationStrategy;
@@ -113,7 +114,7 @@ export interface SessionMigrationRecord {
   id: string;
   sourceSessionKey: string;
   sourceAgent: MigrationAgent;
-  targetAgent: MigrationAgent;
+  targetAgent: MigrationTarget;
   targetSessionId: string;
   targetFilePath: string;
   strategy: SessionMigrationStrategy;

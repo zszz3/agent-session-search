@@ -658,6 +658,38 @@ describe("SessionStore", () => {
     }
   });
 
+  it("round-trips a concrete migration target without changing the SQLite schema", () => {
+    const store = createInMemoryStore();
+    try {
+      const record = migrationRecord({ targetAgent: "tcodex" });
+      store.recordSessionMigration(record);
+
+      expect(store.listSessionMigrations(record.sourceSessionKey)).toEqual([record]);
+      const columns = (store as unknown as { db: InstanceType<typeof DatabaseSync> }).db
+        .prepare("PRAGMA table_info(session_migrations)")
+        .all() as Array<{ name: string; type: string }>;
+      expect(columns.find(({ name }) => name === "target_agent")?.type).toBe("TEXT");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("rejects an unregistered migration target read from SQLite", () => {
+    const store = createInMemoryStore();
+    try {
+      const db = (store as unknown as { db: InstanceType<typeof DatabaseSync> }).db;
+      db.prepare(`
+        INSERT INTO session_migrations (
+          id, source_session_key, source_agent, target_agent, target_session_id, target_file_path, strategy, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run("bad-target", "codex:abc", "codex", "hermes", "id", "/tmp/id", "complete", 1);
+
+      expect(() => store.listSessionMigrations("codex:abc")).toThrow("Unsupported migration target: hermes");
+    } finally {
+      store.close();
+    }
+  });
+
   it("persists session migrations across database reopen with unicode paths and all strategy values", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-store-migration-"));
     const dbPath = path.join(tempDir, "store.sqlite");

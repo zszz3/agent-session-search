@@ -36,6 +36,7 @@ import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-se
 import {
   defaultSettings,
   getMigrationResumeProcessSpec,
+  getSafeMigrationResumeCommand,
   getResumeCommand,
   inspectMigrationCli,
   mergeAppSettings,
@@ -64,6 +65,7 @@ import {
 } from "../core/ai-assistant";
 import { applyMigrationLengthPolicy, createMigrationCompressor } from "../core/session-migration-compression";
 import { migrateSession } from "../core/session-migration";
+import { runLocalSessionMigration } from "./local-session-migration";
 import { targetFilePath, writeMigratedSession } from "../core/session-migration-writers";
 import { writeDbPointer } from "../core/app-paths";
 import { routeResumeSession } from "../core/resume-router";
@@ -116,10 +118,12 @@ import {
   INITIAL_SKILL_USAGE_REFRESH_DELAY_MS,
 } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
+import { isLocalSessionEnvironment } from "../core/session-environment";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import type {
   EnvironmentUpsertInput,
   MigrationAgent,
+  MigrationTarget,
   PortableSession,
   SearchOptions,
   SessionEnvironment,
@@ -746,12 +750,8 @@ function markdownExportFileName(title: string): string {
   return `${safeTitle || "session"}.md`;
 }
 
-function isLocalSession(session: SessionSearchResult): boolean {
-  return session.environmentKind === "local" || session.environmentId === "local";
-}
-
 function sshArgsForSession(session: SessionSearchResult): string[] | undefined {
-  if (isLocalSession(session)) return undefined;
+  if (isLocalSessionEnvironment(session)) return undefined;
   const environment = store.getEnvironment(session.environmentId);
   if (!environment || environment.kind !== "ssh") return undefined;
   try {
@@ -764,14 +764,14 @@ function sshArgsForSession(session: SessionSearchResult): string[] | undefined {
 
 function requireSshArgsForRemoteSession(session: SessionSearchResult): string[] | undefined {
   const sshArgs = sshArgsForSession(session);
-  if (!isLocalSession(session) && !sshArgs) {
+  if (!isLocalSessionEnvironment(session) && !sshArgs) {
     throw new Error("SSH environment is not available for this remote session.");
   }
   return sshArgs;
 }
 
 function requireRemoteSshEnvironment(session: SessionSearchResult): SessionEnvironment | null {
-  if (isLocalSession(session)) return null;
+  if (isLocalSessionEnvironment(session)) return null;
   const environment = store.getEnvironment(session.environmentId);
   if (!environment || environment.kind !== "ssh") throw new Error("SSH environment is not available for this remote session.");
   return environment;
@@ -800,7 +800,7 @@ function hasHydratedRemoteDetails(sessionKey: string): boolean {
 
 async function ensureRemoteSessionDetailsLoaded(sessionKey: string): Promise<void> {
   const session = store.getSession(sessionKey);
-  if (!session || isLocalSession(session)) return;
+  if (!session || isLocalSessionEnvironment(session)) return;
   if (hasHydratedRemoteDetails(sessionKey)) return;
 
   const active = remoteDetailLoads.get(sessionKey);
@@ -808,7 +808,7 @@ async function ensureRemoteSessionDetailsLoaded(sessionKey: string): Promise<voi
 
   const load = (async () => {
     const latest = store.getSession(sessionKey);
-    if (!latest || isLocalSession(latest)) return;
+    if (!latest || isLocalSessionEnvironment(latest)) return;
     const environment = store.getEnvironment(latest.environmentId);
     if (!environment || environment.kind !== "ssh") throw new Error("SSH environment is not available for this remote session.");
     const payload = await fetchRemoteSessionFilePayload(environment, latest);
@@ -1255,7 +1255,7 @@ async function pathIsDirectory(targetPath: string): Promise<boolean> {
   }
 }
 
-function migrationResumeDisplayCommand(target: MigrationAgent, sessionId: string, projectPath: string): string {
+function migrationResumeDisplayCommand(target: MigrationTarget, sessionId: string, projectPath: string): string {
   return getMigrationResumeProcessSpec(target, sessionId, projectPath, getSettings()).displayCommand;
 }
 
@@ -1263,12 +1263,8 @@ function quotePosixToken(value: string): string {
   return /^[A-Za-z0-9_\-./]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function fallbackMigrationResumeDisplayCommand(target: MigrationAgent, sessionId: string, projectPath: string): string {
-  const settings = getSettings();
-  const binary =
-    target === "claude" ? settings.claudeBinary : target === "codex" ? settings.codexBinary : settings.codeBuddyBinary;
-  const args = target === "codex" ? ["resume", sessionId] : ["--resume", sessionId];
-  return `cd ${quotePosixToken(projectPath)} && ${[binary, ...args].map(quotePosixToken).join(" ")}`;
+function fallbackMigrationResumeDisplayCommand(target: MigrationTarget, sessionId: string, projectPath: string): string {
+  return getSafeMigrationResumeCommand(target, sessionId, projectPath, getSettings());
 }
 
 function remoteMigrationResumeDisplayCommand(
@@ -1277,8 +1273,48 @@ function remoteMigrationResumeDisplayCommand(
   sessionId: string,
   projectPath: string,
 ): string {
-  const remoteCommand = fallbackMigrationResumeDisplayCommand(target, sessionId, projectPath);
+  const remoteCommand = getMigrationResumeProcessSpec(target, sessionId, projectPath, getSettings(), { platform: "linux" }).displayCommand;
   return ["ssh", ...buildRemoteSyncSshArgs(environment, remoteCommand).map(quotePosixToken)].join(" ");
+}
+
+function localSessionMigrationRuntime(event: IpcMainInvokeEvent) {
+  return {
+    resolveSummaryEndpoint: (snapshot: AppSettings) => resolveSummaryEndpointFromSettingsShared(snapshot, {
+      onTemporarySession: (temporarySessionKey) => {
+        try {
+          store.deleteSession(temporarySessionKey);
+        } catch {
+          // Best-effort cleanup if an ephemeral summary call is indexed before it exits.
+        }
+      },
+    }) ?? buildCodexExecEndpoint(snapshot),
+    createCompressor: (endpoint: SummaryEndpoint, concurrency: number) =>
+      createMigrationCompressor(endpoint, undefined, concurrency),
+    migrate: migrateSession,
+    inspectCli: (migrationTarget: MigrationTarget, snapshot: AppSettings) => inspectMigrationCli(migrationTarget, snapshot),
+    prepare: (portable: PortableSession, onProgress: Parameters<typeof applyMigrationLengthPolicy>[2], compressor: ReturnType<typeof createMigrationCompressor> | null) =>
+      applyMigrationLengthPolicy(portable, compressor, onProgress),
+    write: (migrationTarget: MigrationTarget, portable: PortableSession) =>
+      writeMigratedSession({ target: migrationTarget, session: portable }),
+    record: (record: Parameters<SessionStore["recordSessionMigration"]>[0]) => store.recordSessionMigration(record),
+    refreshIndex: async (migrationTarget: MigrationTarget, writtenFilePath: string) => {
+      const status = indexMigratedSessionFile(store, migrationTarget, writtenFilePath);
+      indexStatus = status;
+      mainWindow?.webContents.send("index-status", indexStatus);
+    },
+    launch: (migrationTarget: MigrationTarget, targetSessionId: string, projectPath: string, snapshot: AppSettings) =>
+      openMigrationResumeInTerminal(migrationTarget, targetSessionId, projectPath, snapshot),
+    resumeCommand: (migrationTarget: MigrationTarget, targetSessionId: string, projectPath: string, snapshot: AppSettings) =>
+      getMigrationResumeProcessSpec(migrationTarget, targetSessionId, projectPath, snapshot).displayCommand,
+    fallbackResumeCommand: (migrationTarget: MigrationTarget, targetSessionId: string, projectPath: string, snapshot: AppSettings) =>
+      getSafeMigrationResumeCommand(migrationTarget, targetSessionId, projectPath, snapshot),
+    onProgress: (progress: Parameters<NonNullable<import("../core/session-migration").SessionMigrationDependencies["onProgress"]>>[0]) =>
+      event.sender.send("session:migration-progress", progress),
+    idFactory: () => randomUUID(),
+    now: () => Date.now(),
+    projectPathExists: pathExists,
+    projectPathIsDirectory: pathIsDirectory,
+  };
 }
 
 async function writeMigratedSessionToSshEnvironment(
@@ -1438,7 +1474,7 @@ function registerIpc(): void {
     const pageOffset = offset ?? 0;
     const pageLimit = limit ?? 120;
     const session = store.getSession(sessionKey);
-    if (session && !isLocalSession(session) && !hasHydratedRemoteDetails(sessionKey)) {
+    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) {
       if (session.messageCount <= 0) return [];
       const environment = requireRemoteSshEnvironment(session);
       if (!environment) return [];
@@ -1449,7 +1485,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("session:trace-events", async (_event, sessionKey: string, options?: TraceEventQueryOptions) => {
     const session = store.getSession(sessionKey);
-    if (session && !isLocalSession(session) && !hasHydratedRemoteDetails(sessionKey)) return [];
+    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) return [];
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     return store.getTraceEvents(sessionKey, options);
   });
@@ -1724,7 +1760,7 @@ function registerIpc(): void {
     const session = store.getSession(sessionKey);
     if (!session) return { route: "resume" as const };
     const sshArgs = requireSshArgsForRemoteSession(session);
-    if (!isLocalSession(session)) {
+    if (!isLocalSessionEnvironment(session)) {
       await ensureRemoteResumePreflight(session);
       await openResumeInTerminal(session, getSettings(), { sshArgs });
       store.markResumed(sessionKey);
@@ -1749,52 +1785,30 @@ function registerIpc(): void {
     await openResumeInSpecificTerminal(session, getSettings(), "iTerm", { sshArgs });
     store.markResumed(sessionKey);
   });
-  ipcMain.handle("session:migrate", async (event, sessionKey: string, target: MigrationAgent) => {
+  ipcMain.handle("session:migrate", async (event, sessionKey: string, target: unknown) => {
     const session = store.getSession(sessionKey);
     if (!session) throw new Error("Session not found.");
+    const messages = store.getAllMessages(sessionKey);
+    const settings = Object.freeze(await getHydratedSettings());
 
-    // 没配自定义摘要 endpoint 时回退本地 Codex CLI(缺失则再退 Claude),让迁移仍走 AI 压缩而非直接本地截断——与 AI 助手一致。
-    const settings = await getHydratedSettings();
-    const endpoint = (await resolveSummaryEndpointFromSettings()) ?? buildCodexExecEndpoint(settings);
-    const compressor = endpoint ? createMigrationCompressor(endpoint, undefined, settings.compressionConcurrency) : null;
-    const result = await migrateSession({
+    return runLocalSessionMigration({
       source: session,
-      messages: store.getAllMessages(sessionKey),
+      messages,
       target,
-      deps: {
-        inspectCli: (migrationTarget) => inspectMigrationCli(migrationTarget, getSettings()),
-        prepare: (portable, onProgress) => applyMigrationLengthPolicy(portable, compressor, onProgress),
-        write: (migrationTarget, portable) => writeMigratedSession({ target: migrationTarget, session: portable }),
-        record: (record) => store.recordSessionMigration(record),
-        refreshIndex: async (migrationTarget, writtenFilePath) => {
-          const status = indexMigratedSessionFile(store, migrationTarget, writtenFilePath);
-          indexStatus = status;
-          mainWindow?.webContents.send("index-status", indexStatus);
-        },
-        launch: (migrationTarget, targetSessionId, projectPath) =>
-          openMigrationResumeInTerminal(migrationTarget, targetSessionId, projectPath, getSettings()),
-        resumeCommand: migrationResumeDisplayCommand,
-        fallbackResumeCommand: fallbackMigrationResumeDisplayCommand,
-        onProgress: (progress) => event.sender.send("session:migration-progress", progress),
-        idFactory: () => randomUUID(),
-        now: () => Date.now(),
-        projectPathExists: pathExists,
-        projectPathIsDirectory: pathIsDirectory,
-      },
-    });
-    return result;
+      settings,
+    }, localSessionMigrationRuntime(event));
   });
   ipcMain.handle("command:open-app", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return false;
-    if (!isLocalSession(session)) return false;
+    if (!isLocalSessionEnvironment(session)) return false;
     await openNativeApp(session.source);
     return true;
   });
   ipcMain.handle("command:reveal", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
     if (!session) return false;
-    if (!isLocalSession(session)) return false;
+    if (!isLocalSessionEnvironment(session)) return false;
     await revealInFileManager(session.projectPath || session.filePath);
     return true;
   });

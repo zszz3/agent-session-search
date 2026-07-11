@@ -3,10 +3,10 @@ import type { IndexedSession, SessionMessage, SessionSearchResult, SessionTraceE
 const SOURCE_LABEL: Record<string, string> = {
   "claude-cli": "Claude Code",
   "claude-app": "Claude Code",
-  "claude-internal": "Claude Extra",
+  "claude-internal": "Claude Code Internal",
   "codex-cli": "Codex",
   "codex-app": "Codex",
-  "codex-internal": "Codex Extra",
+  "codex-internal": "Codex Internal",
   "tclaude-cli": "TClaude",
   "tcodex-cli": "TCodex",
   "codebuddy-cli": "CodeBuddy CLI",

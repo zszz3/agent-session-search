@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { defaultSettings } from "../../core/platform";
-import { projectSortTimestamp, sessionSortTimestamp, sourceFilterLabel, sourceFilters } from "./session-ui";
+import {
+  migrationTargetsForSession,
+  migrationTargetsForSource,
+  projectSortTimestamp,
+  sessionSortTimestamp,
+  sourceFilterLabel,
+  sourceFilters,
+} from "./session-ui";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 
@@ -43,6 +50,52 @@ describe("session source labels", () => {
     }).map((filter) => sourceFilterLabel(filter, "en"));
 
     expect(enabledLabels).toEqual(expect.arrayContaining(["OpenClaw", "Hermes", "OpenCode", "Cursor Agent", "Trae"]));
+  });
+
+  it("uses Internal labels for all four optional migration sources", () => {
+    const labels = sourceFilters({
+      ...defaultSettings,
+      includeTclaude: true,
+      includeTcodex: true,
+      includeClaudeInternal: true,
+      includeCodexInternal: true,
+    }).map((filter) => sourceFilterLabel(filter, "en"));
+
+    expect(labels).toEqual(expect.arrayContaining(["TClaude", "TCodex", "Claude Code Internal", "Codex Internal"]));
+  });
+
+  it("derives migration targets from enabled settings in registry order", () => {
+    expect(migrationTargetsForSource("claude-cli", defaultSettings)).toEqual(["claude", "codex", "codebuddy"]);
+    expect(migrationTargetsForSource("claude-cli", { ...defaultSettings, includeTcodex: true })).toEqual([
+      "claude", "codex", "codebuddy", "tcodex",
+    ]);
+    expect(migrationTargetsForSource("claude-cli", {
+      ...defaultSettings,
+      includeTclaude: true,
+      includeTcodex: true,
+      includeClaudeInternal: true,
+      includeCodexInternal: true,
+    })).toEqual(["claude", "codex", "codebuddy", "tclaude", "tcodex", "claude-internal", "codex-internal"]);
+    expect(migrationTargetsForSource("hermes", defaultSettings)).toEqual([]);
+  });
+
+  it("returns no dialog targets for remote sessions without changing local targets", () => {
+    const settings = {
+      ...defaultSettings,
+      includeTclaude: true,
+      includeTcodex: true,
+      includeClaudeInternal: true,
+      includeCodexInternal: true,
+    };
+    const local = { source: "claude-cli", environmentId: "local", environmentKind: "local" } as const;
+    const importedLocal = { source: "claude-cli", environmentId: "imported-local", environmentKind: "local" } as const;
+    const remote = { source: "claude-cli", environmentId: "ssh-dev", environmentKind: "ssh" } as const;
+
+    expect(migrationTargetsForSession(remote, settings)).toEqual([]);
+    expect(migrationTargetsForSession(importedLocal, settings)).toEqual([]);
+    expect(migrationTargetsForSession(local, settings)).toEqual([
+      "claude", "codex", "codebuddy", "tclaude", "tcodex", "claude-internal", "codex-internal",
+    ]);
   });
 
   it("uses the latest activity timestamp shown in session rows", () => {

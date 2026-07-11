@@ -9,7 +9,13 @@ import {
   type SessionMigrationDependencies,
 } from "./session-migration";
 import type { WrittenMigratedSession } from "./session-migration-writers";
-import type { SessionMessage, SessionSearchResult, SessionSource } from "./types";
+import type {
+  MigrationAgent,
+  MigrationTarget,
+  SessionMessage,
+  SessionSearchResult,
+  SessionSource,
+} from "./types";
 
 function session(
   source: SessionSource,
@@ -171,9 +177,11 @@ describe("session migration model", () => {
     ["claude-cli", "claude"],
     ["claude-app", "claude"],
     ["claude-internal", "claude"],
+    ["tclaude-cli", "claude"],
     ["codex-cli", "codex"],
     ["codex-app", "codex"],
     ["codex-internal", "codex"],
+    ["tcodex-cli", "codex"],
     ["codebuddy-cli", "codebuddy"],
     ["openclaw", null],
     ["hermes", null],
@@ -185,12 +193,47 @@ describe("session migration model", () => {
   });
 
   it.each([
-    ["claude-cli", ["claude", "codex", "codebuddy"]],
-    ["codex-app", ["claude", "codex", "codebuddy"]],
-    ["codebuddy-cli", ["claude", "codex", "codebuddy"]],
-    ["hermes", []],
-  ] as const)("returns ordered migration targets for %s", (source, expected) => {
-    expect(supportedMigrationTargets(source)).toEqual(expected);
+    "claude-cli",
+    "claude-app",
+    "claude-internal",
+    "tclaude-cli",
+    "codex-cli",
+    "codex-app",
+    "codex-internal",
+    "tcodex-cli",
+    "codebuddy-cli",
+  ] as const)("returns all enabled migration targets for %s", (source) => {
+    const enabledTargets = [
+      "claude",
+      "codex",
+      "codebuddy",
+      "tclaude",
+      "tcodex",
+      "claude-internal",
+      "codex-internal",
+    ] as const satisfies readonly MigrationTarget[];
+
+    expect(supportedMigrationTargets(source, enabledTargets)).toEqual(enabledTargets);
+  });
+
+  it("returns the base migration targets when enabled targets are omitted", () => {
+    const targets: MigrationAgent[] = supportedMigrationTargets("claude-cli");
+
+    expect(targets).toEqual(["claude", "codex", "codebuddy"]);
+  });
+
+  it("preserves the narrow element type of explicitly enabled targets", () => {
+    const targets: Array<"tclaude" | "tcodex"> = supportedMigrationTargets(
+      "claude-cli",
+      ["tclaude", "tcodex"] as const,
+    );
+
+    expect(targets).toEqual(["tclaude", "tcodex"]);
+  });
+
+  it("returns no migration targets for an unsupported source", () => {
+    expect(supportedMigrationTargets("hermes")).toEqual([]);
+    expect(supportedMigrationTargets("hermes", ["tclaude", "tcodex"] as const)).toEqual([]);
   });
 
   it("normalizes a local session and copies only user and assistant messages", () => {
@@ -251,6 +294,26 @@ describe("session migration model", () => {
 });
 
 describe("migrateSession", () => {
+  it("preserves a concrete migration target while keeping the portable source agent family", async () => {
+    const { deps, inspectCli, write, launch, refreshIndex, seenRecords } = createDependencies();
+
+    const result = await migrateSession({
+      source: session("tclaude-cli"),
+      messages,
+      target: "codex-internal",
+      deps,
+    });
+
+    expect(result.target).toBe("codex-internal");
+    expect(inspectCli).toHaveBeenCalledWith("codex-internal");
+    expect(write).toHaveBeenCalledWith("codex-internal", expect.objectContaining({ sourceAgent: "claude" }));
+    expect(refreshIndex).toHaveBeenCalledWith("codex-internal", "/tmp/target-session-1.jsonl");
+    expect(launch).toHaveBeenCalledWith("codex-internal", "target-session-1", "/repo");
+    expect(seenRecords).toEqual([
+      expect.objectContaining({ sourceAgent: "claude", targetAgent: "codex-internal" }),
+    ]);
+  });
+
   it.each([
     ["claude-cli", "claude"],
     ["claude-cli", "codex"],
@@ -307,6 +370,12 @@ describe("migrateSession", () => {
     [
       "remote session",
       session("claude-cli", { environmentKind: "ssh", environmentId: "remote" }),
+      "codex",
+      "Remote session migration is not supported yet.",
+    ],
+    [
+      "imported local session",
+      session("claude-cli", { environmentKind: "local", environmentId: "imported-local" }),
       "codex",
       "Remote session migration is not supported yet.",
     ],
