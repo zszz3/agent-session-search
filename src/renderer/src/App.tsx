@@ -361,6 +361,7 @@ const SearchBox = forwardRef<
   const [focused, setFocused] = useState(false);
 
   function handleChange(next: string): void {
+    if (value.length > 0 && next.length === 0) onSearch("");
     setValue(next);
     setFocused(true);
   }
