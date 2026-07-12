@@ -121,7 +121,7 @@ export function buildRemoteSessionSetupSql(tableName = REMOTE_SESSION_TABLE, buc
     `create table if not exists public.${tableName} (`,
     "  id text primary key,",
     "  source_session_key text not null,",
-    "  source_agent text not null check (source_agent in ('claude', 'codex', 'codebuddy')),",
+    "  source_agent text not null check (source_agent in ('claude', 'codex', 'codebuddy', 'cursor')),",
     "  source_source text not null,",
     "  source_environment_id text not null default 'local',",
     "  source_environment_kind text not null default 'local',",
@@ -147,6 +147,11 @@ export function buildRemoteSessionSetupSql(tableName = REMOTE_SESSION_TABLE, buc
     `alter table public.${tableName} add column if not exists source_environment_id text not null default 'local';`,
     `alter table public.${tableName} add column if not exists source_environment_kind text not null default 'local';`,
     `alter table public.${tableName} add column if not exists source_environment_label text not null default 'Local';`,
+    "",
+    `-- Expand source_agent check for Cursor Agent uploads on existing tables.`,
+    `alter table public.${tableName} drop constraint if exists ${tableName}_source_agent_check;`,
+    `alter table public.${tableName} add constraint ${tableName}_source_agent_check`,
+    "  check (source_agent in ('claude', 'codex', 'codebuddy', 'cursor'));",
     "",
     `create unique index if not exists ${tableName}_content_hash_idx`,
     `  on public.${tableName} (content_hash);`,
@@ -669,7 +674,7 @@ function parseMigrationAgent(value: string): MigrationAgent {
 }
 
 function isMigrationAgent(value: unknown): value is MigrationAgent {
-  return value === "claude" || value === "codex" || value === "codebuddy";
+  return value === "claude" || value === "codex" || value === "codebuddy" || value === "cursor";
 }
 
 function parseTags(value: unknown): string[] {

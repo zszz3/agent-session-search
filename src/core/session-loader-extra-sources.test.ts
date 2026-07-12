@@ -313,30 +313,94 @@ describe("extra session sources", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("loads Cursor Agent transcript JSONL sessions", () => {
+  it("loads Cursor Agent transcript JSONL sessions with real format", () => {
     const root = tmpDir("cursor");
-    const transcript = path.join(root, "projects", "workspace-a", "agent-transcripts", "cursor-1", "cursor-1.jsonl");
+    const workspaceSlug = "Users-mac-work-cursor-app";
+    const transcript = path.join(root, "projects", workspaceSlug, "agent-transcripts", "cursor-1", "cursor-1.jsonl");
     writeJsonl(transcript, [
-      { type: "user", timestamp: "2026-06-10T12:00:00Z", cwd: "/work/cursor-app", text: "Fix Cursor sidebar" },
-      { type: "assistant", timestamp: "2026-06-10T12:01:00Z", text: "I will inspect the layout." },
-      { type: "tool_call", timestamp: "2026-06-10T12:02:00Z", name: "read_file", arguments: { path: "src/App.tsx" } },
+      {
+        role: "user",
+        message: {
+          content: [{ type: "text", text: "<timestamp>Sunday, Jun 10, 2026, 8:00 PM (UTC+8)</timestamp>\n<user_query>\nFix Cursor sidebar\n</user_query>" }],
+        },
+      },
+      {
+        role: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "I will inspect the layout." },
+            { type: "tool_use", name: "Read", input: { path: "src/App.tsx" } },
+          ],
+        },
+      },
     ]);
 
-    const loaded = loadCursorAgentSessions(root);
+    const loaded = loadCursorAgentSessions(root, {
+      cursorWorkspacePathMap: new Map([[workspaceSlug, "/Users/mac/work/cursor-app"]]),
+    });
 
     expect(loaded).toHaveLength(1);
     expect(loaded[0].session).toMatchObject({
-      sessionKey: "cursor:cursor-1",
+      sessionKey: `cursor:${workspaceSlug}:cursor-1`,
       rawId: "cursor-1",
       source: "cursor-agent",
-      projectPath: "/work/cursor-app",
+      projectPath: "/Users/mac/work/cursor-app",
       firstQuestion: "Fix Cursor sidebar",
       originalTitle: "Fix Cursor sidebar",
+      isSubagent: false,
+      parentSessionId: null,
     });
+    expect(loaded[0].messages.map((message) => `${message.role}:${message.content}`)).toEqual([
+      "user:Fix Cursor sidebar",
+      "assistant:I will inspect the layout.",
+    ]);
     expect(loaded[0].traceEvents?.[0]).toMatchObject({
       kind: "tool_call",
       source: "cursor",
-      title: "read_file · src/App.tsx",
+      title: "Read · src/App.tsx",
+    });
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("loads Cursor subagent transcripts with parent session metadata", () => {
+    const root = tmpDir("cursor-subagent");
+    const workspaceSlug = "Users-mac-work-cursor-app";
+    const transcript = path.join(
+      root,
+      "projects",
+      workspaceSlug,
+      "agent-transcripts",
+      "parent-1",
+      "subagents",
+      "agent-1.jsonl",
+    );
+    writeJsonl(transcript, [
+      {
+        role: "user",
+        message: {
+          content: [{ type: "text", text: "<user_query>\nInvestigate auth bug\n</user_query>" }],
+        },
+      },
+      {
+        role: "assistant",
+        message: {
+          content: [{ type: "text", text: "Checking auth middleware." }],
+        },
+      },
+    ]);
+
+    const loaded = loadCursorAgentSessions(root, {
+      cursorWorkspacePathMap: new Map([[workspaceSlug, "/Users/mac/work/cursor-app"]]),
+    });
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session).toMatchObject({
+      sessionKey: `cursor:${workspaceSlug}:agent-1`,
+      rawId: "agent-1",
+      isSubagent: true,
+      parentSessionId: "parent-1",
+      firstQuestion: "Investigate auth bug",
     });
 
     fs.rmSync(root, { recursive: true, force: true });

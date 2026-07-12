@@ -22,6 +22,7 @@ describe("migration target registry", () => {
       "claude",
       "codex",
       "codebuddy",
+      "cursor",
       "tclaude",
       "tcodex",
       "claude-internal",
@@ -31,9 +32,9 @@ describe("migration target registry", () => {
     expect(MIGRATION_TARGETS.map(({ id }) => id)).toEqual(MIGRATION_TARGET_IDS);
   });
 
-  it("defines the three base migration targets", () => {
-    expect(BASE_MIGRATION_TARGETS).toEqual(["claude", "codex", "codebuddy"]);
-    expect(MIGRATION_TARGETS.slice(0, 3)).toEqual([
+  it("defines the four base migration targets", () => {
+    expect(BASE_MIGRATION_TARGETS).toEqual(["claude", "codex", "codebuddy", "cursor"]);
+    expect(MIGRATION_TARGETS.slice(0, 4)).toEqual([
       {
         id: "claude",
         label: "Claude Code",
@@ -55,11 +56,18 @@ describe("migration target registry", () => {
         source: "codebuddy-cli",
         enabledSetting: null,
       },
+      {
+        id: "cursor",
+        label: "Cursor Agent",
+        family: "cursor",
+        source: "cursor-agent",
+        enabledSetting: null,
+      },
     ]);
   });
 
   it("maps the four optional migration targets", () => {
-    expect(MIGRATION_TARGETS.slice(3)).toEqual([
+    expect(MIGRATION_TARGETS.slice(4)).toEqual([
       {
         id: "tclaude",
         label: "TClaude",
@@ -94,7 +102,7 @@ describe("migration target registry", () => {
   it("always enables base targets and gates each optional target independently", () => {
     expect(enabledMigrationTargets(allDisabled)).toEqual(BASE_MIGRATION_TARGETS);
 
-    for (const descriptor of MIGRATION_TARGETS.slice(3)) {
+    for (const descriptor of MIGRATION_TARGETS.slice(4)) {
       const settings = { ...allDisabled, [descriptor.enabledSetting!]: true };
       expect(enabledMigrationTargets(settings)).toEqual([...BASE_MIGRATION_TARGETS, descriptor.id]);
     }
@@ -108,7 +116,7 @@ describe("migration target registry", () => {
   });
 
   it("looks up registered targets and rejects unsupported ids", () => {
-    expect(migrationTargetDescriptor("tcodex")).toEqual(MIGRATION_TARGETS[4]);
+    expect(migrationTargetDescriptor("tcodex")).toEqual(MIGRATION_TARGETS[5]);
     expect(() => migrationTargetDescriptor("unsupported" as never)).toThrow("Unsupported migration target");
   });
 

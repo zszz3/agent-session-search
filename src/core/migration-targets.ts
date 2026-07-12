@@ -27,6 +27,13 @@ export const MIGRATION_TARGETS: readonly MigrationTargetDescriptor[] = [
     enabledSetting: null,
   },
   {
+    id: "cursor",
+    label: "Cursor Agent",
+    family: "cursor",
+    source: "cursor-agent",
+    enabledSetting: null,
+  },
+  {
     id: "tclaude",
     label: "TClaude",
     family: "claude",
@@ -60,13 +67,14 @@ export const MIGRATION_TARGET_IDS = [
   "claude",
   "codex",
   "codebuddy",
+  "cursor",
   "tclaude",
   "tcodex",
   "claude-internal",
   "codex-internal",
 ] as const satisfies readonly MigrationTarget[];
 
-export const BASE_MIGRATION_TARGETS = ["claude", "codex", "codebuddy"] as const satisfies readonly MigrationTarget[];
+export const BASE_MIGRATION_TARGETS = ["claude", "codex", "codebuddy", "cursor"] as const satisfies readonly MigrationTarget[];
 
 export function isMigrationTarget(value: unknown): value is MigrationTarget {
   return typeof value === "string" && (MIGRATION_TARGET_IDS as readonly string[]).includes(value);

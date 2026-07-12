@@ -186,7 +186,7 @@ describe("session migration model", () => {
     ["openclaw", null],
     ["hermes", null],
     ["opencode-cli", null],
-    ["cursor-agent", null],
+    ["cursor-agent", "cursor"],
     ["trae", null],
   ] as const)("maps %s to %s", (source, expected) => {
     expect(migrationAgentForSource(source)).toBe(expected);
@@ -202,11 +202,13 @@ describe("session migration model", () => {
     "codex-internal",
     "tcodex-cli",
     "codebuddy-cli",
+    "cursor-agent",
   ] as const)("returns all enabled migration targets for %s", (source) => {
     const enabledTargets = [
       "claude",
       "codex",
       "codebuddy",
+      "cursor",
       "tclaude",
       "tcodex",
       "claude-internal",
@@ -219,7 +221,7 @@ describe("session migration model", () => {
   it("returns the base migration targets when enabled targets are omitted", () => {
     const targets: MigrationAgent[] = supportedMigrationTargets("claude-cli");
 
-    expect(targets).toEqual(["claude", "codex", "codebuddy"]);
+    expect(targets).toEqual(["claude", "codex", "codebuddy", "cursor"]);
   });
 
   it("preserves the narrow element type of explicitly enabled targets", () => {
@@ -324,6 +326,10 @@ describe("migrateSession", () => {
     ["codebuddy-cli", "claude"],
     ["codebuddy-cli", "codex"],
     ["codebuddy-cli", "codebuddy"],
+    ["cursor-agent", "claude"],
+    ["cursor-agent", "codex"],
+    ["cursor-agent", "codebuddy"],
+    ["cursor-agent", "cursor"],
   ] as const)("migrates %s to %s", async (source, target) => {
     const { deps, write, launch, refreshIndex, seenRecords } = createDependencies();
 

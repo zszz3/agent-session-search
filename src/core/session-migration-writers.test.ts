@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { extractCursorUserQuery } from "./format-adapters";
 import {
+  encodeCursorWorkspaceSlug,
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
   loadCodexSessionRows,
+  loadCursorTranscriptFile,
+  parseCursorTranscriptPath,
   parseJsonlText,
 } from "./session-loader";
 import { writeMigratedSession } from "./session-migration-writers";
@@ -26,11 +30,12 @@ const TARGETS = [
   { target: "tcodex", root: ".tcodex", source: "tcodex-cli", family: "codex" },
   { target: "codex-internal", root: ".codex-internal", source: "codex-internal", family: "codex" },
   { target: "codebuddy", root: ".codebuddy", source: "codebuddy-cli", family: "codebuddy" },
+  { target: "cursor", root: ".cursor", source: "cursor-agent", family: "cursor" },
 ] as const satisfies readonly {
   target: MigrationTarget;
   root: string;
   source: SessionSource;
-  family: "claude" | "codex" | "codebuddy";
+  family: "claude" | "codex" | "codebuddy" | "cursor";
 }[];
 
 function portable(): PortableSession {
@@ -70,17 +75,31 @@ function expectRoundTrip(
   sessionId: string,
   filePath: string,
   rows: Array<Record<string, any>>,
+  session: PortableSession = portable(),
 ): void {
-  const loaded = loadWrittenSession(target, source, filePath, rows);
+  const loaded = loadWrittenSession(target, source, filePath, rows, session);
 
+  const firstUser = session.messages.find((message) => message.role === "user")?.content || "";
   expect(loaded?.session).toMatchObject({
     rawId: sessionId,
-    projectPath: portable().projectPath,
-    originalTitle: portable().title,
+    projectPath: session.projectPath,
+    ...(target === "cursor"
+      ? { firstQuestion: extractCursorUserQuery(firstUser) }
+      : { originalTitle: session.title }),
     source,
   });
+  if (target === "cursor") {
+    expect(loaded?.messages.map(({ role, content }) => ({ role, content }))).toEqual(
+      session.messages.map(({ role, content }) => ({
+        role,
+        content: role === "user" ? extractCursorUserQuery(content) : content,
+      })),
+    );
+    return;
+  }
+
   expect(loaded?.messages.map(({ role, content, timestamp }) => ({ role, content, timestamp }))).toEqual(
-    portable().messages.map(({ role, content, timestamp }) => ({ role, content, timestamp })),
+    session.messages.map(({ role, content, timestamp }) => ({ role, content, timestamp })),
   );
 }
 
@@ -89,8 +108,16 @@ function loadWrittenSession(
   source: SessionSource,
   filePath: string,
   rows: Array<Record<string, any>>,
+  session: PortableSession = portable(),
 ): LoadedSession | null {
   if (target === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
+  if (target === "cursor") {
+    const { workspaceSlug } = parseCursorTranscriptPath(filePath);
+    const workspacePathMap = workspaceSlug
+      ? new Map([[workspaceSlug, session.projectPath]])
+      : undefined;
+    return loadCursorTranscriptFile(filePath, undefined, workspacePathMap);
+  }
   if (target === "codex" || target === "tcodex" || target === "codex-internal") {
     return loadCodexSessionRows(filePath, rows, { sourceOverride: source });
   }
@@ -107,7 +134,16 @@ describe("writeMigratedSession", () => {
         ? path.join(homeDir, root, "sessions", "2026", "06", "23")
         : family === "claude"
           ? path.join(homeDir, root, "projects", "-Users----My-Project")
-          : path.join(homeDir, ".codebuddy", "projects", "Users----My-Project");
+          : family === "cursor"
+            ? path.join(
+              homeDir,
+              ".cursor",
+              "projects",
+              encodeCursorWorkspaceSlug(portable().projectPath),
+              "agent-transcripts",
+              SESSION_ID,
+            )
+            : path.join(homeDir, ".codebuddy", "projects", "Users----My-Project");
       fs.mkdirSync(targetDirectory, { recursive: true });
       const previousUmask = process.umask(0o777);
 
@@ -119,7 +155,7 @@ describe("writeMigratedSession", () => {
             session: portable(),
             homeDir,
             now: NOW,
-            idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+            idFactory: idFactory(family === "codex" || target === "cursor" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
             beforeValidate: (filePath) => {
               temporaryMode = fs.statSync(filePath).mode & 0o777;
               fs.chmodSync(filePath, 0o644);
@@ -147,7 +183,7 @@ describe("writeMigratedSession", () => {
           session: portable(),
           homeDir,
           now: NOW,
-          idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+          idFactory: idFactory(family === "codex" || target === "cursor" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
         });
 
         expect(path.relative(homeDir, result.filePath).split(path.sep)[0]).toBe(root);
@@ -306,7 +342,7 @@ describe("writeMigratedSession", () => {
           session: portable(),
           homeDir,
           now: NOW,
-          idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+          idFactory: idFactory(family === "codex" || target === "cursor" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
           validate: (filePath) => {
             temporaryFile = filePath;
             return null;
@@ -331,7 +367,7 @@ describe("writeMigratedSession", () => {
           session: portable(),
           homeDir,
           now: NOW,
-          idFactory: idFactory(family === "codex" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
+          idFactory: idFactory(family === "codex" || target === "cursor" ? [SESSION_ID] : [SESSION_ID, ...MESSAGE_IDS]),
           beforeValidate: () => {
             throw new Error("beforeValidate exploded");
           },
@@ -371,12 +407,47 @@ describe("writeMigratedSession", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
+
+  it("writes native Cursor transcript rows and round-trips them through the existing loader", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-writer-cursor-"));
+
+    try {
+      const result = await writeMigratedSession({
+        target: "cursor",
+        session: portable(),
+        homeDir,
+        now: NOW,
+        idFactory: idFactory([SESSION_ID]),
+      });
+
+      expect(result.filePath).toBe(
+        path.join(
+          homeDir,
+          ".cursor",
+          "projects",
+          encodeCursorWorkspaceSlug(portable().projectPath),
+          "agent-transcripts",
+          SESSION_ID,
+          `${SESSION_ID}.jsonl`,
+        ),
+      );
+
+      const rows = readRows(result.filePath);
+      expect(rows[0].message.content[0].text).toContain("<user_query>");
+      expect(rows[1].message.content[0].text).toBe("已收到\n第二行");
+      expectRoundTrip("cursor", "cursor-agent", result.sessionId, result.filePath, rows);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(TARGETS)(
     "rejects tampered $target native content before rename and cleans the temporary file",
     async ({ target, family }) => {
       await expectTamperedSessionRejected(target, (rows) => {
         if (family === "codex") rows[0].payload.title = "被篡改的标题";
         else if (family === "claude") rows[2].parentUuid = null;
+        else if (family === "cursor") rows[0].role = "system";
         else rows[1].timestamp += 1;
       });
     },
@@ -397,7 +468,7 @@ async function expectTamperedSessionRejected(
         session: portable(),
         homeDir,
         now: NOW,
-        idFactory: idFactory(target === "codex" || target === "tcodex" || target === "codex-internal"
+        idFactory: idFactory(target === "codex" || target === "tcodex" || target === "codex-internal" || target === "cursor"
           ? [SESSION_ID]
           : [SESSION_ID, ...MESSAGE_IDS]),
         beforeValidate: (filePath) => {

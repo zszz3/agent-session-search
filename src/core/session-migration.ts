@@ -72,6 +72,8 @@ export function migrationAgentForSource(source: SessionSource): MigrationAgent |
       return "codex";
     case "codebuddy-cli":
       return "codebuddy";
+    case "cursor-agent":
+      return "cursor";
     default:
       return null;
   }

@@ -915,6 +915,7 @@ describe("migration cli process specs", () => {
       claudeBinary: "/opt/Claude CLI/claude",
       codexBinary: "/opt/Codex CLI/codex",
       codeBuddyBinary: "/opt/CodeBuddy CLI/codebuddy",
+      cursorBinary: "/opt/Cursor CLI/cursor-agent",
       tclaudeBinary: "/opt/Tencent CLI/tclaude",
       tcodexBinary: "/opt/Tencent CLI/tcodex",
       claudeInternalBinary: "/opt/Internal CLI/claude-internal",
@@ -923,6 +924,7 @@ describe("migration cli process specs", () => {
     expect(migrationBinary("claude", settings)).toBe("/opt/Claude CLI/claude");
     expect(migrationBinary("codex", settings)).toBe("/opt/Codex CLI/codex");
     expect(migrationBinary("codebuddy", settings)).toBe("/opt/CodeBuddy CLI/codebuddy");
+    expect(migrationBinary("cursor", settings)).toBe("/opt/Cursor CLI/cursor-agent");
     expect(migrationBinary("tclaude", settings)).toBe("/opt/Tencent CLI/tclaude");
     expect(migrationBinary("tcodex", settings)).toBe("/opt/Tencent CLI/tcodex");
     expect(migrationBinary("claude-internal", settings)).toBe("/opt/Internal CLI/claude-internal");
@@ -935,6 +937,7 @@ describe("migration cli process specs", () => {
       claudeBinary: "/cli/claude",
       codexBinary: "/cli/codex",
       codeBuddyBinary: "/cli/codebuddy",
+      cursorBinary: "/cli/cursor-agent",
       tclaudeBinary: "/cli/tclaude",
       tcodexBinary: "/cli/tcodex",
       claudeInternalBinary: "/cli/claude-internal",
@@ -946,7 +949,7 @@ describe("migration cli process specs", () => {
         "id",
       ]);
     }
-    for (const target of ["claude", "tclaude", "claude-internal", "codebuddy"] as const) {
+    for (const target of ["claude", "tclaude", "claude-internal", "codebuddy", "cursor"] as const) {
       expect(getMigrationResumeProcessSpec(target, "id", "/repo", settings).args).toEqual(["--resume", "id"]);
     }
   });
@@ -1172,6 +1175,9 @@ describe("migration cli process specs", () => {
     ).resolves.toBeUndefined();
     await expect(
       inspectMigrationCli("codebuddy", defaultSettings, async () => "2.109.2"),
+    ).resolves.toBeUndefined();
+    await expect(
+      inspectMigrationCli("cursor", defaultSettings, async () => "2025.12.17-996666f"),
     ).resolves.toBeUndefined();
   });
 
