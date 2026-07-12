@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { claudeAdapter, codebuddyAdapter, codexAdapter, cleanTitle, isMeaningfulUserMessage } from "./format-adapters";
+import { claudeAdapter, codebuddyAdapter, codexAdapter, cleanTitle, cursorAdapter, extractCursorUserQuery, isMeaningfulUserMessage } from "./format-adapters";
+import { decodeCursorWorkspaceSlug, parseCursorTranscriptPath } from "./session-loader";
+import * as path from "node:path";
 
 describe("format adapters", () => {
   it("extracts visible Claude text and skips tool blocks", () => {
@@ -103,5 +105,52 @@ describe("format adapters", () => {
   it("cleans titles to the first useful line", () => {
     expect(cleanTitle("\n  Fix login flow\nsecond line")).toBe("Fix login flow");
     expect(cleanTitle("x".repeat(200))).toHaveLength(120);
+  });
+
+  it("extracts Cursor user_query and skips tool blocks", () => {
+    expect(extractCursorUserQuery("<timestamp>Sunday</timestamp>\n<user_query>\nFix sidebar\n</user_query>")).toBe("Fix sidebar");
+
+    expect(
+      cursorAdapter.parseLine({
+        role: "user",
+        message: {
+          content: [{ type: "text", text: "<user_query>\nFix sidebar\n</user_query>" }],
+        },
+      }),
+    ).toMatchObject({ role: "user", content: "Fix sidebar" });
+
+    expect(
+      cursorAdapter.parseLine({
+        role: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Reading files" },
+            { type: "tool_use", name: "Read", input: { path: "src/App.tsx" } },
+          ],
+        },
+      }),
+    ).toEqual({
+      role: "assistant",
+      content: "Reading files",
+      timestamp: "",
+    });
+  });
+
+  it("decodes Cursor workspace slugs and subagent paths", () => {
+    const pathMap = new Map([
+      ["Users-mac-myProject-agent-session-search", "/Users/mac/myProject/agent-session-search"],
+    ]);
+    expect(decodeCursorWorkspaceSlug("Users-mac-myProject-agent-session-search", pathMap)).toBe("/Users/mac/myProject/agent-session-search");
+    expect(decodeCursorWorkspaceSlug("empty-window")).toBe("");
+
+    const filePath = path.join(
+      "/Users/mac/.cursor/projects/Users-mac-work-app/agent-transcripts/parent-1/subagents/agent-1.jsonl",
+    );
+    expect(parseCursorTranscriptPath(filePath)).toEqual({
+      workspaceSlug: "Users-mac-work-app",
+      sessionId: "agent-1",
+      isSubagent: true,
+      parentSessionId: "parent-1",
+    });
   });
 });

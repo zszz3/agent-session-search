@@ -57,7 +57,7 @@ export interface SessionMessage {
   index: number;
 }
 
-export type MigrationAgent = "claude" | "codex" | "codebuddy";
+export type MigrationAgent = "claude" | "codex" | "codebuddy" | "cursor";
 export type MigrationTarget = MigrationAgent | "tclaude" | "tcodex" | "claude-internal" | "codex-internal";
 export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";
 export type SessionMigrationStage = "reading" | "compressing" | "writing" | "indexing" | "launching";

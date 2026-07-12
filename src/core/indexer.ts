@@ -3,6 +3,7 @@ import {
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
   loadCodexSessionRows,
+  loadCursorTranscriptFile,
   loadDefaultSessions,
   loadDefaultSessionsIterator,
   parseJsonlText,
@@ -178,6 +179,8 @@ export function indexMigratedSessionFile(
 }
 
 function loadMigratedSessionFile(target: MigrationTarget, filePath: string): LoadedSession | null {
+  if (target === "cursor") return loadCursorTranscriptFile(filePath);
+
   const descriptor = migrationTargetDescriptor(target);
   if (descriptor.family === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
 

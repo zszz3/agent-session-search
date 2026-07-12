@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { cleanTitle, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
+import { cleanTitle, cursorTimestampFromRow, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
 import { truncateTraceDetail } from "./trace-detail";
 import type {
   CodeBuddyConversationLine,
@@ -43,6 +43,7 @@ export interface SessionLoadOptions {
   includeOpenCode?: boolean;
   includeCursorAgent?: boolean;
   includeTrae?: boolean;
+  cursorWorkspacePathMap?: ReadonlyMap<string, string>;
   shouldSkipFile?: (filePath: string, stat: VirtualSessionFileStat, dependencyMtimeMs?: number) => boolean;
   onSkippedFile?: (filePath: string, stat: VirtualSessionFileStat) => void;
 }
@@ -1556,46 +1557,207 @@ function loadOpenCodeSessionRow(db: import("node:sqlite").DatabaseSync, dbPath: 
   };
 }
 
-function loadCursorTranscriptFile(filePath: string, stat = safeStat(filePath)): LoadedSession | null {
+function traceEventsFromCursorRows(rows: unknown[]): SessionTraceEvent[] {
+  const events: TraceEventDraft[] = [];
+  for (const row of rows) {
+    if (!isRecord(row) || stringField(row, "role") !== "assistant") continue;
+    const message = objectField(row, "message");
+    const content = message?.content;
+    if (!Array.isArray(content)) continue;
+    const timestamp = cursorTimestampFromRow(row);
+    for (const block of content) {
+      if (!isRecord(block) || stringField(block, "type") !== "tool_use") continue;
+      const name = stringField(block, "name") || "tool";
+      const input = unknownField(block, "input");
+      const parsedInput = parseMaybeJson(input);
+      const summary =
+        firstStringField(parsedInput, ["path", "command", "query", "url", "pattern", "glob_pattern", "description", "search_term"]) ||
+        firstStringField(block, ["path", "command", "query", "url"]);
+      events.push({
+        kind: "tool_call",
+        source: "cursor",
+        title: normalizeTraceTitle(name, summary),
+        detail: stringifyDetail(parsedInput),
+        timestamp,
+        callId: stringField(block, "id") || null,
+        eventType: "tool_use",
+        status: "unknown",
+      });
+    }
+  }
+  return dedupeTraceEvents(events);
+}
+
+function cursorWorkspaceStateDbPath(): string {
+  return path.join(os.homedir(), "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+}
+
+function folderPathFromWorkspaceMetadataEntry(entry: Record<string, unknown>): string {
+  const folderUri = stringField(entry, "folderUri");
+  if (folderUri.startsWith("file://")) return decodeURIComponent(folderUri.replace(/^file:\/\//, ""));
+
+  const paths = entry.paths;
+  if (Array.isArray(paths) && isRecord(paths[0])) {
+    const uri = objectField(paths[0], "uri");
+    const fsPath = uri ? stringField(uri, "fsPath") : "";
+    if (fsPath) return fsPath;
+  }
+
+  return "";
+}
+
+export function loadCursorWorkspacePathMap(cursorDir = path.join(os.homedir(), ".cursor")): Map<string, string> {
+  const map = new Map<string, string>();
+
+  try {
+    const stateDbPath = cursorWorkspaceStateDbPath();
+    if (fs.existsSync(stateDbPath)) {
+      const db = new DatabaseSync(stateDbPath, { readOnly: true });
+      try {
+        const row = db.prepare("SELECT value FROM ItemTable WHERE key = ?").get("workspaceMetadata.entries") as { value?: string } | undefined;
+        if (row?.value) {
+          const parsed = JSON.parse(row.value) as { entries?: unknown[] };
+          for (const entry of parsed.entries ?? []) {
+            if (!isRecord(entry)) continue;
+            const folderPath = folderPathFromWorkspaceMetadataEntry(entry);
+            if (folderPath) map.set(encodeCursorWorkspaceSlug(folderPath), folderPath);
+          }
+        }
+      } finally {
+        db.close();
+      }
+    }
+  } catch {
+    // Ignore metadata lookup failures and fall back to slug heuristics.
+  }
+
+  const projectsDir = path.join(cursorDir, "projects");
+  if (fs.existsSync(projectsDir)) {
+    for (const slug of fs.readdirSync(projectsDir)) {
+      if (!slug || slug === "empty-window" || map.has(slug)) continue;
+      const decoded = decodeCursorWorkspaceSlugHeuristic(slug);
+      if (decoded && fs.existsSync(decoded)) map.set(slug, decoded);
+    }
+  }
+
+  return map;
+}
+
+function decodeCursorWorkspaceSlugHeuristic(slug: string): string {
+  if (!slug || slug === "empty-window") return "";
+  const parts = slug.split("-");
+  if (parts[0] === "Users" && parts.length >= 2) {
+    return `/${parts.join("/")}`;
+  }
+  if (parts[0] === "C" && parts[1] === "Users" && parts.length >= 3) {
+    return `${parts[0]}:/${parts.slice(1).join("/")}`;
+  }
+  return slug;
+}
+
+export function decodeCursorWorkspaceSlug(slug: string, pathMap?: ReadonlyMap<string, string>): string {
+  if (!slug || slug === "empty-window") return "";
+  return pathMap?.get(slug) || decodeCursorWorkspaceSlugHeuristic(slug);
+}
+
+export function encodeCursorWorkspaceSlug(projectPath: string): string {
+  const trimmed = projectPath.trim();
+  if (!trimmed) return "empty-window";
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const slashEncoded = /^[A-Za-z]:\//.test(normalized)
+    ? normalized.replace(/^[A-Za-z]:\//, (match) => `${match[0]}-`).replace(/\//g, "-")
+    : normalized.replace(/^\/+/, "").replace(/\//g, "-");
+  const sanitized = slashEncoded.replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return sanitized || "empty-window";
+}
+
+function cursorTranscriptSessionIdFromPath(filePath: string): string {
+  const baseName = path.basename(filePath);
+  const match = baseName.match(/^(.+?)\.jsonl(?:\.tmp-.+)?$/i);
+  return match ? match[1] : baseName.replace(/\.jsonl$/i, "");
+}
+
+export function parseCursorTranscriptPath(filePath: string): {
+  workspaceSlug: string;
+  sessionId: string;
+  isSubagent: boolean;
+  parentSessionId: string | null;
+} {
+  const projectsMarker = `${path.sep}projects${path.sep}`;
+  const afterProjects = filePath.includes(projectsMarker) ? filePath.split(projectsMarker)[1] || "" : "";
+  const workspaceSlug = afterProjects.split(path.sep)[0] || "";
+  const sessionId = cursorTranscriptSessionIdFromPath(filePath);
+  const parts = filePath.split(path.sep);
+  const transcriptsIndex = parts.lastIndexOf("agent-transcripts");
+  const subagentsIndex = parts.lastIndexOf("subagents");
+  const isSubagent = subagentsIndex >= 0 && transcriptsIndex >= 0 && subagentsIndex > transcriptsIndex;
+  const parentSessionId = isSubagent && subagentsIndex > 0 ? parts[subagentsIndex - 1] || null : null;
+  return { workspaceSlug, sessionId, isSubagent, parentSessionId };
+}
+
+function cursorTimestampMsFromRows(rows: unknown[]): number {
+  for (const row of rows) {
+    const timestamp = cursorTimestampFromRow(row);
+    const parsed = timestampMs(timestamp);
+    if (parsed) return parsed;
+  }
+  return 0;
+}
+
+export function loadCursorTranscriptFile(
+  filePath: string,
+  stat = safeStat(filePath),
+  workspacePathMap?: ReadonlyMap<string, string>,
+): LoadedSession | null {
   const rows = readJsonl(filePath);
   if (rows.length === 0) return null;
-  const rawId = path.basename(filePath, ".jsonl");
+
+  const { workspaceSlug, sessionId, isSubagent, parentSessionId } = parseCursorTranscriptPath(filePath);
+  const rawId = sessionId;
   const messages = sourceMessages(rows, "cursor");
-  const traceEvents = traceEventsFromRows(rows, "cursor");
+  const traceEvents = traceEventsFromCursorRows(rows);
   const question = firstQuestion(messages);
   const projectPath =
     rows.map((row) => (isRecord(row) ? firstStringField(row, ["cwd", "projectPath", "project_path", "workspacePath", "workspace_path"]) : "")).find(Boolean) ||
-    "";
-  const firstTs = rows.map((row) => (isRecord(row) ? timestampMs(unknownField(row, "timestamp") ?? unknownField(row, "time")) : 0)).find(Boolean) || 0;
+    decodeCursorWorkspaceSlug(workspaceSlug, workspacePathMap);
+  const firstTs = cursorTimestampMsFromRows(rows) || stat.mtimeMs;
+  const session = createIndexedSession({
+    keyPrefix: "cursor",
+    rawId,
+    source: "cursor-agent",
+    projectPath,
+    filePath,
+    originalTitle: cleanTitle(question) || rawId,
+    firstQuestion: cleanTitle(question),
+    timestamp: firstTs,
+    stat,
+    isSubagent,
+    parentSessionId,
+  });
+
   return {
-    session: createIndexedSession({
-      keyPrefix: "cursor",
-      rawId,
-      source: "cursor-agent",
-      projectPath,
-      filePath,
-      originalTitle: cleanTitle(question) || rawId,
-      firstQuestion: cleanTitle(question),
-      timestamp: firstTs || stat.mtimeMs,
-      stat,
-    }),
+    session: {
+      ...session,
+      sessionKey: workspaceSlug ? `cursor:${workspaceSlug}:${rawId}` : session.sessionKey,
+    },
     messages,
     traceEvents,
   };
 }
 
-export function loadCursorAgentSessions(cursorDir = path.join(os.homedir(), ".cursor")): LoadedSession[] {
-  return [...loadCursorAgentSessionsIterator(cursorDir)];
+export function loadCursorAgentSessions(cursorDir = path.join(os.homedir(), ".cursor"), options: SessionLoadOptions = {}): LoadedSession[] {
+  return [...loadCursorAgentSessionsIterator(cursorDir, options)];
 }
 
 export function* loadCursorAgentSessionsIterator(cursorDir = path.join(os.homedir(), ".cursor"), options: SessionLoadOptions = {}): Generator<LoadedSession> {
   const projectsDir = path.join(cursorDir, "projects");
   if (!fs.existsSync(projectsDir)) return;
+  const workspacePathMap = options.cursorWorkspacePathMap ?? loadCursorWorkspacePathMap(cursorDir);
   for (const filePath of walkJsonlFiles(projectsDir)) {
     if (!filePath.includes(`${path.sep}agent-transcripts${path.sep}`)) continue;
     const stat = safeStat(filePath);
     if (shouldSkipFile(options, filePath, stat)) continue;
-    const loaded = loadCursorTranscriptFile(filePath, stat);
+    const loaded = loadCursorTranscriptFile(filePath, stat, workspacePathMap);
     if (loaded) yield loaded;
   }
 }

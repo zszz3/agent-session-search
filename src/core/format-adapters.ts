@@ -143,10 +143,46 @@ function genericAdapter(format: SessionFormat): FormatAdapter {
   };
 }
 
+export function extractCursorUserQuery(text: string): string {
+  const queryMatch = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
+  if (queryMatch) return queryMatch[1].trim();
+  return text.replace(/<timestamp>[\s\S]*?<\/timestamp>\s*/gi, "").trim();
+}
+
+function timestampFromCursorRaw(raw: unknown): string {
+  const direct = timestampFromRaw(raw);
+  if (direct) return direct;
+  const content = extractTextBlocks(contentFromRaw(raw));
+  const match = content.match(/<timestamp>([^<]+)<\/timestamp>/i);
+  return match ? match[1].trim() : "";
+}
+
+export const cursorAdapter: FormatAdapter = {
+  format: "cursor",
+  parseLine(raw) {
+    const role = roleFromRaw(raw);
+    if (!role) return null;
+    let content = extractTextBlocks(contentFromRaw(raw));
+    if (!content) return null;
+    if (role === "user") {
+      content = extractCursorUserQuery(content);
+      if (!content) return null;
+    }
+    return {
+      role,
+      content,
+      timestamp: timestampFromCursorRaw(raw),
+    };
+  },
+};
+
+export function cursorTimestampFromRow(raw: unknown): string {
+  return timestampFromCursorRaw(raw);
+}
+
 export const openClawAdapter = genericAdapter("openclaw");
 export const hermesAdapter = genericAdapter("hermes");
 export const openCodeAdapter = genericAdapter("opencode");
-export const cursorAdapter = genericAdapter("cursor");
 export const traeAdapter = genericAdapter("trae");
 
 export function getFormatForSource(source: SessionSource): SessionFormat {
@@ -194,6 +230,8 @@ export function isMeaningfulUserMessage(text: string): boolean {
   if (trimmed.startsWith("Caveat:")) return false;
   if (/^\[Request interrupted by user(?: for tool use)?\]$/.test(trimmed)) return false;
   if (/^\[Image:[^\]]*\]$/.test(trimmed)) return false;
+  if (/^The beginning of the above subagent result is already visible/.test(trimmed)) return false;
+  if (/^<system_notification>/.test(trimmed)) return false;
   return true;
 }
 

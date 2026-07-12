@@ -493,7 +493,7 @@ async function runServer() {
         "仅支持本地会话（environmentKind=local），远程会话不可迁移。",
       inputSchema: {
         sessionKey: z.string().describe("要迁移的源会话 sessionKey，可通过 search_sessions 获取。"),
-        target: migrateTargetSchema.describe("目标 Agent：claude、codex、codebuddy、tclaude、tcodex、claude-internal 或 codex-internal。四个可选目标需先在 Settings > Optional sources 启用。"),
+        target: migrateTargetSchema.describe("目标 Agent：claude、codex、codebuddy、cursor、tclaude、tcodex、claude-internal 或 codex-internal。四个可选目标需先在 Settings > Optional sources 启用。"),
       },
     },
     async (args) => {

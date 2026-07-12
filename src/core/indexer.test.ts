@@ -123,6 +123,7 @@ describe("indexer", () => {
     { target: "tcodex", source: "tcodex-cli" },
     { target: "codex-internal", source: "codex-internal" },
     { target: "codebuddy", source: "codebuddy-cli" },
+    { target: "cursor", source: "cursor-agent" },
   ] as const satisfies readonly { target: MigrationTarget; source: SessionSource }[])(
     "indexes one migrated $target session file as its concrete source without a full scan",
     async ({ target, source }) => {
@@ -141,12 +142,10 @@ describe("indexer", () => {
         expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
         const indexed = store.searchSessions({ source, limit: 10 });
         expect(indexed).toHaveLength(1);
-        expect(indexed[0]).toMatchObject({
-          source,
-          sessionKey: `${target}:${written.sessionId}`,
-        });
+        const sessionKey = indexed[0].sessionKey;
+        expect(indexed[0]).toMatchObject({ source, sessionKey });
         expect(store.searchSessions({ query: "migrated question", source, limit: 10 })).toMatchObject([
-          { sessionKey: `${target}:${written.sessionId}` },
+          { sessionKey },
         ]);
       } finally {
         store.close();

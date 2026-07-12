@@ -61,6 +61,7 @@ export interface AppSettings {
   claudeBinary: string;
   codexBinary: string;
   codeBuddyBinary: string;
+  cursorBinary: string;
   tclaudeBinary: string;
   tcodexBinary: string;
   claudeInternalBinary: string;
@@ -105,6 +106,7 @@ export const defaultSettings: AppSettings = {
   claudeBinary: "claude",
   codexBinary: "codex",
   codeBuddyBinary: "codebuddy",
+  cursorBinary: "cursor-agent",
   tclaudeBinary: "tclaude",
   tcodexBinary: "tcodex",
   claudeInternalBinary: "claude-internal",
@@ -207,6 +209,7 @@ export function migrationBinary(target: MigrationTarget, settings: AppSettings):
   if (target === "tcodex") return settings.tcodexBinary;
   if (target === "claude-internal") return settings.claudeInternalBinary;
   if (target === "codebuddy") return settings.codeBuddyBinary;
+  if (target === "cursor") return settings.cursorBinary;
   return settings.codexBinary;
 }
 
@@ -217,6 +220,7 @@ function migrationTargetDisplayName(target: MigrationTarget): string {
   if (target === "claude-internal") return "Claude Internal";
   if (target === "codex-internal") return "Codex Internal";
   if (target === "codebuddy") return "CodeBuddy";
+  if (target === "cursor") return "Cursor";
   return "Codex";
 }
 
@@ -258,6 +262,7 @@ const MIGRATION_CLI_VERSION_RULES: Record<MigrationTarget, VersionRule[]> = {
   claude: [{ label: "Claude Code", pattern: /^\s*v?(\d+\.\d+\.\d+)\s+\(Claude Code\)\s*$/im, minimum: version(2, 1, 186) }],
   codex: [{ label: "codex", pattern: /^\s*(?:codex(?:-cli)?|Codex(?: CLI)?)\s*:?[ \t]*v?(\d+\.\d+\.\d+)[ \t]*$/im, minimum: version(0, 141, 0) }],
   codebuddy: [{ label: "CodeBuddy", pattern: /^\s*v?(\d+\.\d+\.\d+)\s*$/im, minimum: version(2, 109, 1) }],
+  cursor: [{ label: "cursor-agent", pattern: /(\d+\.\d+\.\d+[-\w]*|\d{4}\.\d+\.\d+)/i, minimum: version(0, 0, 0) }],
   tclaude: [
     { label: "@tencent/tclaude", pattern: /^\s*@tencent\/tclaude\s*:?[ \t]*v?(\d+\.\d+\.\d+)[ \t]*$/im, minimum: version(0, 0, 9) },
     { label: "@anthropic-ai/claude-code", pattern: /^\s*@anthropic-ai\/claude-code\s*:?[ \t]*v?(\d+\.\d+\.\d+)[ \t]*$/im, minimum: version(2, 1, 154) },
@@ -286,6 +291,7 @@ function migrationTargetForResumeSource(source: SessionSource): MigrationTarget 
   if (source === "tclaude-cli") return "tclaude";
   if (source === "tcodex-cli") return "tcodex";
   if (source === "codebuddy-cli") return "codebuddy";
+  if (source === "cursor-agent") return "cursor";
   return null;
 }
 
@@ -1158,6 +1164,14 @@ export async function inspectMigrationCli(
   options: { homeDir?: string; platform?: NodeJS.Platform } = {},
 ): Promise<void> {
   const binary = migrationBinary(target, settings);
+  if (target === "cursor") {
+    try {
+      await runner(binary, ["--version"]);
+    } catch (error) {
+      throw new Error(migrationCliVersionErrorMessage(target, binary, error));
+    }
+    return;
+  }
   const platform = options.platform ?? process.platform;
   const env = target === "codex-internal"
     ? { CODEX_HOME: migrationCodexHome(options.homeDir ?? homedir(), platform) }

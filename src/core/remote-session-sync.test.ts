@@ -10,6 +10,7 @@ import {
   remotePortableSessionFrom,
   remoteSessionContentHash,
   remoteSessionId,
+  REMOTE_SESSION_TABLE,
   SupabaseRemoteSessionClient,
 } from "./remote-session-sync";
 import type { PortableSession, SessionSearchResult } from "./types";
@@ -74,6 +75,8 @@ describe("remote session sync model", () => {
     expect(sql).toContain("agent-session-remote");
     expect(sql).toContain("storage.buckets");
     expect(sql).toContain("to anon");
+    expect(sql).toContain("'cursor'");
+    expect(sql).toContain(`${REMOTE_SESSION_TABLE}_source_agent_check`);
   });
 
   it("builds a stable remote upload payload with detail and portable object keys", () => {

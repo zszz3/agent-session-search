@@ -2,10 +2,14 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { cleanTitle, extractCursorUserQuery } from "./format-adapters";
 import {
+  encodeCursorWorkspaceSlug,
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
   loadCodexSessionRows,
+  loadCursorTranscriptFile,
+  parseCursorTranscriptPath,
   parseJsonlText,
 } from "./session-loader";
 import { migrationTargetDescriptor } from "./migration-targets";
@@ -68,6 +72,7 @@ function serializeSession(
   sessionId: string,
   createId: () => string,
 ): unknown[] {
+  if (target === "cursor") return serializeCursor(session);
   const family = migrationTargetDescriptor(target).family;
   if (family === "codex") return serializeCodex(session, sessionId);
   if (family === "claude") return serializeClaude(session, sessionId, createId);
@@ -184,6 +189,30 @@ function serializeCodeBuddy(
   return rows;
 }
 
+function normalizeCursorMigrationContent(content: string, role: "user" | "assistant"): string {
+  return role === "user" ? extractCursorUserQuery(content) : content;
+}
+
+function serializeCursor(session: PortableSession): unknown[] {
+  return session.messages.map((message) => {
+    const normalizedContent = normalizeCursorMigrationContent(message.content, message.role);
+    const text = message.role === "user"
+      ? formatCursorUserContent(normalizedContent, message.timestamp)
+      : normalizedContent;
+    return {
+      role: message.role,
+      message: {
+        content: [{ type: "text", text }],
+      },
+    };
+  });
+}
+
+function formatCursorUserContent(content: string, timestamp: string): string {
+  const timestampBlock = timestamp.trim() ? `<timestamp>${timestamp}</timestamp>\n` : "";
+  return `${timestampBlock}<user_query>\n${content}\n</user_query>`;
+}
+
 export function targetFilePath(
   target: MigrationTarget,
   projectPath: string,
@@ -205,6 +234,19 @@ export function targetFilePath(
     return path.join(homeDir, root, "projects", encodeClaudeProjectDir(projectPath), `${sessionId}.jsonl`);
   }
 
+  if (target === "cursor") {
+    const workspaceSlug = encodeCursorWorkspaceSlug(projectPath);
+    return path.join(
+      homeDir,
+      ".cursor",
+      "projects",
+      workspaceSlug,
+      "agent-transcripts",
+      sessionId,
+      `${sessionId}.jsonl`,
+    );
+  }
+
   return path.join(homeDir, root, "projects", encodeCodeBuddyProjectDir(projectPath), `${sessionId}.jsonl`);
 }
 
@@ -216,6 +258,7 @@ const TARGET_ROOTS: Record<MigrationTarget, string> = {
   tcodex: ".tcodex",
   "codex-internal": ".codex-internal",
   codebuddy: ".codebuddy",
+  cursor: ".cursor",
 };
 
 function encodeClaudeProjectDir(projectPath: string): string {
@@ -280,6 +323,8 @@ function validateNativeStructure(
     validateCodexStructure(rows, sessionId, session);
   } else if (family === "claude") {
     validateClaudeStructure(rows, sessionId, session);
+  } else if (target === "cursor") {
+    validateCursorStructure(rows, session);
   } else {
     validateCodeBuddyStructure(rows, sessionId, session);
   }
@@ -390,6 +435,30 @@ function validateCodeBuddyStructure(rows: unknown[], sessionId: string, session:
   });
 }
 
+function validateCursorStructure(rows: unknown[], session: PortableSession): void {
+  if (rows.length !== session.messages.length) failValidation("cursor", "has an unexpected row count");
+
+  session.messages.forEach((message, index) => {
+    const row = record(rows[index]);
+    const nested = record(row?.message);
+    const content = Array.isArray(nested?.content) ? nested.content : [];
+    const block = record(content[0]);
+    const text = typeof block?.text === "string" ? block.text : "";
+    const expectedContent = normalizeCursorMigrationContent(message.content, message.role);
+    const contentMatches = message.role === "user"
+      ? extractCursorUserQuery(text) === expectedContent
+      : text === expectedContent;
+    if (
+      row?.role !== message.role
+      || content.length !== 1
+      || block?.type !== "text"
+      || !contentMatches
+    ) {
+      failValidation("cursor", `has invalid message structure at index ${index}`);
+    }
+  });
+}
+
 function textBlockMatches(content: unknown, type: string, text: string): boolean {
   if (!Array.isArray(content) || content.length !== 1) return false;
   const block = record(content[0]);
@@ -412,6 +481,14 @@ function loadWrittenSession(
   sessionId: string,
   session: PortableSession,
 ): LoadedSession | null {
+  if (target === "cursor") {
+    const { workspaceSlug } = parseCursorTranscriptPath(filePath);
+    const workspacePathMap = workspaceSlug
+      ? new Map([[workspaceSlug, session.projectPath]])
+      : undefined;
+    return loadCursorTranscriptFile(filePath, undefined, workspacePathMap);
+  }
+
   const descriptor = migrationTargetDescriptor(target);
   const rows = parseJsonlText(fs.readFileSync(filePath, "utf8"));
   if (descriptor.family === "codex") {
@@ -436,22 +513,43 @@ function validateRoundTrip(
   const messagesMatch = loaded?.messages.length === portable.messages.length
     && loaded.messages.every((message, index) => {
       const expected = portable.messages[index];
+      const expectedContent = target === "cursor"
+        ? normalizeCursorMigrationContent(expected.content, expected.role)
+        : expected.content;
       const timestampMatches = descriptor.family === "codebuddy"
         ? new Date(message.timestamp).getTime() === new Date(expected.timestamp).getTime()
-        : message.timestamp === expected.timestamp;
+        : target === "cursor"
+          ? true
+          : message.timestamp === expected.timestamp;
       return message.role === expected.role
-        && message.content === expected.content
+        && message.content === expectedContent
         && timestampMatches;
     });
+
+  const titleOk = target === "cursor"
+    ? Boolean(loaded && titleMatches(loaded, target, portable))
+    : loaded?.session.originalTitle === portable.title;
 
   if (
     !loaded
     || loaded.session.source !== descriptor.source
     || loaded.session.rawId !== sessionId
     || loaded.session.projectPath !== portable.projectPath
-    || loaded.session.originalTitle !== portable.title
+    || !titleOk
     || !messagesMatch
   ) {
     failValidation(target, "round-trip data does not match the portable session");
   }
+}
+
+function titleMatches(loaded: LoadedSession, target: MigrationTarget, portable: PortableSession): boolean {
+  if (target === "cursor") {
+    const firstUser = normalizeCursorMigrationContent(
+      portable.messages.find((message) => message.role === "user")?.content || "",
+      "user",
+    );
+    return cleanTitle(loaded.session.firstQuestion) === cleanTitle(firstUser)
+      || loaded.session.originalTitle === portable.title;
+  }
+  return loaded.session.originalTitle === portable.title;
 }

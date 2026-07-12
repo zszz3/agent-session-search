@@ -8,7 +8,14 @@ import {
   migrateSessionForMcp,
 } from "./mcp-migration";
 import { createInMemoryStore } from "./session-store";
-import { loadCodexSessionFile, loadClaudeCliSessionRows, loadCodeBuddyCliSessionFile, parseJsonlText } from "./session-loader";
+import {
+  loadClaudeCliSessionRows,
+  loadCodeBuddyCliSessionFile,
+  loadCodexSessionRows,
+  loadCursorTranscriptFile,
+  parseJsonlText,
+} from "./session-loader";
+import { migrationTargetDescriptor } from "./migration-targets";
 import { defaultSettings } from "./platform";
 import type { IndexedSession, MigrationTarget, SessionMessage, SessionMigrationStrategy, SessionSource } from "./types";
 
@@ -45,6 +52,21 @@ function seedLocalSession(
   return { sessionKey, projectPath };
 }
 
+
+
+function loadMigratedSessionFileForTest(target: MigrationTarget, filePath: string) {
+  if (target === "cursor") return loadCursorTranscriptFile(filePath);
+
+  const descriptor = migrationTargetDescriptor(target);
+  if (descriptor.family === "codebuddy") return loadCodeBuddyCliSessionFile(filePath);
+
+  const rows = parseJsonlText(fs.readFileSync(filePath, "utf8"));
+  if (descriptor.family === "codex") {
+    return loadCodexSessionRows(filePath, rows, { sourceOverride: descriptor.source });
+  }
+  return loadClaudeCliSessionRows(filePath, rows, { source: descriptor.source });
+}
+
 const noOpInspect = async () => undefined;
 
 const allMigrationTargetsEnabled = {
@@ -59,6 +81,7 @@ const targetSources: Record<MigrationTarget, SessionSource> = {
   claude: "claude-cli",
   codex: "codex-cli",
   codebuddy: "codebuddy-cli",
+  cursor: "cursor-agent",
   tclaude: "tclaude-cli",
   tcodex: "tcodex-cli",
   "claude-internal": "claude-internal",
@@ -89,16 +112,12 @@ describe("migrateSessionForMcp — happy path", () => {
         expect(fs.existsSync(result.targetFilePath)).toBe(true);
 
         // The target file must be readable by the existing loaders.
-        const loaded =
-          targetSources[target] === "codex-cli" || targetSources[target] === "tcodex-cli" || targetSources[target] === "codex-internal"
-            ? loadCodexSessionFile(result.targetFilePath)
-            : targetSources[target] === "claude-cli" || targetSources[target] === "tclaude-cli" || targetSources[target] === "claude-internal"
-              ? loadClaudeCliSessionRows(result.targetFilePath, parseJsonlText(fs.readFileSync(result.targetFilePath, "utf8")))
-              : loadCodeBuddyCliSessionFile(result.targetFilePath);
+        const loaded = loadMigratedSessionFileForTest(target, result.targetFilePath);
         expect(loaded?.messages.length).toBeGreaterThan(0);
 
         // The migrated session is immediately searchable in the DB.
-        const found = store.getSession(`${target}:${result.targetSessionId}`);
+        const indexedSessionKey = loaded?.session.sessionKey ?? `${target}:${result.targetSessionId}`;
+        const found = store.getSession(indexedSessionKey);
         expect(found).not.toBeNull();
         expect(found?.source).toBe(targetSources[target]);
       } finally {
