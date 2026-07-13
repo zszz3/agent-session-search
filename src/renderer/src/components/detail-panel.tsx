@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Search, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../core/format-session";
 import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../core/types";
 import { formatTokenCount } from "../format-count";
@@ -202,6 +202,78 @@ export function DetailPanel({
     });
   };
 
+  const [panelSearchOpen, setPanelSearchOpen] = useState(false);
+  const [panelSearchQuery, setPanelSearchQuery] = useState("");
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const panelSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const panelSearchTerms = useMemo(
+    () => (panelSearchQuery ? searchHighlightTerms(panelSearchQuery) : []),
+    [panelSearchQuery],
+  );
+
+  const panelSearchMatchIndices = useMemo(() => {
+    if (panelSearchTerms.length === 0) return [] as number[];
+    const indices: number[] = [];
+    for (const item of timelineItems) {
+      if (item.kind === "message") {
+        const lower = item.message.content.toLocaleLowerCase();
+        if (panelSearchTerms.some((term) => lower.includes(term))) {
+          indices.push(item.message.index);
+        }
+      }
+    }
+    return indices;
+  }, [timelineItems, panelSearchTerms]);
+
+  useEffect(() => {
+    if (panelSearchOpen && panelSearchInputRef.current) {
+      panelSearchInputRef.current.focus();
+      panelSearchInputRef.current.select();
+    }
+  }, [panelSearchOpen]);
+
+  useEffect(() => {
+    if (panelSearchMatchIndices.length === 0) {
+      setCurrentMatchIndex(0);
+      return;
+    }
+    if (currentMatchIndex >= panelSearchMatchIndices.length) {
+      setCurrentMatchIndex(0);
+    }
+  }, [panelSearchMatchIndices, currentMatchIndex]);
+
+  const scrollToPanelMatch = (index: number) => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const messageIndex = panelSearchMatchIndices[index];
+    if (messageIndex === undefined) return;
+    const target = el.querySelector(`[data-message-index="${messageIndex}"]`) as HTMLElement | null;
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  const nextPanelMatch = () => {
+    if (panelSearchMatchIndices.length === 0) return;
+    const next = (currentMatchIndex + 1) % panelSearchMatchIndices.length;
+    setCurrentMatchIndex(next);
+    scrollToPanelMatch(next);
+  };
+
+  const prevPanelMatch = () => {
+    if (panelSearchMatchIndices.length === 0) return;
+    const prev = (currentMatchIndex - 1 + panelSearchMatchIndices.length) % panelSearchMatchIndices.length;
+    setCurrentMatchIndex(prev);
+    scrollToPanelMatch(prev);
+  };
+
+  const closePanelSearch = () => {
+    setPanelSearchOpen(false);
+    setPanelSearchQuery("");
+    setCurrentMatchIndex(0);
+  };
+
   useEffect(() => {
     pendingInitialScrollRef.current = session.sessionKey;
     setRoleFilter("all");
@@ -222,9 +294,23 @@ export function DetailPanel({
       if (!el) return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
+
+      // Ctrl+F / Cmd+F: open panel search
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setPanelSearchOpen(true);
+        return;
+      }
+
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const page = el.clientHeight * 0.9;
       switch (event.key) {
+        case "Escape":
+          if (panelSearchOpen) {
+            closePanelSearch();
+            event.preventDefault();
+          }
+          return;
         case "ArrowDown":
           el.scrollBy({ top: 64 });
           break;
@@ -251,7 +337,7 @@ export function DetailPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [panelSearchOpen, panelSearchMatchIndices]);
 
   return (
     <div className="detail-backdrop" onClick={onClose}>
@@ -405,6 +491,62 @@ export function DetailPanel({
                 </button>
               </div>
             </div>
+            {panelSearchOpen ? (
+              <div className="panel-search-bar">
+                <Search size={14} />
+                <input
+                  ref={panelSearchInputRef}
+                  className="panel-search-input"
+                  type="text"
+                  value={panelSearchQuery}
+                  onChange={(event) => {
+                    setPanelSearchQuery(event.target.value);
+                    setCurrentMatchIndex(0);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      closePanelSearch();
+                      event.stopPropagation();
+                    } else if (event.key === "Enter") {
+                      event.preventDefault();
+                      if (event.shiftKey) prevPanelMatch();
+                      else nextPanelMatch();
+                    }
+                  }}
+                  placeholder={l("Find in conversation…", "在会话中查找…")}
+                />
+                {panelSearchQuery ? (
+                  <span className="panel-search-count">
+                    {panelSearchMatchIndices.length > 0
+                      ? `${currentMatchIndex + 1}/${panelSearchMatchIndices.length}`
+                      : l("No matches", "无匹配")}
+                  </span>
+                ) : null}
+                <button
+                  className="panel-search-nav"
+                  onClick={prevPanelMatch}
+                  disabled={panelSearchMatchIndices.length === 0}
+                  title={l("Previous match (Shift+Enter)", "上一个匹配 (Shift+Enter)")}
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  className="panel-search-nav"
+                  onClick={nextPanelMatch}
+                  disabled={panelSearchMatchIndices.length === 0}
+                  title={l("Next match (Enter)", "下一个匹配 (Enter)")}
+                >
+                  <ChevronDown size={14} />
+                </button>
+                <button
+                  className="panel-search-close"
+                  onClick={closePanelSearch}
+                  title={l("Close (Esc)", "关闭 (Esc)")}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
             {loading ? <div className="loading-state">{l("Loading conversation...", "正在加载会话...")}</div> : null}
             {!loading && messages.length === 0 ? <div className="loading-state">{l("No visible messages indexed for this session.", "这个会话没有可见消息被索引。")}</div> : null}
             {!loading && olderMessageCount > 0 ? (
@@ -417,7 +559,13 @@ export function DetailPanel({
             ) : null}
             {visibleTimelineItems.map((item) => (
               item.kind === "message" ? (
-                <MessageBlock key={item.key} message={item.message} query={query} language={language} />
+                <MessageBlock
+                  key={item.key}
+                  message={item.message}
+                  query={panelSearchQuery || query}
+                  language={language}
+                  highlight={panelSearchQuery ? panelSearchMatchIndices.includes(item.message.index) : false}
+                />
               ) : (
                 <TraceEventBlock key={item.key} event={item.event} language={language} />
               )

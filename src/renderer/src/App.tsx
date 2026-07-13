@@ -368,6 +368,8 @@ const SearchBox = forwardRef<
 
   function selectRecentSearch(query: string): void {
     setValue(query);
+    onSearch(query);
+    setHistory((current) => recordSearch(window.localStorage, current, query));
     setFocused(false);
   }
 

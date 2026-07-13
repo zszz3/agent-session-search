@@ -28,12 +28,12 @@ describe("app loading performance", () => {
     expect(handleChange).toContain("setFocused(next.length > 0)");
   });
 
-  it("fills recent searches without running them until Enter", () => {
+  it("runs recent searches immediately on click", () => {
     const searchBox = sourceBlock("const SearchBox = forwardRef", ["export function App"]);
     const selectRecent = searchBox.slice(searchBox.indexOf("function selectRecentSearch"), searchBox.indexOf("function runSearch"));
     expect(selectRecent).toContain("setValue(query)");
-    expect(selectRecent).not.toContain("onSearch");
-    expect(selectRecent).not.toContain("recordSearch");
+    expect(selectRecent).toContain("onSearch(query)");
+    expect(selectRecent).toContain("recordSearch(window.localStorage, current, query)");
   });
 
   it("does not focus the main search input on startup", () => {
