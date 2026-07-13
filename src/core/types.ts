@@ -57,6 +57,11 @@ export interface SessionMessage {
   index: number;
 }
 
+export interface SessionMessageEvent {
+  index: number;
+  timestamp: number;
+}
+
 export type MigrationAgent = "claude" | "codex" | "codebuddy" | "cursor";
 export type MigrationTarget = MigrationAgent | "tclaude" | "tcodex" | "claude-internal" | "codex-internal";
 export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";

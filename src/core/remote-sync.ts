@@ -6,6 +6,7 @@ import type {
   IndexedSession,
   SessionEnvironment,
   SessionMessage,
+  SessionMessageEvent,
   SessionSearchResult,
   SessionSource,
   TokenUsage,
@@ -36,6 +37,7 @@ export interface RemoteSessionSummaryPayload {
   gitBranch?: string | null;
   tokenUsage?: TokenUsage;
   tokenEvents?: TokenUsageEvent[];
+  messageEvents?: SessionMessageEvent[];
 }
 
 export interface RemoteSessionFileFetchOptions {
@@ -82,6 +84,10 @@ def meaningful_user(text):
   if re.match(r"^\[Request interrupted by user(?: for tool use)?\]$", value):
     return False
   if re.match(r"^\[Image:[^\]]*\]$", value):
+    return False
+  if re.match(r"^The beginning of the above subagent result is already visible", value):
+    return False
+  if re.match(r"^<system_notification>", value):
     return False
   return True
 
@@ -284,7 +290,12 @@ export async function syncRemoteEnvironment(
     const output = await runSsh(environment, REMOTE_COLLECTOR_COMMAND);
     const { payloads, summaries } = decodeRemoteSyncOutput(output);
     for (const summary of summaries) {
-      store.upsertIndexedSessionSummary(remoteSummaryToIndexedSession(environment, summary), summary.messageCount, summary.tokenEvents);
+      store.upsertIndexedSessionSummary(
+        remoteSummaryToIndexedSession(environment, summary),
+        summary.messageCount,
+        summary.tokenEvents,
+        summary.messageEvents,
+      );
     }
     const loaded = loadRemoteSessionPayloads(environment, payloads);
     for (const item of loaded) store.upsertIndexedSession(item.session, item.messages, item.tokenEvents, item.traceEvents);
@@ -600,7 +611,22 @@ function parseRemoteSummaryRecord(
     gitBranch: stringField(parsed, "gitBranch") || null,
     tokenUsage: tokenUsageField(parsed, "tokenUsage"),
     tokenEvents: tokenEventsField(parsed, "tokenEvents", lineNumber),
+    messageEvents: messageEventsField(parsed, "messageEvents", lineNumber),
   };
+}
+
+function messageEventsField(value: Record<string, unknown>, key: string, lineNumber: number): SessionMessageEvent[] | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new Error(`Invalid remote payload at line ${lineNumber}: invalid messageEvents`);
+  return raw.map((item, index) => {
+    const prefix = `Invalid remote payload at line ${lineNumber}: invalid messageEvents[${index}]`;
+    if (!isRecord(item)) throw new Error(prefix);
+    return {
+      index: nonNegativeIntegerField(item, "index", prefix),
+      timestamp: nonNegativeIntegerField(item, "timestamp", prefix),
+    };
+  });
 }
 
 function tokenUsageField(value: Record<string, unknown>, key: string): TokenUsage | undefined {
@@ -650,6 +676,12 @@ function parseTokenEvent(value: unknown, lineNumber: number, index: number): Tok
 function nonNegativeFiniteField(value: Record<string, unknown>, key: string, errorPrefix: string): number {
   const field = value[key];
   if (typeof field !== "number" || !Number.isFinite(field) || field < 0) throw new Error(`${errorPrefix}.${key}`);
+  return field;
+}
+
+function nonNegativeIntegerField(value: Record<string, unknown>, key: string, errorPrefix: string): number {
+  const field = value[key];
+  if (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0) throw new Error(`${errorPrefix}.${key}`);
   return field;
 }
 
@@ -736,6 +768,7 @@ def emit_codex_summary(path, stat, titles):
   timestamp = int(stat.st_mtime * 1000)
   first_question = ""
   message_count = 0
+  message_events = []
   git_branch = ""
   token_state = new_codex_token_state()
   try:
@@ -765,6 +798,7 @@ def emit_codex_summary(path, stat, titles):
         accumulate_codex_tokens(token_state, row)
         parsed = parse_message(row, "codex")
         if parsed:
+          message_events.append({"index": message_count, "timestamp": _tok_timestamp(parsed["timestamp"])})
           message_count += 1
           if parsed["role"] == "user" and not first_question:
             first_question = parsed["content"]
@@ -782,6 +816,7 @@ def emit_codex_summary(path, stat, titles):
     "originalTitle": indexed_title or title_from(first_question) or raw_id,
     "firstQuestion": first_question,
     "messageCount": message_count,
+    "messageEvents": message_events,
     "gitBranch": git_branch,
     "tokenUsage": finalize_codex_tokens(token_state),
     "tokenEvents": finalize_codex_events(token_state),
@@ -794,6 +829,7 @@ def emit_claude_summary(path, stat, index):
   timestamp = int(meta.get("startedAt") or stat.st_mtime * 1000)
   first_question = ""
   message_count = 0
+  message_events = []
   git_branch = ""
   token_state = new_claude_token_state()
   try:
@@ -812,6 +848,7 @@ def emit_claude_summary(path, stat, index):
         accumulate_claude_tokens(token_state, row)
         parsed = parse_message(row, "claude")
         if parsed:
+          message_events.append({"index": message_count, "timestamp": _tok_timestamp(parsed["timestamp"])})
           message_count += 1
           if parsed["role"] == "user" and not first_question:
             first_question = parsed["content"]
@@ -828,6 +865,7 @@ def emit_claude_summary(path, stat, index):
     "originalTitle": title_from(first_question) or raw_id,
     "firstQuestion": first_question,
     "messageCount": message_count,
+    "messageEvents": message_events,
     "gitBranch": git_branch,
     "tokenUsage": finalize_claude_tokens(token_state),
     "tokenEvents": finalize_claude_events(token_state),

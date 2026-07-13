@@ -78,6 +78,11 @@ describe("detail panel actions", () => {
     expect(detailPanelSource).toContain("Show ${Math.min(messagePageSize, olderMessageCount)} older messages");
   });
 
+  it("shows the full indexed message total instead of the loaded page size", () => {
+    expect(detailPanelSource).toContain('`${session.messageCount} messages`');
+    expect(detailPanelSource).not.toContain('`${messages.length} messages`');
+  });
+
   it("filters the loaded full conversation by role while keeping pagination available", () => {
     const showOlderIndex = detailPanelSource.indexOf("olderMessageCount > 0");
     const visibleItemsIndex = detailPanelSource.indexOf("visibleTimelineItems.map");

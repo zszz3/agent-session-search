@@ -8,6 +8,7 @@ import {
   sessionSortTimestamp,
   sourceFilterLabel,
   sourceFilters,
+  usageStatsDisplayRows,
 } from "./session-ui";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
@@ -62,6 +63,66 @@ describe("session source labels", () => {
     }).map((filter) => sourceFilterLabel(filter, "en"));
 
     expect(labels).toEqual(expect.arrayContaining(["TClaude", "TCodex", "Claude Code Internal", "Codex Internal"]));
+  });
+
+  it("combines CLI and app usage rows without merging internal sources", () => {
+    expect(
+      usageStatsDisplayRows([
+        {
+          source: "codex-app",
+          sessionCount: 1,
+          messageCount: 2,
+          inputTokens: 3,
+          outputTokens: 4,
+          cachedInputTokens: 5,
+          reasoningOutputTokens: 6,
+          totalTokens: 18,
+        },
+        {
+          source: "codex-cli",
+          sessionCount: 7,
+          messageCount: 8,
+          inputTokens: 9,
+          outputTokens: 10,
+          cachedInputTokens: 11,
+          reasoningOutputTokens: 12,
+          totalTokens: 42,
+        },
+        {
+          source: "codex-internal",
+          sessionCount: 1,
+          messageCount: 1,
+          inputTokens: 1,
+          outputTokens: 1,
+          cachedInputTokens: 1,
+          reasoningOutputTokens: 1,
+          totalTokens: 4,
+        },
+      ]),
+    ).toEqual([
+      {
+        key: "codex",
+        label: "Codex",
+        sessionCount: 8,
+        messageCount: 10,
+        inputTokens: 12,
+        outputTokens: 14,
+        cachedInputTokens: 16,
+        reasoningOutputTokens: 18,
+        totalTokens: 60,
+      },
+      {
+        key: "codex-internal",
+        label: "Codex Internal",
+        sessionCount: 1,
+        messageCount: 1,
+        inputTokens: 1,
+        outputTokens: 1,
+        cachedInputTokens: 1,
+        reasoningOutputTokens: 1,
+        totalTokens: 4,
+      },
+    ]);
   });
 
   it("derives migration targets from enabled settings in registry order", () => {

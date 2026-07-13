@@ -20,6 +20,7 @@ import type {
   SessionMigrationRecord,
   SessionEnvironment,
   SessionMessage,
+  SessionMessageEvent,
   SessionMatchHit,
   SessionSearchPage,
   SessionSearchResult,
@@ -262,6 +263,7 @@ export class SessionStore {
         );
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
+      this.db.prepare("DELETE FROM message_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM trace_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(session.sessionKey);
@@ -271,6 +273,18 @@ export class SessionStore {
       );
       for (const message of messages) {
         insertMessage.run(session.sessionKey, message.index, message.role, message.content, message.timestamp);
+      }
+
+      const insertMessageEvent = this.db.prepare(
+        "INSERT INTO message_events (session_key, message_index, timestamp) VALUES (?, ?, ?)",
+      );
+      for (const message of messages) {
+        const timestamp = Date.parse(message.timestamp);
+        insertMessageEvent.run(
+          session.sessionKey,
+          message.index,
+          Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : 0,
+        );
       }
 
       const insertTokenEvent = this.db.prepare(
@@ -392,7 +406,12 @@ export class SessionStore {
       .all(environmentId) as Array<{ filePath: string; fileMtimeMs: number; fileSize: number; indexedAt: number }>;
   }
 
-  upsertIndexedSessionSummary(session: IndexedSession, messageCount: number, tokenEvents?: TokenUsageEvent[]): void {
+  upsertIndexedSessionSummary(
+    session: IndexedSession,
+    messageCount: number,
+    tokenEvents?: TokenUsageEvent[],
+    messageEvents?: SessionMessageEvent[],
+  ): void {
     const normalizedTokenEvents = tokenEvents?.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
     const tokenUsage = normalizedTokenEvents === undefined ? normalizeTokenUsage(session.tokenUsage) : tokenUsageFromEvents(normalizedTokenEvents);
     const indexedAt = Date.now();
@@ -473,6 +492,16 @@ export class SessionStore {
             event.reasoningOutputTokens,
             event.totalTokens,
           );
+        }
+      }
+
+      if (messageEvents !== undefined) {
+        this.db.prepare("DELETE FROM message_events WHERE session_key = ?").run(session.sessionKey);
+        const insertMessageEvent = this.db.prepare(
+          "INSERT INTO message_events (session_key, message_index, timestamp) VALUES (?, ?, ?)",
+        );
+        for (const event of messageEvents) {
+          insertMessageEvent.run(session.sessionKey, event.index, event.timestamp);
         }
       }
 
@@ -1246,6 +1275,7 @@ export class SessionStore {
   clearSearchIndex(): void {
     this.transaction(() => {
       this.db.prepare("DELETE FROM messages").run();
+      this.db.prepare("DELETE FROM message_events").run();
       this.db.prepare("DELETE FROM token_events").run();
       this.db.prepare("DELETE FROM trace_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
@@ -1364,6 +1394,14 @@ export class SessionStore {
         FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS message_events (
+        session_key TEXT NOT NULL,
+        message_index INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL,
+        PRIMARY KEY (session_key, message_index),
+        FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS token_events (
         session_key TEXT NOT NULL,
         dedupe_key TEXT NOT NULL,
@@ -1471,6 +1509,8 @@ export class SessionStore {
         ON session_tags(tag_id, session_key);
       CREATE INDEX IF NOT EXISTS idx_token_events_timestamp
         ON token_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_message_events_timestamp
+        ON message_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_token_events_dedupe
         ON token_events(dedupe_key, total_tokens, timestamp);
       CREATE INDEX IF NOT EXISTS idx_trace_events_session
@@ -1513,6 +1553,14 @@ export class SessionStore {
         ON sessions(environment_id, source);
       DROP INDEX IF EXISTS idx_session_migrations_source_session_key;
       DROP INDEX IF EXISTS idx_session_migrations_created_at_desc;
+    `);
+    this.db.exec(`
+      INSERT OR IGNORE INTO message_events (session_key, message_index, timestamp)
+      SELECT
+        session_key,
+        message_index,
+        COALESCE(CAST(strftime('%s', timestamp) AS INTEGER) * 1000, 0)
+      FROM messages;
     `);
     this.ensureLocalEnvironment();
   }
@@ -1628,15 +1676,14 @@ export class SessionStore {
         .all() as Array<{ source: SessionSource; session_count: number }>;
     }
 
-    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
     return this.db
       .prepare(
         `
         WITH active AS (
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
-          JOIN messages ON messages.session_key = sessions.session_key
-          WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
+          JOIN message_events ON message_events.session_key = sessions.session_key
+          WHERE message_events.timestamp >= ? AND message_events.timestamp <= ? ${subagentAnd}
           UNION
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
@@ -1669,14 +1716,13 @@ export class SessionStore {
         .all() as Array<{ source: SessionSource; message_count: number }>;
     }
 
-    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
     return this.db
       .prepare(
         `
         SELECT sessions.source AS source, COUNT(*) AS message_count
-        FROM messages
-        JOIN sessions ON sessions.session_key = messages.session_key
-        WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
+        FROM message_events
+        JOIN sessions ON sessions.session_key = message_events.session_key
+        WHERE message_events.timestamp >= ? AND message_events.timestamp <= ? ${subagentAnd}
         GROUP BY sessions.source
         ORDER BY sessions.source
       `,

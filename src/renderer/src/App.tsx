@@ -138,6 +138,7 @@ import {
   statsPeriodLabel,
   supportsResumeSource,
   unsupportedMigrationTitle,
+  usageStatsDisplayRows,
   migrationAgentLabel,
   migrationTargetsForSession,
 } from "./session-ui";
@@ -1827,9 +1828,9 @@ export function App(): ReactElement {
             </span>
           </div>
           <div className="stats-breakdown">
-            {stats.bySource.map((item) => (
-              <div key={item.source}>
-                <span>{SOURCE_LABEL[item.source]}</span>
+            {usageStatsDisplayRows(stats.bySource).map((item) => (
+              <div key={item.key}>
+                <span>{item.label}</span>
                 <em>
                   {formatCompactNumber(item.messageCount)} {t("msg", "条")} · {formatTokenCount(item.totalTokens)}
                 </em>

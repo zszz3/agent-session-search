@@ -365,7 +365,7 @@ export function DetailPanel({
               ) : null}
             </div>
             <p>
-              {session.projectPath || l("No project", "无项目")} · {new Date(session.timestamp).toLocaleString()} · {l(`${messages.length} messages`, `${messages.length} 条消息`)} ·{" "}
+              {session.projectPath || l("No project", "无项目")} · {new Date(session.timestamp).toLocaleString()} · {l(`${session.messageCount} messages`, `${session.messageCount} 条消息`)} ·{" "}
               {l(`${formatTokenCount(session.tokenUsage.totalTokens)} tokens`, `${formatTokenCount(session.tokenUsage.totalTokens)} token`)}
               {traceEvents.length > 0 ? <> · {l(`${traceEvents.length} trace events`, `${traceEvents.length} 条轨迹`)}</> : null}
             </p>

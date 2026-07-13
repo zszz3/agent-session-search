@@ -191,6 +191,67 @@ describe("remote sync", () => {
     store.close();
   });
 
+  it("includes lightweight remote message events in ranged stats and keeps old summaries compatible", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    const now = new Date("2026-06-04T12:00:00Z").getTime();
+    const summary = {
+      kind: "codex-session",
+      path: "/home/me/.codex/sessions/rollout.jsonl",
+      mtimeMs: 100,
+      size: 2048,
+      rawId: "remote-message-events",
+      projectPath: "/repo",
+      timestamp: new Date("2026-05-01T10:00:00Z").getTime(),
+      originalTitle: "Remote Message Events",
+      firstQuestion: "q",
+      messageCount: 2,
+    };
+    const messageEvents = [
+      { index: 0, timestamp: new Date("2026-05-01T10:01:00Z").getTime() },
+      { index: 1, timestamp: new Date("2026-06-04T10:01:00Z").getTime() },
+    ];
+
+    await syncRemoteEnvironment(store, environment, {
+      runSsh: async () => `${JSON.stringify({ ...summary, messageEvents })}\n`,
+    });
+
+    expect(store.getStats({ period: "today" }, now).total).toMatchObject({ sessionCount: 1, messageCount: 1 });
+    expect(store.getStats({ period: "allTime" }, now).total.messageCount).toBe(2);
+
+    await syncRemoteEnvironment(store, environment, {
+      runSsh: async () => `${JSON.stringify({ ...summary, mtimeMs: 101 })}\n`,
+    });
+    expect(store.getStats({ period: "today" }, now).total.messageCount).toBe(1);
+
+    await syncRemoteEnvironment(store, environment, {
+      runSsh: async () => `${JSON.stringify({ ...summary, mtimeMs: 102, messageCount: 0, messageEvents: [] })}\n`,
+    });
+    expect(store.getStats({ period: "today" }, now).total.messageCount).toBe(0);
+    store.close();
+  });
+
+  it("rejects malformed remote message events", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    const output = `${JSON.stringify({
+      kind: "codex-session",
+      path: "/home/me/.codex/sessions/rollout.jsonl",
+      mtimeMs: 100,
+      size: 2048,
+      rawId: "remote-invalid-message-events",
+      projectPath: "/repo",
+      timestamp: new Date("2026-06-04T10:00:00Z").getTime(),
+      originalTitle: "Invalid Remote Message Events",
+      firstQuestion: "q",
+      messageCount: 1,
+      messageEvents: [{ index: 0.5, timestamp: new Date("2026-06-04T10:01:00Z").getTime() }],
+    })}\n`;
+
+    await expect(syncRemoteEnvironment(store, environment, { runSsh: async () => output })).rejects.toThrow(/messageEvents/i);
+    store.close();
+  });
+
   it("preserves remote token events when an older summary omits the field", async () => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);
@@ -289,6 +350,30 @@ describe("remote sync", () => {
             type: "session_meta",
             timestamp: "2026-06-04T10:00:00Z",
             payload: { id: "collector-token-events", cwd: "/repo" },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: "2026-06-04T10:00:40Z",
+            payload: { type: "message", role: "user", content: [{ type: "input_text", text: "real question" }] },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: "2026-06-04T10:00:50Z",
+            payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "real answer" }] },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: "2026-06-04T10:00:55Z",
+            payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<system_notification>noise</system_notification>" }] },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: "2026-06-04T10:00:56Z",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "The beginning of the above subagent result is already visible noise" }],
+            },
           }),
           JSON.stringify({ type: "turn_context", timestamp: "2026-06-04T10:00:30Z", payload: { model: "gpt-5" } }),
           JSON.stringify({
@@ -407,6 +492,11 @@ describe("remote sync", () => {
         reasoningOutputTokens: 10,
         totalTokens: 200,
       });
+      expect(summary?.messageEvents).toEqual([
+        { index: 0, timestamp: new Date("2026-06-04T10:00:40Z").getTime() },
+        { index: 1, timestamp: new Date("2026-06-04T10:00:50Z").getTime() },
+      ]);
+      expect(summary?.messageCount).toBe(2);
       const claudeSummary = output
         .trim()
         .split(/\r?\n/)
