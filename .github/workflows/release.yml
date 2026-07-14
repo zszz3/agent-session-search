@@ -1,0 +1,131 @@
+name: Publish Merged Main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: publish-merged-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect merged MR and release note
+        id: merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          MERGED_SHA: ${{ github.sha }}
+        run: |
+          pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGED_SHA}/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty')"
+          if [ -z "$pr_number" ]; then
+            echo "This main push is not associated with a merged MR; skipping application release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mapfile -t notes < <(git diff --name-only --diff-filter=A "$BEFORE_SHA" "$MERGED_SHA" -- .release-notes | grep -Ev '/README\.md$' || true)
+          if [ "${#notes[@]}" -ne 1 ]; then
+            echo "Expected exactly one added release note for merged MR #${pr_number}; found ${#notes[@]}." >&2
+            exit 1
+          fi
+          node scripts/release-notes.mjs check-file "${notes[0]}"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "note_file=${notes[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        if: steps.merged.outputs.publish == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Compute idempotent release version
+        if: steps.merged.outputs.publish == 'true'
+        id: version
+        env:
+          NOTE_FILE: ${{ steps.merged.outputs.note_file }}
+          MERGED_SHA: ${{ github.sha }}
+        run: |
+          git fetch --tags --force
+          existing_tag="$(git tag --points-at "$MERGED_SHA" --list 'v[0-9]*' --sort=-v:refname | head -1)"
+          if [ -n "$existing_tag" ]; then
+            version="${existing_tag#v}"
+          else
+            latest_tag="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)"
+            if [ -n "$latest_tag" ]; then
+              current_version="${latest_tag#v}"
+            else
+              current_version="$(node -p "require('./package.json').version")"
+            fi
+            version="$(node scripts/release-notes.mjs next-version "$current_version" "$NOTE_FILE")"
+          fi
+          npm version "$version" --no-git-tag-version
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.merged.outputs.publish == 'true'
+        run: npm ci
+
+      - name: Test and build
+        if: steps.merged.outputs.publish == 'true'
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Build release assets
+        if: steps.merged.outputs.publish == 'true'
+        id: assets
+        env:
+          NOTE_FILE: ${{ steps.merged.outputs.note_file }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p release
+          package_file="$(npm pack --pack-destination release | tail -1)"
+          node scripts/create-release-assets.mjs \
+            --note "$NOTE_FILE" \
+            --version "$VERSION" \
+            --package "release/$package_file" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output release
+          echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and GitHub Release
+        if: steps.merged.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MERGED_SHA: ${{ github.sha }}
+        run: |
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" "$MERGED_SHA" -m "Agent-Session-Search $TAG"
+            git push origin "$TAG"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Agent-Session-Search $TAG" --notes-file release/release-notes.md
+            publish_draft=false
+          else
+            gh release create "$TAG" --draft --verify-tag --title "Agent-Session-Search $TAG" --notes-file release/release-notes.md
+            publish_draft=true
+          fi
+          gh release upload "$TAG" release/*.tgz release/*.sha256 release/update.json --clobber
+          if [ "$publish_draft" = true ]; then
+            gh release edit "$TAG" --draft=false
+          fi

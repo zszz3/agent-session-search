@@ -5,6 +5,7 @@ import type { ApplyClaudeProfileResult } from "../core/claude-profile";
 import type { CodexChatProxyStatus } from "../core/codex-chat-proxy";
 import type { ApplyCodexProfileResult } from "../core/codex-profile";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
+import type { AppUpdateInstallResult, AppUpdateStatus } from "../core/app-update-types";
 import type { IndexStatus } from "../core/indexer";
 import type { RemoteHealthReport } from "../core/remote-health";
 import type {
@@ -25,6 +26,8 @@ import type {
   MigrationAgent,
   MigrationTarget,
   ProjectSummary,
+  ProjectQueryOptions,
+  ProjectTagEntry,
   SearchOptions,
   SessionEnvironment,
   SessionMessage,
@@ -35,6 +38,7 @@ import type {
   SessionStats,
   SessionStatsOptions,
   SessionTraceEvent,
+  TagListOptions,
   UsageQuotaSnapshot,
 } from "../core/types";
 
@@ -67,8 +71,9 @@ const api = {
   getMcpStatus: (): Promise<boolean> => ipcRenderer.invoke("mcp:status"),
   setMcpEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke("mcp:set-enabled", enabled),
   getQuotas: (): Promise<UsageQuotaSnapshot> => ipcRenderer.invoke("quota:get"),
-  listTags: (): Promise<string[]> => ipcRenderer.invoke("tags:list"),
-  listProjects: (): Promise<ProjectSummary[]> => ipcRenderer.invoke("projects:list"),
+  listTags: (options?: TagListOptions): Promise<string[]> => ipcRenderer.invoke("tags:list", options),
+  listProjects: (options?: ProjectQueryOptions): Promise<ProjectSummary[]> => ipcRenderer.invoke("projects:list", options),
+  listTagsByProject: (): Promise<ProjectTagEntry[]> => ipcRenderer.invoke("tags:by-project"),
   listEnvironments: (): Promise<SessionEnvironment[]> => ipcRenderer.invoke("environments:list"),
   listSshConfigHosts: (): Promise<SshConfigHost[]> => ipcRenderer.invoke("ssh-config:list-hosts"),
   saveEnvironment: (environment: EnvironmentUpsertInput): Promise<SessionEnvironment> =>
@@ -86,6 +91,8 @@ const api = {
   deleteSession: (sessionKey: string): Promise<boolean> => ipcRenderer.invoke("session:delete", sessionKey),
   refreshIndex: (): Promise<IndexStatus> => ipcRenderer.invoke("index:refresh"),
   getIndexStatus: (): Promise<IndexStatus> => ipcRenderer.invoke("index:status"),
+  getAppUpdateStatus: (force = false): Promise<AppUpdateStatus> => ipcRenderer.invoke("app-update:get-status", force),
+  installAppUpdate: (): Promise<AppUpdateInstallResult> => ipcRenderer.invoke("app-update:install"),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
   setSettings: (settings: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke("settings:set", settings),
   applyCodexProfile: (apiConfig: ApiConfig): Promise<ApplyCodexProfileResult> => ipcRenderer.invoke("codex-profile:apply", apiConfig),
@@ -132,6 +139,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: IndexStatus) => callback(status);
     ipcRenderer.on("index-status", listener);
     return () => ipcRenderer.removeListener("index-status", listener);
+  },
+  onAppUpdateStatus: (callback: (status: AppUpdateStatus) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: AppUpdateStatus) => callback(status);
+    ipcRenderer.on("app-update:status", listener);
+    return () => ipcRenderer.removeListener("app-update:status", listener);
   },
   onMigrationProgress: (callback: (progress: SessionMigrationProgress) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: SessionMigrationProgress) => callback(progress);

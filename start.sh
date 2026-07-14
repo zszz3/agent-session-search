@@ -2,12 +2,15 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────
-# Agent-Session-Search — one-shot launcher for macOS
+# Agent-Session-Search — smart launcher for macOS
 #
 # Usage:  bash start.sh  (or: ./start.sh)
 #
-# Checks environment, installs missing pieces following the
-# README.md flow, then launches the app.
+# • Checks environment & installs missing pieces (first run only)
+# • Skips rebuild when source hasn't changed since last build
+# • If the app is already running and code is unchanged, just
+#   focuses the existing window (instant — no kill, no rebuild)
+# • Only rebuilds + restarts when source actually changed
 # ─────────────────────────────────────────────────────────────
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,9 +19,9 @@ cd "$ROOT_DIR"
 # Colours -------------------------------------------------------
 if [ -t 1 ]; then
   C_BOLD="\033[1m"; C_GREEN="\033[32m"; C_YELLOW="\033[33m"
-  C_RED="\033[31m"; C_CYAN="\033[36m"; C_RESET="\033[0m"
+  C_RED="\033[31m"; C_CYAN="\033[36m"; C_DIM="\033[2m"; C_RESET="\033[0m"
 else
-  C_BOLD=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_RESET=""
+  C_BOLD=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_DIM=""; C_RESET=""
 fi
 
 info()  { printf "${C_CYAN}▸ %s${C_RESET}\n" "$*"; }
@@ -46,7 +49,6 @@ if node_version_ok; then
 else
   warn "Node.js 22.13+ not found in PATH"
 
-  # Try nvm (sourced — it's a shell function, not a binary)
   NVM_SH="$HOME/.nvm/nvm.sh"
   if [ -s "$NVM_SH" ]; then
     info "Loading nvm …"
@@ -82,47 +84,141 @@ else
   ok "Dependencies installed"
 fi
 
-# ── 4. build output (out/) ─────────────────────────────────────
-info "Building the app (npm run build) …"
-npm run build || fail "npm run build failed"
-ok "Build complete"
+# ── 4. build output (out/) — skip if up-to-date ────────────────
+# Track the newest source mtime in a sentinel file (.build-sentinel).
+# After each successful build we store that mtime; on the next run we
+# recompute the newest source mtime and compare. If no source file is
+# newer than the sentinel (and build outputs exist), we skip the rebuild.
+# This is more reliable than comparing source-vs-output mtimes because
+# Vite does not rewrite asset files whose content hash is unchanged.
+SENTINEL="$ROOT_DIR/.build-sentinel"
+
+newest_source=0
+for f in \
+  $(find src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' \) 2>/dev/null) \
+  electron.vite.config.ts tsconfig.json package.json \
+  scripts/build-mcp-bundle.mjs bin/agent-session-search-mcp.mjs bin/setup-mcp.cjs; do
+  [ -f "$f" ] || continue
+  m=$(stat -f '%m' "$f" 2>/dev/null || echo 0)
+  [ "$m" -gt "$newest_source" ] && newest_source="$m"
+done
+
+# Build outputs must all exist.
+outputs_exist=true
+for f in \
+  out/main/index.js out/preload/index.mjs out/renderer/index.html \
+  out/mcp/migration-entry.js; do
+  [ -f "$f" ] || { outputs_exist=false; break; }
+done
+ls out/renderer/assets/*.js >/dev/null 2>&1 || outputs_exist=false
+ls out/renderer/assets/*.css >/dev/null 2>&1 || outputs_exist=false
+
+last_built=0
+[ -f "$SENTINEL" ] && last_built=$(cat "$SENTINEL" 2>/dev/null || echo 0)
+
+if [ "$outputs_exist" = true ] && [ "$newest_source" -le "$last_built" ]; then
+  ok "Build is up to date — skipping rebuild"
+  build_needed=false
+else
+  info "Source changed (or no build found) — rebuilding …"
+  npm run build || fail "npm run build failed"
+  echo "$newest_source" > "$SENTINEL"
+  ok "Build complete"
+  build_needed=true
+fi
 
 # ── 5. global command ──────────────────────────────────────────
-# The global binary is a symlink to this repo (npm install -g .).
-# Check whether it's registered; if not, register it.
-GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin/agent-session-search"
+# Verify that every bin entry declared in package.json is linked in the
+# global bin dir. If any are missing (e.g. new bin entries added since the
+# last global install), re-run npm install -g . to refresh the symlinks.
+GLOBAL_PREFIX="$(npm prefix -g 2>/dev/null)"
+GLOBAL_BIN="$GLOBAL_PREFIX/bin/agent-session-search"
+all_bins_linked=true
 if [ -x "$GLOBAL_BIN" ]; then
+  for bin_name in \
+    agent-session-search \
+    agent-session-search-claude-statusline \
+    agent-session-search-setup-claude-statusline \
+    agent-session-search-skill-usage \
+    agent-session-search-setup-skill-usage-hook \
+    agent-session-search-mcp \
+    agent-session-search-setup-mcp; do
+    if [ ! -x "$GLOBAL_PREFIX/bin/$bin_name" ]; then
+      all_bins_linked=false
+      break
+    fi
+  done
+else
+  all_bins_linked=false
+fi
+
+if [ "$all_bins_linked" = true ]; then
   ok "Global command 'agent-session-search' registered"
 else
-  info "Registering global command (npm install -g .) …"
+  info "Registering / refreshing global command (npm install -g .) …"
   npm install -g . || fail "npm install -g . failed"
   ok "Global command registered"
 fi
 
-# ── 6. register MCP server ─────────────────────────────────────
-# Register the agent-session-search MCP server in Claude Code and Codex so
-# they can search/manage past sessions and run migrate_session from chat.
+# ── 6. register MCP server (skip if already registered) ────────
 SETUP_MCP="$(npm prefix -g 2>/dev/null)/bin/agent-session-search-setup-mcp"
 if [ -x "$SETUP_MCP" ]; then
-  info "Registering MCP server in Claude Code / Codex …"
-  "$SETUP_MCP" || warn "MCP registration failed (non-fatal — you can run 'agent-session-search-setup-mcp' manually later)"
-  ok "MCP server registered"
+  if "$SETUP_MCP" --status >/dev/null 2>&1; then
+    ok "MCP server already registered"
+  else
+    info "Registering MCP server in Claude Code / Codex …"
+    "$SETUP_MCP" || warn "MCP registration failed (non-fatal — run 'agent-session-search-setup-mcp' manually later)"
+    ok "MCP server registered"
+  fi
 else
   warn "setup-mcp command not found — MCP server not registered. Run 'node bin/setup-mcp.cjs' manually after install."
 fi
 
 # ── 7. launch ──────────────────────────────────────────────────
-# If the app is already running, shut it down first so start.sh always
-# launches a fresh instance. The Electron main process runs
-# out/main/index.js; matching on that path avoids killing the standalone
-# MCP server (agent-session-search-mcp).
-if pgrep -f "out/main/index.js" >/dev/null 2>&1; then
-  info "Existing instance found — closing it …"
-  pkill -f "out/main/index.js" 2>/dev/null || true
-  # Wait for the process tree to fully exit so the new instance isn't
-  # blocked by the old one's single-instance lock.
+# The Electron app uses requestSingleInstanceLock: launching the
+# binary a second time focuses the existing window and the new
+# process exits immediately. We use this to our advantage:
+#
+# • App running + no rebuild  → just re-launch (focuses window,
+#   new process exits instantly). No kill, no restart.
+# • App running + rebuilt     → kill old instance, then launch.
+# • App not running           → just launch.
+#
+# Process detection: the Electron main process appears as
+#   <repo>/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron
+# Helper sub-processes contain "--type=" in their command line, so we
+# exclude those to avoid false positives.
+ELECTRON_PATTERN="$ROOT_DIR/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+
+app_is_running() {
+  pgrep -f "$ELECTRON_PATTERN" 2>/dev/null | while read -r pid; do
+    if ! ps -p "$pid" -o command= 2>/dev/null | grep -q -- "--type="; then
+      echo "$pid"
+      return 0
+    fi
+  done
+  return 1
+}
+
+APP_PID=$(app_is_running || true)
+APP_RUNNING=false
+[ -n "$APP_PID" ] && APP_RUNNING=true
+
+if [ "$APP_RUNNING" = true ] && [ "$build_needed" = false ]; then
+  # App is running and code is unchanged — just focus it.
+  ok "App is already running — focusing existing window"
+  echo ""
+  agent-session-search 2>/dev/null || true
+  exit 0
+fi
+
+if [ "$APP_RUNNING" = true ]; then
+  info "Existing instance found — closing it to apply updates …"
+  for pid in $APP_PID; do
+    kill "$pid" 2>/dev/null || true
+  done
   for _ in $(seq 1 20); do
-    pgrep -f "out/main/index.js" >/dev/null 2>&1 || break
+    [ -z "$(app_is_running)" ] && break
     sleep 0.25
   done
   ok "Previous instance closed"
@@ -130,6 +226,6 @@ fi
 
 echo ""
 info "Launching Agent-Session-Search …"
-echo "    (The app runs in the menu bar — press Option+Space to show the window)"
+echo -e "    ${C_DIM}(The app runs in the menu bar — press Option+Space to show the window)${C_RESET}"
 echo ""
 exec agent-session-search

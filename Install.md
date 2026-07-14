@@ -85,7 +85,22 @@ export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
 ### 更新到新版本
 
-先拉取最新代码，再重新跑安装命令：
+日常从终端启动时会自动检查 GitHub Release：
+
+```bash
+agent-session-search
+```
+
+发现新版本后，终端会展示新增功能和 Bug 修复，并询问是否立即更新。也可以主动检查或直接更新：
+
+```bash
+agent-session-search --check-update
+agent-session-search --update
+```
+
+App 内可在 **Settings → About（设置 → 关于）** 检查并安装更新。更新包会先校验 SHA-256，安装失败时保留当前可运行版本。
+
+如果正在使用源码开发目录且希望手动同步 `main`，仍可执行：
 
 ```bash
 git pull --ff-only

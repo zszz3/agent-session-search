@@ -1,4 +1,14 @@
-import type { MigrationAgent, MigrationTarget, ProjectSummary, SearchOptions, SessionSearchResult, SessionSource, SessionStatsPeriod } from "../../core/types";
+import type {
+  MigrationAgent,
+  MigrationTarget,
+  ProjectSummary,
+  SearchOptions,
+  SessionSearchResult,
+  SessionSource,
+  SessionSourceStats,
+  SessionStatsPeriod,
+  SessionStatsSummary,
+} from "../../core/types";
 import { migrationAgentForSource, supportedMigrationTargets } from "../../core/session-migration";
 import { enabledMigrationTargets, migrationTargetDescriptor, type MigrationTargetSettings } from "../../core/migration-targets";
 import type { AppSettings } from "../../core/platform";
@@ -24,6 +34,43 @@ export const SOURCE_LABEL: Record<SessionSource, string> = {
   trae: "Trae",
 };
 
+export interface UsageStatsDisplayRow extends SessionStatsSummary {
+  key: string;
+  label: string;
+}
+
+function usageStatsDisplayGroup(source: SessionSource): { key: string; label: string } {
+  if (source === "codex-cli" || source === "codex-app") return { key: "codex", label: "Codex" };
+  if (source === "claude-cli" || source === "claude-app") return { key: "claude", label: "Claude Code" };
+  return { key: source, label: SOURCE_LABEL[source] };
+}
+
+export function usageStatsDisplayRows(rows: SessionSourceStats[]): UsageStatsDisplayRow[] {
+  const grouped = new Map<string, UsageStatsDisplayRow>();
+  for (const row of rows) {
+    const group = usageStatsDisplayGroup(row.source);
+    const current = grouped.get(group.key) ?? {
+      ...group,
+      sessionCount: 0,
+      messageCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      reasoningOutputTokens: 0,
+      totalTokens: 0,
+    };
+    current.sessionCount += row.sessionCount;
+    current.messageCount += row.messageCount;
+    current.inputTokens += row.inputTokens;
+    current.outputTokens += row.outputTokens;
+    current.cachedInputTokens += row.cachedInputTokens;
+    current.reasoningOutputTokens += row.reasoningOutputTokens;
+    current.totalTokens += row.totalTokens;
+    grouped.set(group.key, current);
+  }
+  return [...grouped.values()];
+}
+
 const BASE_SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"] }> = [
   { label: "All", value: "all" },
   { label: "Claude Code", value: "claude" },
@@ -48,6 +95,10 @@ export function sourceFilters(settings: AppSettings | null): Array<{ label: stri
 
 export function isBranchTag(tagName: string): boolean {
   return tagName.startsWith("branch:");
+}
+
+export function displayTagName(tagName: string): string {
+  return tagName.startsWith("branch:") ? tagName.slice("branch:".length) : tagName;
 }
 
 export function sourceUiFamily(source: SessionSource): "claude" | "codex" | "codebuddy" | "other" {

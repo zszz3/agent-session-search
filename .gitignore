@@ -13,3 +13,4 @@ dist/
 *.timestamp-*.mjs
 docs/plans/
 docs/specs/
+.build-sentinel

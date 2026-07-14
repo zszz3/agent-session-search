@@ -193,6 +193,11 @@ module.exports = { applyClaudeConfig, applyCodexConfig, removeCodexBlock, run, s
 
 if (require.main === module) {
   const remove = process.argv.includes("uninstall") || process.argv.includes("--remove");
+  const checkStatus = process.argv.includes("--status");
+  if (checkStatus) {
+    process.stdout.write(status() ? "registered\n" : "not-registered\n");
+    process.exit(status() ? 0 : 1);
+  }
   try {
     for (const message of run(remove)) process.stdout.write(`${message}\n`);
     if (!remove) process.stdout.write("Restart Claude Code / Codex to pick up the new MCP server.\n");

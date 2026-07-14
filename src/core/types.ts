@@ -57,6 +57,11 @@ export interface SessionMessage {
   index: number;
 }
 
+export interface SessionMessageEvent {
+  index: number;
+  timestamp: number;
+}
+
 export type MigrationAgent = "claude" | "codex" | "codebuddy" | "cursor";
 export type MigrationTarget = MigrationAgent | "tclaude" | "tcodex" | "claude-internal" | "codex-internal";
 export type SessionMigrationStrategy = "complete" | "ai-compressed" | "locally-truncated";
@@ -197,6 +202,20 @@ export interface SearchOptions {
 
 export interface ProjectQueryOptions {
   excludeSubagents?: boolean;
+  environmentId?: string;
+}
+
+export interface TagListOptions {
+  environmentId?: string;
+  projectPath?: string;
+  projectEnvironmentId?: string;
+  excludeSubagents?: boolean;
+}
+
+export interface ProjectTagEntry {
+  environmentId: string;
+  projectPath: string;
+  tags: string[];
 }
 
 export interface ProjectSummary {

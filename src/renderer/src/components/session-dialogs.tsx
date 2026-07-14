@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { X } from "lucide-react";
 import type { SessionSearchResult } from "../../../core/types";
+import { displayTagName, isBranchTag } from "../session-ui";
 import { localize, type LanguageMode } from "../language";
 import type { DialogState } from "../app-types";
 
@@ -27,7 +28,7 @@ export function DeleteTagDialog({
           </button>
         </div>
         <p className="dialog-copy">
-          {l("Delete", "从所有会话中删除")} <strong>#{tagName}</strong>
+          {l("Delete", "从所有会话中删除")} <strong>{isBranchTag(tagName) ? "" : "#"}{displayTagName(tagName)}</strong>
           {l(" from all sessions?", "？")}
         </p>
         <div className="dialog-actions">
@@ -142,7 +143,7 @@ export function CommandDialog({
           <div className="tag-suggestions">
             {matchingTags.map((tagName) => (
               <button key={tagName} type="button" onClick={() => onSubmit(tagName)}>
-                #{tagName}
+                {isBranchTag(tagName) ? "" : "#"}{displayTagName(tagName)}
               </button>
             ))}
           </div>

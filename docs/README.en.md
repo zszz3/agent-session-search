@@ -191,6 +191,8 @@ nvm alias default 22
 
 If you do not use nvm and have Node.js 22.13+ installed system-wide, daily startup does not need any nvm command.
 
+The terminal checks the latest GitHub Release automatically. When an update is available, it shows the release's new features and bug fixes and asks whether to install it. The same version, release notes, and **Update now** action are available under **Settings → About**. Use `agent-session-search --check-update` to check without launching the App or `agent-session-search --update` to install immediately.
+
 ### Windows
 
 With Node.js 22.13+ installed, run this from the repository root in PowerShell:

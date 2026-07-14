@@ -20,6 +20,7 @@ import type {
   SessionMigrationRecord,
   SessionEnvironment,
   SessionMessage,
+  SessionMessageEvent,
   SessionMatchHit,
   SessionSearchPage,
   SessionSearchResult,
@@ -29,6 +30,8 @@ import type {
   SessionStatsSummary,
   SessionSortBy,
   SessionSource,
+  ProjectTagEntry,
+  TagListOptions,
   SessionTraceEvent,
   TokenUsage,
   TokenUsageEvent,
@@ -260,6 +263,7 @@ export class SessionStore {
         );
 
       this.db.prepare("DELETE FROM messages WHERE session_key = ?").run(session.sessionKey);
+      this.db.prepare("DELETE FROM message_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM trace_events WHERE session_key = ?").run(session.sessionKey);
       this.db.prepare("DELETE FROM session_fts WHERE session_key = ?").run(session.sessionKey);
@@ -269,6 +273,18 @@ export class SessionStore {
       );
       for (const message of messages) {
         insertMessage.run(session.sessionKey, message.index, message.role, message.content, message.timestamp);
+      }
+
+      const insertMessageEvent = this.db.prepare(
+        "INSERT INTO message_events (session_key, message_index, timestamp) VALUES (?, ?, ?)",
+      );
+      for (const message of messages) {
+        const timestamp = Date.parse(message.timestamp);
+        insertMessageEvent.run(
+          session.sessionKey,
+          message.index,
+          Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : 0,
+        );
       }
 
       const insertTokenEvent = this.db.prepare(
@@ -390,8 +406,14 @@ export class SessionStore {
       .all(environmentId) as Array<{ filePath: string; fileMtimeMs: number; fileSize: number; indexedAt: number }>;
   }
 
-  upsertIndexedSessionSummary(session: IndexedSession, messageCount: number): void {
-    const tokenUsage = normalizeTokenUsage(session.tokenUsage);
+  upsertIndexedSessionSummary(
+    session: IndexedSession,
+    messageCount: number,
+    tokenEvents?: TokenUsageEvent[],
+    messageEvents?: SessionMessageEvent[],
+  ): void {
+    const normalizedTokenEvents = tokenEvents?.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
+    const tokenUsage = normalizedTokenEvents === undefined ? normalizeTokenUsage(session.tokenUsage) : tokenUsageFromEvents(normalizedTokenEvents);
     const indexedAt = Date.now();
     this.transaction(() => {
       this.db
@@ -447,6 +469,41 @@ export class SessionStore {
           tokenUsage.totalTokens,
           indexedAt,
         );
+
+      if (normalizedTokenEvents !== undefined) {
+        this.db.prepare("DELETE FROM token_events WHERE session_key = ?").run(session.sessionKey);
+        const insertTokenEvent = this.db.prepare(
+          `
+          INSERT INTO token_events (
+            session_key, dedupe_key, timestamp, input_tokens, output_tokens,
+            cached_input_tokens, reasoning_output_tokens, total_tokens
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        );
+        for (const event of normalizedTokenEvents) {
+          insertTokenEvent.run(
+            session.sessionKey,
+            event.dedupeKey,
+            event.timestamp,
+            event.inputTokens,
+            event.outputTokens,
+            event.cachedInputTokens,
+            event.reasoningOutputTokens,
+            event.totalTokens,
+          );
+        }
+      }
+
+      if (messageEvents !== undefined) {
+        this.db.prepare("DELETE FROM message_events WHERE session_key = ?").run(session.sessionKey);
+        const insertMessageEvent = this.db.prepare(
+          "INSERT INTO message_events (session_key, message_index, timestamp) VALUES (?, ?, ?)",
+        );
+        for (const event of messageEvents) {
+          insertMessageEvent.run(session.sessionKey, event.index, event.timestamp);
+        }
+      }
 
       this.refreshFtsForSession(session.sessionKey);
       const branchTag = branchTagName(session.gitBranch);
@@ -545,10 +602,67 @@ export class SessionStore {
     this.db.prepare("DELETE FROM tags WHERE name = ?").run(tagName.trim());
   }
 
-  listTags(): string[] {
-    return (this.db.prepare("SELECT name FROM tags ORDER BY lower(name)").all() as Array<{ name: string }>).map(
-      (row) => row.name,
-    );
+  listTags(options: TagListOptions = {}): string[] {
+    const conditions: string[] = [];
+    const args: SQLInputValue[] = [];
+    if (options.environmentId && options.environmentId !== "all") {
+      conditions.push("sessions.environment_id = ?");
+      args.push(options.environmentId);
+    }
+    if (options.projectPath) {
+      conditions.push("sessions.project_path = ?");
+      args.push(options.projectPath);
+    }
+    if (options.excludeSubagents) {
+      conditions.push("sessions.is_subagent = 0");
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `
+        SELECT DISTINCT tags.name AS name
+        FROM tags
+        INNER JOIN session_tags ON session_tags.tag_id = tags.id
+        INNER JOIN sessions ON sessions.session_key = session_tags.session_key
+        ${where}
+        ORDER BY lower(tags.name)
+      `,
+      )
+      .all(...args) as Array<{ name: string }>;
+    return rows.map((row) => row.name);
+  }
+
+  listTagsByProject(options: { excludeSubagents?: boolean } = {}): ProjectTagEntry[] {
+    const subagentPredicate = options.excludeSubagents ? "AND sessions.is_subagent = 0" : "";
+    const rows = this.db
+      .prepare(
+        `
+        SELECT
+          sessions.environment_id AS environment_id,
+          sessions.project_path AS project_path,
+          tags.name AS tag_name
+        FROM tags
+        INNER JOIN session_tags ON session_tags.tag_id = tags.id
+        INNER JOIN sessions ON sessions.session_key = session_tags.session_key
+        WHERE trim(sessions.project_path) != ''
+          ${subagentPredicate}
+        ORDER BY sessions.environment_id, sessions.project_path, lower(tags.name)
+      `,
+      )
+      .all() as Array<{ environment_id: string; project_path: string; tag_name: string }>;
+    const map = new Map<string, ProjectTagEntry>();
+    for (const row of rows) {
+      const key = `${row.environment_id}\0${row.project_path}`;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { environmentId: row.environment_id, projectPath: row.project_path, tags: [] };
+        map.set(key, entry);
+      }
+      if (!entry.tags.includes(row.tag_name)) {
+        entry.tags.push(row.tag_name);
+      }
+    }
+    return [...map.values()];
   }
 
   listEnvironments(): SessionEnvironment[] {
@@ -686,6 +800,10 @@ export class SessionStore {
 
   listProjects(options: ProjectQueryOptions = {}): ProjectSummary[] {
     const subagentPredicate = options.excludeSubagents ? "AND sessions.is_subagent = 0" : "";
+    const environmentPredicate =
+      options.environmentId && options.environmentId !== "all" ? "AND sessions.environment_id = ?" : "";
+    const environmentArgs =
+      options.environmentId && options.environmentId !== "all" ? [options.environmentId] : [];
     const rows = this.db
       .prepare(
         `
@@ -700,10 +818,11 @@ export class SessionStore {
         LEFT JOIN environments ON environments.id = sessions.environment_id
         WHERE trim(project_path) != ''
           ${subagentPredicate}
+          ${environmentPredicate}
         GROUP BY sessions.project_path, sessions.environment_id
       `,
       )
-      .all() as Array<{
+      .all(...environmentArgs) as Array<{
         project_path: string;
         environment_id: string;
         environment_label: string | null;
@@ -1156,6 +1275,7 @@ export class SessionStore {
   clearSearchIndex(): void {
     this.transaction(() => {
       this.db.prepare("DELETE FROM messages").run();
+      this.db.prepare("DELETE FROM message_events").run();
       this.db.prepare("DELETE FROM token_events").run();
       this.db.prepare("DELETE FROM trace_events").run();
       this.db.prepare("DELETE FROM session_fts").run();
@@ -1274,6 +1394,14 @@ export class SessionStore {
         FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS message_events (
+        session_key TEXT NOT NULL,
+        message_index INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL,
+        PRIMARY KEY (session_key, message_index),
+        FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS token_events (
         session_key TEXT NOT NULL,
         dedupe_key TEXT NOT NULL,
@@ -1381,6 +1509,8 @@ export class SessionStore {
         ON session_tags(tag_id, session_key);
       CREATE INDEX IF NOT EXISTS idx_token_events_timestamp
         ON token_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_message_events_timestamp
+        ON message_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_token_events_dedupe
         ON token_events(dedupe_key, total_tokens, timestamp);
       CREATE INDEX IF NOT EXISTS idx_trace_events_session
@@ -1423,6 +1553,14 @@ export class SessionStore {
         ON sessions(environment_id, source);
       DROP INDEX IF EXISTS idx_session_migrations_source_session_key;
       DROP INDEX IF EXISTS idx_session_migrations_created_at_desc;
+    `);
+    this.db.exec(`
+      INSERT OR IGNORE INTO message_events (session_key, message_index, timestamp)
+      SELECT
+        session_key,
+        message_index,
+        COALESCE(CAST(strftime('%s', timestamp) AS INTEGER) * 1000, 0)
+      FROM messages;
     `);
     this.ensureLocalEnvironment();
   }
@@ -1538,15 +1676,14 @@ export class SessionStore {
         .all() as Array<{ source: SessionSource; session_count: number }>;
     }
 
-    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
     return this.db
       .prepare(
         `
         WITH active AS (
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
-          JOIN messages ON messages.session_key = sessions.session_key
-          WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
+          JOIN message_events ON message_events.session_key = sessions.session_key
+          WHERE message_events.timestamp >= ? AND message_events.timestamp <= ? ${subagentAnd}
           UNION
           SELECT sessions.source AS source, sessions.session_key AS session_key
           FROM sessions
@@ -1579,14 +1716,13 @@ export class SessionStore {
         .all() as Array<{ source: SessionSource; message_count: number }>;
     }
 
-    const messageTimestampMs = "CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000";
     return this.db
       .prepare(
         `
         SELECT sessions.source AS source, COUNT(*) AS message_count
-        FROM messages
-        JOIN sessions ON sessions.session_key = messages.session_key
-        WHERE ${messageTimestampMs} >= ? AND ${messageTimestampMs} <= ? ${subagentAnd}
+        FROM message_events
+        JOIN sessions ON sessions.session_key = message_events.session_key
+        WHERE message_events.timestamp >= ? AND message_events.timestamp <= ? ${subagentAnd}
         GROUP BY sessions.source
         ORDER BY sessions.source
       `,

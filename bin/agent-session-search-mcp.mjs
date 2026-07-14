@@ -14,6 +14,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const MAX_RESULTS = 50;
 const MAX_MESSAGES = 200;
 
+export function resolveAppVersion(packageUrl = new URL("../package.json", import.meta.url)) {
+  try {
+    const value = JSON.parse(readFileSync(fileURLToPath(packageUrl), "utf8"));
+    return typeof value.version === "string" && value.version ? value.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 // Mirrors src/core/app-paths.ts (this file runs standalone, outside the bundle).
 export function resolveDbPath(env = process.env, home = homedir()) {
   const override = env.AGENT_SESSION_SEARCH_DB && env.AGENT_SESSION_SEARCH_DB.trim();
@@ -359,7 +368,7 @@ async function runServer() {
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
-  const server = new McpServer({ name: "agent-session-search", version: "0.1.0" });
+  const server = new McpServer({ name: "agent-session-search", version: resolveAppVersion() });
   let migrateTargetSchema = null;
   try {
     migrateTargetSchema = await migrationTargetSchema(z);

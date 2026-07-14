@@ -2,7 +2,16 @@ import { execFile, type ExecFileOptions } from "node:child_process";
 import { loadRemoteSessionPayloads, type RemoteSessionFilePayload } from "./remote-session-loader";
 import type { SessionStore } from "./session-store";
 import { buildSshArgs } from "./ssh-config";
-import type { IndexedSession, SessionEnvironment, SessionMessage, SessionSearchResult, SessionSource, TokenUsage } from "./types";
+import type {
+  IndexedSession,
+  SessionEnvironment,
+  SessionMessage,
+  SessionMessageEvent,
+  SessionSearchResult,
+  SessionSource,
+  TokenUsage,
+  TokenUsageEvent,
+} from "./types";
 
 export interface RemoteSyncStatus {
   environmentId: string;
@@ -27,6 +36,8 @@ export interface RemoteSessionSummaryPayload {
   messageCount: number;
   gitBranch?: string | null;
   tokenUsage?: TokenUsage;
+  tokenEvents?: TokenUsageEvent[];
+  messageEvents?: SessionMessageEvent[];
 }
 
 export interface RemoteSessionFileFetchOptions {
@@ -73,6 +84,10 @@ def meaningful_user(text):
   if re.match(r"^\[Request interrupted by user(?: for tool use)?\]$", value):
     return False
   if re.match(r"^\[Image:[^\]]*\]$", value):
+    return False
+  if re.match(r"^The beginning of the above subagent result is already visible", value):
+    return False
+  if re.match(r"^<system_notification>", value):
     return False
   return True
 
@@ -130,10 +145,33 @@ def _tok_add(total, nxt):
   total["reasoningOutputTokens"] += nxt["reasoningOutputTokens"]
   total["totalTokens"] += nxt["totalTokens"]
 
-def _tok_put(entries, key, usage):
+def _tok_timestamp(value):
+  if isinstance(value, (int, float)) and not isinstance(value, bool):
+    return int(value)
+  if isinstance(value, str):
+    try:
+      from datetime import datetime
+      return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except Exception:
+      return 0
+  return 0
+
+def _tok_event(timestamp, key, usage):
+  event = dict(usage)
+  event["timestamp"] = timestamp
+  event["dedupeKey"] = key
+  return event
+
+def _tok_put(entries, key, event):
   existing = entries.get(key)
-  if existing is None or usage["totalTokens"] > existing["totalTokens"]:
-    entries[key] = usage
+  if existing is None or event["totalTokens"] > existing["totalTokens"]:
+    entries[key] = event
+
+def _tok_total(events):
+  total = _tok_empty()
+  for event in events:
+    _tok_add(total, event)
+  return total
 
 def _tok_normalize_codex(usage):
   cached = _tok_num(usage.get("cached_input_tokens")) + _tok_num(usage.get("cache_read_input_tokens"))
@@ -170,7 +208,7 @@ def _tok_cumulative_delta(current, previous_totals):
   return delta
 
 def new_codex_token_state():
-  return {"previous": [], "cumulative": _tok_empty(), "has_cumulative": False, "entries": {}, "model": ""}
+  return {"previous": [], "cumulative_entries": {}, "entries": {}, "model": ""}
 
 def accumulate_codex_tokens(state, row):
   payload = row.get("payload")
@@ -185,26 +223,28 @@ def accumulate_codex_tokens(state, row):
   info = payload.get("info")
   info = info if isinstance(info, dict) else {}
   model = info.get("model") if isinstance(info.get("model"), str) and info.get("model") else state["model"]
+  timestamp = _tok_timestamp(row.get("timestamp"))
   total_usage = info.get("total_token_usage")
   if isinstance(total_usage, dict):
     current = _tok_normalize_codex(total_usage)
     delta = _tok_cumulative_delta(current, state["previous"])
     if delta["totalTokens"] > 0:
-      state["has_cumulative"] = True
-      _tok_add(state["cumulative"], delta)
+      key = "codex-total:%s:%s:%s:%s:%s:%s" % (model, timestamp, current["inputTokens"], current["outputTokens"], current["cachedInputTokens"], current["reasoningOutputTokens"])
+      _tok_put(state["cumulative_entries"], key, _tok_event(timestamp, key, delta))
   last_usage = info.get("last_token_usage")
   if isinstance(last_usage, dict):
     last = _tok_normalize_codex(last_usage)
-    key = "codex:%s:%s:%s:%s:%s" % (model, last["inputTokens"], last["outputTokens"], last["cachedInputTokens"], last["reasoningOutputTokens"])
-    _tok_put(state["entries"], key, last)
+    total_input = _tok_num(total_usage.get("input_tokens")) if isinstance(total_usage, dict) else 0
+    total_output = _tok_num(total_usage.get("output_tokens")) if isinstance(total_usage, dict) else 0
+    key = "codex:%s:%s:%s:%s:%s:%s:%s" % (model, last["inputTokens"], last["outputTokens"], last["cachedInputTokens"], last["reasoningOutputTokens"], total_input, total_output)
+    _tok_put(state["entries"], key, _tok_event(timestamp, key, last))
+
+def finalize_codex_events(state):
+  entries = state["cumulative_entries"] if state["cumulative_entries"] else state["entries"]
+  return list(entries.values())
 
 def finalize_codex_tokens(state):
-  if state["has_cumulative"]:
-    return state["cumulative"]
-  total = _tok_empty()
-  for usage in state["entries"].values():
-    _tok_add(total, usage)
-  return total
+  return _tok_total(finalize_codex_events(state))
 
 def new_claude_token_state():
   return {"entries": {}, "index": 0}
@@ -228,16 +268,16 @@ def accumulate_claude_tokens(state, row):
   elif isinstance(uid, str) and uid:
     key = uid
   else:
-    key = "%d:%s" % (index, json.dumps(usage, sort_keys=True))
+    key = "%d:%s" % (index, json.dumps(usage, ensure_ascii=False, separators=(",", ":")))
   if not key.startswith("claude-code:"):
     key = "claude-code:" + key
-  _tok_put(state["entries"], key, entry)
+  _tok_put(state["entries"], key, _tok_event(_tok_timestamp(row.get("timestamp")), key, entry))
+
+def finalize_claude_events(state):
+  return list(state["entries"].values())
 
 def finalize_claude_tokens(state):
-  total = _tok_empty()
-  for usage in state["entries"].values():
-    _tok_add(total, usage)
-  return total`;
+  return _tok_total(finalize_claude_events(state))`;
 
 export async function syncRemoteEnvironment(
   store: SessionStore,
@@ -250,7 +290,12 @@ export async function syncRemoteEnvironment(
     const output = await runSsh(environment, REMOTE_COLLECTOR_COMMAND);
     const { payloads, summaries } = decodeRemoteSyncOutput(output);
     for (const summary of summaries) {
-      store.upsertIndexedSessionSummary(remoteSummaryToIndexedSession(environment, summary), summary.messageCount);
+      store.upsertIndexedSessionSummary(
+        remoteSummaryToIndexedSession(environment, summary),
+        summary.messageCount,
+        summary.tokenEvents,
+        summary.messageEvents,
+      );
     }
     const loaded = loadRemoteSessionPayloads(environment, payloads);
     for (const item of loaded) store.upsertIndexedSession(item.session, item.messages, item.tokenEvents, item.traceEvents);
@@ -565,7 +610,23 @@ function parseRemoteSummaryRecord(
     messageCount,
     gitBranch: stringField(parsed, "gitBranch") || null,
     tokenUsage: tokenUsageField(parsed, "tokenUsage"),
+    tokenEvents: tokenEventsField(parsed, "tokenEvents", lineNumber),
+    messageEvents: messageEventsField(parsed, "messageEvents", lineNumber),
   };
+}
+
+function messageEventsField(value: Record<string, unknown>, key: string, lineNumber: number): SessionMessageEvent[] | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new Error(`Invalid remote payload at line ${lineNumber}: invalid messageEvents`);
+  return raw.map((item, index) => {
+    const prefix = `Invalid remote payload at line ${lineNumber}: invalid messageEvents[${index}]`;
+    if (!isRecord(item)) throw new Error(prefix);
+    return {
+      index: nonNegativeIntegerField(item, "index", prefix),
+      timestamp: nonNegativeIntegerField(item, "timestamp", prefix),
+    };
+  });
 }
 
 function tokenUsageField(value: Record<string, unknown>, key: string): TokenUsage | undefined {
@@ -578,6 +639,50 @@ function tokenUsageField(value: Record<string, unknown>, key: string): TokenUsag
     reasoningOutputTokens: numberField(raw, "reasoningOutputTokens"),
     totalTokens: numberField(raw, "totalTokens"),
   };
+}
+
+function tokenEventsField(value: Record<string, unknown>, key: string, lineNumber: number): TokenUsageEvent[] | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new Error(`Invalid remote payload at line ${lineNumber}: invalid tokenEvents`);
+  return raw.map((item, index) => parseTokenEvent(item, lineNumber, index));
+}
+
+function parseTokenEvent(value: unknown, lineNumber: number, index: number): TokenUsageEvent {
+  const prefix = `Invalid remote payload at line ${lineNumber}: invalid tokenEvents[${index}]`;
+  if (!isRecord(value)) throw new Error(prefix);
+  const timestamp = nonNegativeFiniteField(value, "timestamp", prefix);
+  const dedupeKey = stringField(value, "dedupeKey").trim();
+  if (!dedupeKey) throw new Error(`${prefix}.dedupeKey`);
+  const inputTokens = nonNegativeFiniteField(value, "inputTokens", prefix);
+  const outputTokens = nonNegativeFiniteField(value, "outputTokens", prefix);
+  const cachedInputTokens = nonNegativeFiniteField(value, "cachedInputTokens", prefix);
+  const reasoningOutputTokens = nonNegativeFiniteField(value, "reasoningOutputTokens", prefix);
+  const totalTokens = nonNegativeFiniteField(value, "totalTokens", prefix);
+  if (totalTokens !== inputTokens + outputTokens + cachedInputTokens + reasoningOutputTokens) {
+    throw new Error(`${prefix}.totalTokens`);
+  }
+  return {
+    timestamp,
+    dedupeKey,
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    reasoningOutputTokens,
+    totalTokens,
+  };
+}
+
+function nonNegativeFiniteField(value: Record<string, unknown>, key: string, errorPrefix: string): number {
+  const field = value[key];
+  if (typeof field !== "number" || !Number.isFinite(field) || field < 0) throw new Error(`${errorPrefix}.${key}`);
+  return field;
+}
+
+function nonNegativeIntegerField(value: Record<string, unknown>, key: string, errorPrefix: string): number {
+  const field = value[key];
+  if (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0) throw new Error(`${errorPrefix}.${key}`);
+  return field;
 }
 
 function stringField(value: Record<string, unknown>, key: string): string {
@@ -663,6 +768,7 @@ def emit_codex_summary(path, stat, titles):
   timestamp = int(stat.st_mtime * 1000)
   first_question = ""
   message_count = 0
+  message_events = []
   git_branch = ""
   token_state = new_codex_token_state()
   try:
@@ -692,6 +798,7 @@ def emit_codex_summary(path, stat, titles):
         accumulate_codex_tokens(token_state, row)
         parsed = parse_message(row, "codex")
         if parsed:
+          message_events.append({"index": message_count, "timestamp": _tok_timestamp(parsed["timestamp"])})
           message_count += 1
           if parsed["role"] == "user" and not first_question:
             first_question = parsed["content"]
@@ -709,8 +816,10 @@ def emit_codex_summary(path, stat, titles):
     "originalTitle": indexed_title or title_from(first_question) or raw_id,
     "firstQuestion": first_question,
     "messageCount": message_count,
+    "messageEvents": message_events,
     "gitBranch": git_branch,
     "tokenUsage": finalize_codex_tokens(token_state),
+    "tokenEvents": finalize_codex_events(token_state),
   })
 
 def emit_claude_summary(path, stat, index):
@@ -720,6 +829,7 @@ def emit_claude_summary(path, stat, index):
   timestamp = int(meta.get("startedAt") or stat.st_mtime * 1000)
   first_question = ""
   message_count = 0
+  message_events = []
   git_branch = ""
   token_state = new_claude_token_state()
   try:
@@ -738,6 +848,7 @@ def emit_claude_summary(path, stat, index):
         accumulate_claude_tokens(token_state, row)
         parsed = parse_message(row, "claude")
         if parsed:
+          message_events.append({"index": message_count, "timestamp": _tok_timestamp(parsed["timestamp"])})
           message_count += 1
           if parsed["role"] == "user" and not first_question:
             first_question = parsed["content"]
@@ -754,8 +865,10 @@ def emit_claude_summary(path, stat, index):
     "originalTitle": title_from(first_question) or raw_id,
     "firstQuestion": first_question,
     "messageCount": message_count,
+    "messageEvents": message_events,
     "gitBranch": git_branch,
     "tokenUsage": finalize_claude_tokens(token_state),
+    "tokenEvents": finalize_claude_events(token_state),
   })
 
 candidates = []

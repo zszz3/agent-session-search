@@ -6,6 +6,7 @@ import {
   ArrowRightLeft,
   Activity,
   CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clipboard,
@@ -21,6 +22,7 @@ import {
   Gauge,
   GitBranch,
   History,
+  Info,
   KeyRound,
   Keyboard,
   Languages,
@@ -41,10 +43,12 @@ import {
   Tag,
   Terminal as TerminalIcon,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import type { ApiConfig, ClaudeApiConfig } from "../../core/api-config";
 import type { IndexStatus } from "../../core/indexer";
+import type { AppUpdateStatus } from "../../core/app-update-types";
 import { formatRelativeTime } from "../../core/format-session";
 import { LIVE_SESSION_REFRESH_INTERVAL_MS, QUOTA_REFRESH_INTERVAL_MS } from "../../core/refresh-policy";
 import type { AppSettings, AppSettingsUpdate } from "../../core/platform";
@@ -62,6 +66,7 @@ import type {
   EnvironmentUpsertInput,
   LiveSessionSnapshot,
   ProjectSummary,
+  ProjectTagEntry,
   SearchOptions,
   SessionEnvironment,
   SessionMigrationProgress,
@@ -120,6 +125,7 @@ import {
   environmentBadgeLabel,
   environmentBadgeTitle,
   isBranchTag,
+  displayTagName,
   isRemoteSession,
   liveStatusFilterLabel,
   localizedLiveStateLabel,
@@ -136,6 +142,7 @@ import {
   statsPeriodLabel,
   supportsResumeSource,
   unsupportedMigrationTitle,
+  usageStatsDisplayRows,
   migrationAgentLabel,
   migrationTargetsForSession,
 } from "./session-ui";
@@ -167,6 +174,7 @@ const DEFAULT_MIGRATION_TARGET_SETTINGS = {
 } satisfies MigrationTargetSettings;
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
+type SettingsSection = "terminal" | "shortcut" | "connections" | "sources" | "usage" | "ai" | "remote" | "skills" | "appearance" | "about";
 type PendingSourceKey = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
 type OptionalSourceSettingKey = keyof Pick<
   AppSettings,
@@ -453,6 +461,7 @@ export function App(): ReactElement {
   const [language, setLanguage] = useState<LanguageMode>(() => readInitialLanguage());
   const [sidebarSections, setSidebarSections] = useState<SidebarSectionsState>(() => loadInitialSidebarSections());
   const [collapsedProjectGroups, setCollapsedProjectGroups] = useState<Set<string>>(() => loadCollapsedProjectGroups());
+  const [collapsedTreeProjects, setCollapsedTreeProjects] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<SearchOptions["source"]>("all");
   const [environmentId, setEnvironmentId] = useState<string | "all">("all");
@@ -468,6 +477,7 @@ export function App(): ReactElement {
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectTags, setProjectTags] = useState<ProjectTagEntry[]>([]);
   const [environments, setEnvironments] = useState<SessionEnvironment[]>([]);
   const [stats, setStats] = useState<SessionStats>(EMPTY_STATS);
   const [statsPeriod, setStatsPeriod] = useState<SessionStatsPeriod>("today");
@@ -498,6 +508,10 @@ export function App(): ReactElement {
   const [summarizing, setSummarizing] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("terminal");
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [appUpdateBusy, setAppUpdateBusy] = useState(false);
+  const [appUpdateError, setAppUpdateError] = useState<string | null>(null);
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
@@ -531,6 +545,12 @@ export function App(): ReactElement {
   const statsLoadSeqRef = useRef(0);
   const detailLoadSeqRef = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const environmentIdRef = useRef(environmentId);
+  const projectPathRef = useRef(projectPath);
+  const projectEnvironmentIdRef = useRef(projectEnvironmentId);
+  environmentIdRef.current = environmentId;
+  projectPathRef.current = projectPath;
+  projectEnvironmentIdRef.current = projectEnvironmentId;
   const t = useCallback((en: string, zh: string) => localize(language, en, zh), [language]);
   const searchScopeKey = useMemo(
     () => JSON.stringify([query, source, environmentId, tag ?? "", projectPath ?? "", projectEnvironmentId ?? "", visibility, dateRange, liveStatus]),
@@ -579,15 +599,17 @@ export function App(): ReactElement {
 
   const loadSidebarMetadata = useCallback(async () => {
     const requestId = ++metadataLoadSeqRef.current;
-    const [nextTags, nextProjects, nextEnvironments] = await Promise.all([
+    const [nextTags, nextProjects, nextEnvironments, nextProjectTags] = await Promise.all([
       window.sessionSearch.listTags(),
       window.sessionSearch.listProjects(),
       window.sessionSearch.listEnvironments(),
+      window.sessionSearch.listTagsByProject(),
     ]);
     if (requestId !== metadataLoadSeqRef.current) return;
     setTags(nextTags);
     setProjects(nextProjects);
     setEnvironments(nextEnvironments);
+    setProjectTags(nextProjectTags);
   }, []);
 
   const loadStats = useCallback(async () => {
@@ -911,6 +933,29 @@ export function App(): ReactElement {
     }
   }, [environmentId, environments, projectEnvironmentId]);
 
+  useEffect(() => {
+    if (tag && tags.length > 0 && !tags.includes(tag)) {
+      setTag(undefined);
+    }
+  }, [tag, tags]);
+
+  useEffect(() => {
+    if (
+      projectPath &&
+      projects.length > 0 &&
+      !projects.some((project) =>
+        projectEnvironmentId
+          ? project.path === projectPath && project.environmentId === projectEnvironmentId
+          : project.path === projectPath,
+      )
+    ) {
+      setProjectPath(undefined);
+      setProjectEnvironmentId(undefined);
+      projectPathRef.current = undefined;
+      projectEnvironmentIdRef.current = undefined;
+    }
+  }, [projectPath, projectEnvironmentId, projects]);
+
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -938,6 +983,15 @@ export function App(): ReactElement {
     });
   }, []);
 
+  const toggleTreeProject = useCallback((projectKey: string): void => {
+    setCollapsedTreeProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectKey)) next.delete(projectKey);
+      else next.add(projectKey);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const offIndex = window.sessionSearch.onIndexStatus((nextStatus) => {
       setIndexStatus(nextStatus);
@@ -951,8 +1005,10 @@ export function App(): ReactElement {
     const offOpenSettings = window.sessionSearch.onOpenSettings(() => {
       setSkillsOpen(false);
       setApiConfigOpen(false);
+      setSettingsInitialSection("terminal");
       setSettingsOpen(true);
     });
+    const offAppUpdate = window.sessionSearch.onAppUpdateStatus(setAppUpdateStatus);
     const offEnvironments = window.sessionSearch.onEnvironmentsUpdated((nextEnvironments) => {
       setEnvironments(nextEnvironments);
       setEnvironmentId((current) =>
@@ -971,9 +1027,14 @@ export function App(): ReactElement {
       offIndex();
       offFocus();
       offOpenSettings();
+      offAppUpdate();
       offEnvironments();
     };
   }, [load, loadSidebarMetadata, loadStats]);
+
+  useEffect(() => {
+    void window.sessionSearch.getAppUpdateStatus(false).then(setAppUpdateStatus).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     return window.sessionSearch.onMigrationProgress((progress) => {
@@ -998,6 +1059,7 @@ export function App(): ReactElement {
         setContextMenu(null);
         setSkillsOpen(false);
         setApiConfigOpen(false);
+        setSettingsInitialSection("terminal");
         setSettingsOpen(true);
         return;
       }
@@ -1100,24 +1162,44 @@ export function App(): ReactElement {
     });
   }, [appSettings, pendingPersonalSources]);
   const selectedProject = useMemo(
-    () => projects.find((project) => project.path === projectPath && project.environmentId === projectEnvironmentId) || null,
+    () =>
+      projects.find((project) => project.path === projectPath && project.environmentId === projectEnvironmentId) ||
+      (projectPath ? projects.find((project) => project.path === projectPath) || null : null),
     [projects, projectPath, projectEnvironmentId],
   );
-  const groupedProjects = useMemo(() => {
-    const groups = new Map<string, { environment: SessionEnvironment | null; projects: ProjectSummary[] }>();
-    for (const project of projects) {
-      const environment = environments.find((env) => env.id === project.environmentId) ?? null;
-      const key = project.environmentId;
-      const group = groups.get(key);
-      if (group) group.projects.push(project);
-      else groups.set(key, { environment, projects: [project] });
+  const sidebarTree = useMemo(() => {
+    // Merge by project path so the same project on local + SSH appears once.
+    // Tags are the union of all environments for that path, deduplicated.
+    const tagSetByPath = new Map<string, Set<string>>();
+    for (const entry of projectTags) {
+      let set = tagSetByPath.get(entry.projectPath);
+      if (!set) {
+        set = new Set<string>();
+        tagSetByPath.set(entry.projectPath, set);
+      }
+      for (const tagName of entry.tags) set.add(tagName);
     }
-    return [...groups.values()].sort(
-      (a, b) =>
-        (a.environment ? 0 : 1) - (b.environment ? 0 : 1) ||
-        (a.environment?.label ?? "").localeCompare(b.environment?.label ?? ""),
+    const byPath = new Map<string, { path: string; label: string; tags: string[]; environmentIds: string[]; lastActivityAt: number }>();
+    for (const project of projects) {
+      const existing = byPath.get(project.path);
+      const tags = [...(tagSetByPath.get(project.path) ?? [])].sort((a, b) => a.localeCompare(b));
+      if (existing) {
+        existing.environmentIds.push(project.environmentId);
+        if (project.lastActivityAt > existing.lastActivityAt) existing.lastActivityAt = project.lastActivityAt;
+      } else {
+        byPath.set(project.path, {
+          path: project.path,
+          label: project.label,
+          tags,
+          environmentIds: [project.environmentId],
+          lastActivityAt: project.lastActivityAt,
+        });
+      }
+    }
+    return [...byPath.values()].sort(
+      (a, b) => b.lastActivityAt - a.lastActivityAt || a.label.localeCompare(b.label),
     );
-  }, [projects, environments]);
+  }, [projects, projectTags]);
   const selectedEnvironment = useMemo(
     () => (environmentId === "all" ? null : environments.find((environment) => environment.id === environmentId) ?? null),
     [environmentId, environments],
@@ -1125,7 +1207,7 @@ export function App(): ReactElement {
   const searchPlaceholder = projectPath
     ? t(`Search within ${selectedProject?.label || "project"}`, `在 ${selectedProject?.label || "项目"} 中搜索`)
     : tag
-      ? t(`Search within #${tag}`, `在 #${tag} 中搜索`)
+      ? t(`Search within ${displayTagName(tag)}`, `在 ${displayTagName(tag)} 中搜索`)
       : t("Search titles, first questions, full text, paths, or ids", "搜索标题、首个问题、全文、路径或 ID");
 
   useEffect(() => {
@@ -1141,15 +1223,22 @@ export function App(): ReactElement {
   function clearProjectFilter(): void {
     setProjectPath(undefined);
     setProjectEnvironmentId(undefined);
+    projectPathRef.current = undefined;
+    projectEnvironmentIdRef.current = undefined;
   }
 
   function selectEnvironment(nextEnvironmentId: string | "all"): void {
+    if (nextEnvironmentId === environmentId) return;
     setEnvironmentId(nextEnvironmentId);
+    environmentIdRef.current = nextEnvironmentId;
   }
 
   function selectProject(project: ProjectSummary): void {
+    if (project.path === projectPath && project.environmentId === projectEnvironmentId) return;
     setProjectPath(project.path);
     setProjectEnvironmentId(project.environmentId);
+    projectPathRef.current = project.path;
+    projectEnvironmentIdRef.current = project.environmentId;
   }
 
   async function openDetail(session: SessionSearchResult, matchHit?: SessionMatchHit): Promise<void> {
@@ -1511,6 +1600,29 @@ export function App(): ReactElement {
     await updateSettings({ globalShortcut });
   }
 
+  async function checkAppUpdate(): Promise<void> {
+    setAppUpdateBusy(true);
+    setAppUpdateError(null);
+    try {
+      setAppUpdateStatus(await window.sessionSearch.getAppUpdateStatus(true));
+    } catch (error) {
+      setAppUpdateError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAppUpdateBusy(false);
+    }
+  }
+
+  async function installAppUpdate(): Promise<void> {
+    setAppUpdateBusy(true);
+    setAppUpdateError(null);
+    try {
+      await window.sessionSearch.installAppUpdate();
+    } catch (error) {
+      setAppUpdateError(error instanceof Error ? error.message : String(error));
+      setAppUpdateBusy(false);
+    }
+  }
+
   async function updateSettings(next: AppSettingsUpdate): Promise<void> {
     const newlyEnabledSources = OPTIONAL_SOURCE_SETTINGS.filter((item) => next[item.key] === true && !appSettings?.[item.key]);
     const quotaVisibilityChanged =
@@ -1756,9 +1868,9 @@ export function App(): ReactElement {
             </span>
           </div>
           <div className="stats-breakdown">
-            {stats.bySource.map((item) => (
-              <div key={item.source}>
-                <span>{SOURCE_LABEL[item.source]}</span>
+            {usageStatsDisplayRows(stats.bySource).map((item) => (
+              <div key={item.key}>
+                <span>{item.label}</span>
                 <em>
                   {formatCompactNumber(item.messageCount)} {t("msg", "条")} · {formatTokenCount(item.totalTokens)}
                 </em>
@@ -1776,27 +1888,6 @@ export function App(): ReactElement {
           onRefresh={() => void loadQuotas("manual")}
           language={language}
         />
-
-        <SidebarSectionHeader title={t("Views", "视图")} expanded={sidebarSections.views} onToggle={() => toggleSidebarSectionById("views")} />
-        {sidebarSections.views ? (
-          <nav className="nav-group">
-            <button className={visibility === "default" ? "active" : ""} onClick={() => setVisibility("default")}>
-              {t("All", "全部")}
-            </button>
-            <button className={visibility === "favorites" ? "active" : ""} onClick={() => setVisibility("favorites")}>
-              <Star size={14} />
-              {t("Favorites", "收藏")}
-            </button>
-            <button className={visibility === "pinned" ? "active" : ""} onClick={() => setVisibility("pinned")}>
-              <Pin size={14} />
-              {t("Pinned", "置顶")}
-            </button>
-            <button className={visibility === "hidden" ? "active" : ""} onClick={() => setVisibility("hidden")}>
-              <EyeOff size={14} />
-              {t("Hidden", "隐藏")}
-            </button>
-          </nav>
-        ) : null}
 
         <SidebarSectionHeader title={t("Environments", "环境")} expanded={sidebarSections.environments} onToggle={() => toggleSidebarSectionById("environments")} />
         {sidebarSections.environments ? (
@@ -1819,6 +1910,93 @@ export function App(): ReactElement {
           </nav>
         ) : null}
 
+        <SidebarSectionHeader title={t("Projects", "项目")} expanded={sidebarSections.projects} onToggle={() => toggleSidebarSectionById("projects")} />
+        {sidebarSections.projects ? (
+          <nav className="sidebar-tree">
+           <button
+             className={`tree-row tree-root ${!projectPath && !tag ? "active" : ""}`}
+              onClick={() => { selectEnvironment("all"); clearProjectFilter(); setTag(undefined); }}
+           >
+              <span>{t("All Sessions", "全部会话")}</span>
+            </button>
+           {sidebarTree.map((project) => {
+             const projectKey = project.path;
+              const projExpanded = collapsedTreeProjects.has(projectKey);
+              const projCollapsed = !projExpanded;
+              const projActive = projectPath === project.path && !tag;
+              return (
+                <div key={projectKey} className="tree-group">
+                  <div className="tree-row tree-proj-row">
+                    {project.tags.length > 0 ? (
+                      <button
+                        className="tree-chevron"
+                        onClick={() => toggleTreeProject(projectKey)}
+                        aria-expanded={projExpanded}
+                        aria-label={projCollapsed ? t("Expand", "展开") : t("Collapse", "折叠")}
+                      >
+                        {projCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      </button>
+                    ) : (
+                      <span className="tree-chevron-spacer" />
+                    )}
+                    <button
+                      className={`tree-label ${projActive ? "active" : ""}`}
+                     onClick={() => {
+                       setProjectPath(project.path);
+                       setProjectEnvironmentId(undefined);
+                        setTag(undefined);
+                       projectPathRef.current = project.path;
+                       projectEnvironmentIdRef.current = undefined;
+                     }}
+                      title={project.path}
+                    >
+                      <Folder size={13} />
+                      <span>{project.label}</span>
+                      <em>{formatRelativeTime(project.lastActivityAt)}</em>
+                    </button>
+                  </div>
+                  {!projCollapsed && project.tags.map((tagName) => (
+                    <div
+                      key={tagName}
+                      className={`tree-row tree-tag-row ${tag === tagName && projectPath === project.path ? "active" : ""} ${isBranchTag(tagName) ? "branch-tag" : ""}`}
+                    >
+                     <button
+                       className="tree-label"
+                        onClick={() => {
+                          if (tag === tagName) {
+                            setTag(undefined);
+                          } else {
+                            setTag(tagName);
+                            setProjectPath(project.path);
+                            setProjectEnvironmentId(undefined);
+                            projectPathRef.current = project.path;
+                            projectEnvironmentIdRef.current = undefined;
+                          }
+                        }}
+                       title={t(`Filter by ${displayTagName(tagName)}`, `按 ${displayTagName(tagName)} 过滤`)}
+                    >
+                       {isBranchTag(tagName) ? <GitBranch size={13} /> : <Tag size={13} />}
+                       <span>{displayTagName(tagName)}</span>
+                     </button>
+                     <button
+                       className="tag-delete"
+                       onClick={(event) => {
+                         event.stopPropagation();
+                         setDeleteTagName(tagName);
+                       }}
+                        title={t(`Delete tag ${displayTagName(tagName)}`, `删除标签 ${displayTagName(tagName)}`)}
+                        aria-label={t(`Delete tag ${displayTagName(tagName)}`, `删除标签 ${displayTagName(tagName)}`)}
+                     >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </nav>
+        ) : null}
+
         <SidebarSectionHeader title={t("Sources", "来源")} expanded={sidebarSections.sources} onToggle={() => toggleSidebarSectionById("sources")} />
         {sidebarSections.sources ? (
           <nav className="nav-group">
@@ -1830,79 +2008,24 @@ export function App(): ReactElement {
           </nav>
         ) : null}
 
-        <SidebarSectionHeader title={t("Projects", "项目")} expanded={sidebarSections.projects} onToggle={() => toggleSidebarSectionById("projects")} />
-        {sidebarSections.projects ? (
-          <nav className="project-list">
-            <button
-              className={!projectPath ? "active" : ""}
-              onClick={() => {
-                setProjectPath(undefined);
-                setProjectEnvironmentId(undefined);
-              }}
-            >
-              {t("All Projects", "全部项目")}
+        <SidebarSectionHeader title={t("Views", "视图")} expanded={sidebarSections.views} onToggle={() => toggleSidebarSectionById("views")} />
+        {sidebarSections.views ? (
+          <nav className="nav-group">
+            <button className={visibility === "default" ? "active" : ""} onClick={() => setVisibility("default")}>
+              {t("All", "全部")}
             </button>
-            {groupedProjects.map((group) => {
-              const groupId = group.projects[0]?.environmentId ?? "unknown";
-              const collapsed = collapsedProjectGroups.has(groupId);
-              return (
-              <div key={groupId} className="project-group">
-                <button
-                  className="project-group-header"
-                  onClick={() => toggleProjectGroup(groupId)}
-                  aria-expanded={!collapsed}
-                >
-                  {group.environment?.kind === "local" ? <Laptop size={11} /> : group.environment?.kind === "ssh" ? <Server size={11} /> : null}
-                  <span>{group.environment?.label ?? t("Unknown", "未知")}</span>
-                  <em className="project-group-count">{group.projects.length}</em>
-                  {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-                </button>
-                {!collapsed && group.projects.map((project) => (
-                  <button
-                    key={`${project.environmentId}:${project.path}`}
-                    className={`project-row ${projectPath === project.path && projectEnvironmentId === project.environmentId ? "active" : ""}`}
-                    onClick={() => selectProject(project)}
-                    title={t(`${project.path} · ${project.sessionCount} sessions`, `${project.path} · ${project.sessionCount} 个会话`)}
-                  >
-                    <Folder size={13} />
-                    <span>{project.label}</span>
-                    <em>{formatRelativeTime(projectSortTimestamp(project))}</em>
-                  </button>
-                ))}
-              </div>
-              );
-            })}
-          </nav>
-        ) : null}
-
-        <SidebarSectionHeader title={t("Tags", "标签")} expanded={sidebarSections.tags} onToggle={() => toggleSidebarSectionById("tags")} />
-        {sidebarSections.tags ? (
-          <nav className="tag-list">
-            <button className={!tag ? "active" : ""} onClick={() => setTag(undefined)}>
-              {t("All Tags", "全部标签")}
+            <button className={visibility === "favorites" ? "active" : ""} onClick={() => setVisibility("favorites")}>
+              <Star size={14} />
+              {t("Favorites", "收藏")}
             </button>
-            {tags.map((tagName) => (
-              <div
-                key={tagName}
-                className={`tag-list-row ${tag === tagName ? "active" : ""} ${isBranchTag(tagName) ? "branch-tag" : ""}`}
-              >
-                <button className="tag-filter" onClick={() => setTag(tagName)} title={t(`Filter by ${tagName}`, `按 ${tagName} 过滤`)}>
-                  {isBranchTag(tagName) ? <GitBranch size={13} /> : <Tag size={13} />}
-                  <span>{tagName}</span>
-                </button>
-                <button
-                  className="tag-delete"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setDeleteTagName(tagName);
-                  }}
-                  title={t(`Delete tag ${tagName}`, `删除标签 ${tagName}`)}
-                  aria-label={t(`Delete tag ${tagName}`, `删除标签 ${tagName}`)}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
+            <button className={visibility === "pinned" ? "active" : ""} onClick={() => setVisibility("pinned")}>
+              <Pin size={14} />
+              {t("Pinned", "置顶")}
+            </button>
+            <button className={visibility === "hidden" ? "active" : ""} onClick={() => setVisibility("hidden")}>
+              <EyeOff size={14} />
+              {t("Hidden", "隐藏")}
+            </button>
           </nav>
         ) : null}
       </section>
@@ -1935,10 +2058,10 @@ export function App(): ReactElement {
               </button>
             ) : null}
             {tag ? (
-              <button className="chip clear" onClick={() => setTag(undefined)}>
-                <span>#{tag}</span>
-                <span aria-hidden="true">×</span>
-              </button>
+             <button className="chip clear" onClick={() => setTag(undefined)}>
+                <span>{isBranchTag(tag) ? <GitBranch size={12} /> : "#"}{displayTagName(tag)}</span>
+               <span aria-hidden="true">×</span>
+             </button>
             ) : null}
             <div className="live-filter" role="group" aria-label="Live session status">
               {LIVE_STATUS_FILTERS.map((option) => (
@@ -2021,17 +2144,19 @@ export function App(): ReactElement {
               <KeyRound size={15} />
             </button>
             <button
-              className="icon-button toolbar-icon-button"
+              className={`icon-button toolbar-icon-button ${appUpdateStatus?.updateAvailable ? "update-available" : ""}`}
               onClick={() => {
                 setSkillsOpen(false);
                 setApiConfigOpen(false);
                 setRemoteSessionsOpen(false);
+                setSettingsInitialSection(appUpdateStatus?.updateAvailable ? "about" : "terminal");
                 setSettingsOpen(true);
               }}
-              title={t("Settings", "设置")}
-              aria-label={t("Settings", "设置")}
+              title={appUpdateStatus?.updateAvailable ? t("Update available", "有新版本可用") : t("Settings", "设置")}
+              aria-label={appUpdateStatus?.updateAvailable ? t("Update available", "有新版本可用") : t("Settings", "设置")}
             >
               <Settings size={15} />
+              {appUpdateStatus?.updateAvailable ? <span className="update-indicator" aria-hidden="true" /> : null}
             </button>
           </div>
         </header>
@@ -2295,7 +2420,11 @@ export function App(): ReactElement {
 
       {settingsOpen ? (
         <SettingsDialog
+          initialSection={settingsInitialSection}
           settings={appSettings}
+          appUpdateStatus={appUpdateStatus}
+          appUpdateBusy={appUpdateBusy}
+          appUpdateError={appUpdateError}
           environments={environments}
           environmentHealthReports={environmentHealthReports}
           diagnosingEnvironmentId={diagnosingEnvironmentId}
@@ -2303,6 +2432,8 @@ export function App(): ReactElement {
           language={language}
           feedback={settingsFeedback}
           onSettingsChange={(next) => void updateSettings(next)}
+          onCheckAppUpdate={() => void checkAppUpdate()}
+          onInstallAppUpdate={() => void installAppUpdate()}
           onThemeChange={setTheme}
           onLanguageChange={setLanguage}
           onDefaultTerminalChange={(terminal) => void updateDefaultTerminal(terminal)}
@@ -2618,9 +2749,9 @@ const SessionRow = memo(function SessionRow({
       </div>
       <div className="row-tags">
         {session.tags.slice(0, 3).map((tagName) => (
-          <span key={tagName} className={isBranchTag(tagName) ? "branch-tag" : undefined}>
-            #{tagName}
-          </span>
+         <span key={tagName} className={isBranchTag(tagName) ? "branch-tag" : undefined}>
+            {isBranchTag(tagName) ? "" : "#"}{displayTagName(tagName)}
+         </span>
         ))}
       </div>
     </article>
@@ -2792,8 +2923,58 @@ function ContextMenu({
   );
 }
 
+function UpdateBrandMark(): ReactElement {
+  return (
+    <svg className="update-brand-mark" viewBox="0 0 96 96" aria-hidden="true">
+      <defs>
+        <linearGradient id="update-brand-gradient" x1="14" y1="8" x2="82" y2="88" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#1687ff" />
+          <stop offset="0.55" stopColor="#3d63ed" />
+          <stop offset="1" stopColor="#7047d7" />
+        </linearGradient>
+        <radialGradient id="update-brand-glow" cx="0" cy="0" r="1" gradientTransform="translate(25 20) rotate(46) scale(69)">
+          <stop stopColor="#ffffff" stopOpacity="0.32" />
+          <stop offset="0.62" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect x="3" y="3" width="90" height="90" rx="27" fill="url(#update-brand-gradient)" />
+      <rect x="3" y="3" width="90" height="90" rx="27" fill="url(#update-brand-glow)" />
+      <circle cx="43" cy="41" r="21" fill="none" stroke="#ffffff" strokeWidth="6" />
+      <path d="M58.5 56.5 73 71" fill="none" stroke="#ffffff" strokeWidth="7" strokeLinecap="round" />
+      <path d="m35.5 33.5 7.5 7.5-7.5 7.5M47.5 49h8.5" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function UpdateReleaseSection({
+  kind,
+  title,
+  items,
+}: {
+  kind: "features" | "fixes";
+  title: string;
+  items: string[];
+}): ReactElement | null {
+  if (items.length === 0) return null;
+  return (
+    <section className={`update-release-section ${kind}`}>
+      <div className="update-release-section-title">
+        <span className="update-release-section-icon" aria-hidden="true">
+          {kind === "features" ? <Sparkles size={15} /> : <Wrench size={15} />}
+        </span>
+        <strong>{title}</strong>
+      </div>
+      <ul>{items.map((item) => <li key={`${kind}:${item}`}>{item}</li>)}</ul>
+    </section>
+  );
+}
+
 function SettingsDialog({
+  initialSection,
   settings,
+  appUpdateStatus,
+  appUpdateBusy,
+  appUpdateError,
   environments,
   environmentHealthReports,
   diagnosingEnvironmentId,
@@ -2801,6 +2982,8 @@ function SettingsDialog({
   language,
   feedback,
   onSettingsChange,
+  onCheckAppUpdate,
+  onInstallAppUpdate,
   onThemeChange,
   onLanguageChange,
   onDefaultTerminalChange,
@@ -2816,7 +2999,11 @@ function SettingsDialog({
   onOpenRemoteSessions,
   onClose,
 }: {
+  initialSection: SettingsSection;
   settings: AppSettings | null;
+  appUpdateStatus: AppUpdateStatus | null;
+  appUpdateBusy: boolean;
+  appUpdateError: string | null;
   environments: SessionEnvironment[];
   environmentHealthReports: Record<string, RemoteHealthReport>;
   diagnosingEnvironmentId: string | null;
@@ -2824,6 +3011,8 @@ function SettingsDialog({
   language: LanguageMode;
   feedback: SettingsFeedback;
   onSettingsChange: (settings: AppSettingsUpdate) => void;
+  onCheckAppUpdate: () => void;
+  onInstallAppUpdate: () => void;
   onThemeChange: (theme: ThemeMode) => void;
   onLanguageChange: (language: LanguageMode) => void;
   onDefaultTerminalChange: (terminal: AppSettings["defaultTerminal"]) => void;
@@ -2894,7 +3083,18 @@ function SettingsDialog({
     }
   }
   const l = (en: string, zh: string) => localize(language, en, zh);
-  const [activeSection, setActiveSection] = useState<"terminal" | "shortcut" | "connections" | "sources" | "usage" | "ai" | "remote" | "skills" | "appearance">("terminal");
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+  const settingsContentRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const content = settingsContentRef.current;
+    if (!content) return;
+    content.scrollTop = 0;
+    const frame = window.requestAnimationFrame(() => {
+      content.scrollTop = 0;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection, appUpdateStatus?.manifest?.version, appUpdateStatus?.updateAvailable]);
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -2943,8 +3143,13 @@ function SettingsDialog({
               <Sun size={15} />
               <span>{l("Appearance", "外观")}</span>
             </button>
+            <button className={activeSection === "about" ? "active" : ""} onClick={() => setActiveSection("about")}>
+              <Info size={15} />
+              <span>{l("About", "关于")}</span>
+              {appUpdateStatus?.updateAvailable ? <span className="settings-update-dot" aria-hidden="true" /> : null}
+            </button>
           </nav>
-          <div className="settings-content">
+          <div ref={settingsContentRef} className="settings-content">
             {activeSection === "terminal" ? (
               <section className="settings-pane">
                 <header className="settings-pane-head">
@@ -3537,6 +3742,100 @@ function SettingsDialog({
                     </button>
                   </div>
                 </div>
+              </section>
+            ) : null}
+            {activeSection === "about" ? (
+              <section className="settings-pane update-about-pane">
+                <div className="update-app-identity">
+                  <UpdateBrandMark />
+                  <h3>Agent-Session-Search</h3>
+                  <p>v{appUpdateStatus?.currentVersion ?? "0.0.0"}</p>
+                </div>
+
+                {appUpdateStatus?.updateAvailable && appUpdateStatus.manifest ? (
+                  <div className="update-available-card">
+                    <div className="update-available-head">
+                      <div className="update-available-copy">
+                        <span>{l("Update available", "发现新版本")}</span>
+                        <div className="update-version-route" aria-label={l(`Version ${appUpdateStatus.currentVersion} to ${appUpdateStatus.manifest.version}`, `版本 ${appUpdateStatus.currentVersion} 更新至 ${appUpdateStatus.manifest.version}`)}>
+                          <span>v{appUpdateStatus.currentVersion}</span>
+                          <ChevronRight size={18} aria-hidden="true" />
+                          <strong>v{appUpdateStatus.manifest.version}</strong>
+                          <span className="update-new-badge">{l("NEW", "可更新")}</span>
+                        </div>
+                      </div>
+                      <span className="update-available-icon" aria-hidden="true">
+                        <Sparkles size={22} />
+                      </span>
+                    </div>
+                    <div className="update-release-card">
+                      <UpdateReleaseSection kind="features" title={l("New features", "新增功能")} items={appUpdateStatus.manifest.notes.features} />
+                      <UpdateReleaseSection kind="fixes" title={l("Fixes", "问题修复")} items={appUpdateStatus.manifest.notes.fixes} />
+                    </div>
+                    <div className="update-card-footer">
+                      <span>{l("The App will reopen automatically after updating.", "更新完成后会自动重新打开应用。")}</span>
+                      <div className="update-card-actions">
+                        <button
+                          type="button"
+                          className="update-refresh-button"
+                          disabled={appUpdateBusy}
+                          onClick={onCheckAppUpdate}
+                          aria-label={l("Check again", "重新检查更新")}
+                          title={l("Check again", "重新检查更新")}
+                        >
+                          <RefreshCw size={15} className={appUpdateBusy ? "spin" : ""} />
+                        </button>
+                        <button type="button" className="update-primary-button" disabled={appUpdateBusy} onClick={onInstallAppUpdate}>
+                          <Download size={15} aria-hidden="true" />
+                          {appUpdateBusy ? l("Preparing...", "准备中...") : l("Update now", "立即更新")}
+                        </button>
+                      </div>
+                    </div>
+                    {appUpdateError || appUpdateStatus.error ? <div className="update-card-error">{appUpdateError || appUpdateStatus.error}</div> : null}
+                  </div>
+                ) : (
+                  <div
+                    className={`update-current-state ${
+                      appUpdateError || appUpdateStatus?.error ? "error" : appUpdateBusy ? "checking" : "latest"
+                    }`}
+                  >
+                    <span className="update-state-icon" aria-hidden="true">
+                      {appUpdateBusy ? <RefreshCw size={19} className="spin" /> : appUpdateError || appUpdateStatus?.error ? <Info size={19} /> : <CheckCircle2 size={20} />}
+                    </span>
+                    <span className="update-state-copy">
+                      <strong>
+                        {appUpdateBusy
+                          ? l("Checking for updates...", "正在检查更新...")
+                          : appUpdateError || appUpdateStatus?.error || l("You're up to date", "当前已是最新版本")}
+                      </strong>
+                      {!appUpdateBusy && !appUpdateError && !appUpdateStatus?.error ? (
+                        <span>{l("Automatic checks will keep you on the newest release.", "自动检查会让你及时获取后续新版本。")}</span>
+                      ) : null}
+                    </span>
+                  </div>
+                )}
+
+                {!appUpdateStatus?.updateAvailable ? (
+                  <div className="update-about-actions">
+                    <button type="button" className="settings-action-button" disabled={appUpdateBusy} onClick={onCheckAppUpdate}>
+                      <RefreshCw size={14} className={appUpdateBusy ? "spin" : ""} />
+                      {l("Check for updates", "检查更新")}
+                    </button>
+                  </div>
+                ) : null}
+                <label className="settings-field settings-toggle update-auto-check">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Automatically check for updates", "自动检查更新")}</span>
+                    <span className="settings-field-sub">{l("The terminal and App check for a new version once a day.", "终端与 App 每天自动检查一次新版本。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.autoCheckUpdates)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ autoCheckUpdates: event.currentTarget.checked })}
+                  />
+                </label>
               </section>
             ) : null}
           </div>

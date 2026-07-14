@@ -80,8 +80,14 @@ function decodeEncodedCmdPowerShell(command: string): string {
 describe("platform application resolution", () => {
   it("hides subagent sessions by default and preserves the default for older saved settings", () => {
     expect(defaultSettings.hideSubagentSessions).toBe(true);
-    const { hideSubagentSessions: _missingInOlderSettings, ...olderSettings } = defaultSettings;
+    expect(defaultSettings.autoCheckUpdates).toBe(true);
+    const {
+      hideSubagentSessions: _missingSubagentsInOlderSettings,
+      autoCheckUpdates: _missingUpdatesInOlderSettings,
+      ...olderSettings
+    } = defaultSettings;
     expect(mergeAppSettings(defaultSettings, olderSettings).hideSubagentSessions).toBe(true);
+    expect(mergeAppSettings(defaultSettings, olderSettings).autoCheckUpdates).toBe(true);
   });
 
   it("returns the first macOS application name that resolves", async () => {
