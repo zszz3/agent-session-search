@@ -3,68 +3,75 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 import {
-  buildDailySeries,
-  fetchStargazers,
-  renderStarHistorySvg
+  fetchStarCount,
+  parseStarHistoryData,
+  renderStarHistorySvg,
+  updateDailySnapshots
 } from './generate-star-history.mjs'
 
-test('buildDailySeries sorts stars and fills missing UTC days cumulatively', () => {
-  const series = buildDailySeries([
-    '2026-06-03T08:00:00Z',
-    '2026-06-01T12:00:00Z',
-    '2026-06-03T09:00:00Z'
-  ])
-
-  assert.deepEqual(series, [
-    { date: '2026-06-01', count: 1 },
-    { date: '2026-06-02', count: 1 },
-    { date: '2026-06-03', count: 3 }
-  ])
-})
-
-test('fetchStargazers authenticates timestamp requests and follows pagination', async () => {
+test('fetchStarCount reads only repository metadata', async () => {
   const requests = []
-  const firstPage = Array.from({ length: 100 }, (_, index) => ({
-    starred_at: `2026-06-01T00:${String(index % 60).padStart(2, '0')}:00Z`,
-    user: { login: `user-${index}` }
-  }))
-  const pages = [firstPage, [{ starred_at: '2026-06-02T00:00:00Z', user: { login: 'last' } }]]
   const fetchImpl = async (url, options) => {
     requests.push({ url: String(url), options })
-    return new Response(JSON.stringify(pages.shift()), {
-      status: 200,
-      headers: { 'content-type': 'application/json' }
-    })
+    return new Response(JSON.stringify({ stargazers_count: 152 }), { status: 200 })
   }
 
-  const timestamps = await fetchStargazers({
+  const count = await fetchStarCount({
     repository: 'zszz3/agent-session-search',
     token: 'test-token',
     fetchImpl
   })
 
-  assert.equal(timestamps.length, 101)
-  assert.equal(requests.length, 2)
-  assert.match(requests[0].url, /per_page=100&page=1$/)
-  assert.match(requests[1].url, /per_page=100&page=2$/)
-  assert.equal(requests[0].options.headers.accept, 'application/vnd.github.star+json')
+  assert.equal(count, 152)
+  assert.equal(requests[0].url, 'https://api.github.com/repos/zszz3/agent-session-search')
+  assert.equal(requests[0].options.headers.accept, 'application/vnd.github+json')
   assert.equal(requests[0].options.headers.authorization, 'Bearer test-token')
 })
 
-test('fetchStargazers reports repository and page for malformed JSON', async () => {
-  const fetchImpl = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => { throw new SyntaxError('Unexpected token') }
-  })
-
+test('fetchStarCount reports metadata failures and invalid counts', async () => {
   await assert.rejects(
-    fetchStargazers({
+    fetchStarCount({
       repository: 'zszz3/agent-session-search',
       token: 'test-token',
-      fetchImpl
+      fetchImpl: async () => new Response('{"message":"blocked"}', { status: 403 })
     }),
-    /Invalid GitHub Stargazers response for zszz3\/agent-session-search page 1/
+    /GitHub repository metadata request failed \(403\).*blocked/
+  )
+  await assert.rejects(
+    fetchStarCount({
+      repository: 'zszz3/agent-session-search',
+      token: 'test-token',
+      fetchImpl: async () => new Response('{"stargazers_count":-1}', { status: 200 })
+    }),
+    /invalid stargazers_count/
+  )
+})
+
+test('parseStarHistoryData validates repository, ordering, dates, and counts', () => {
+  const valid = {
+    repository: 'zszz3/agent-session-search',
+    snapshots: [{ date: '2026-07-13', count: 151 }, { date: '2026-07-14', count: 152 }]
+  }
+  assert.deepEqual(parseStarHistoryData(valid, valid.repository), valid)
+  assert.throws(() => parseStarHistoryData({ ...valid, repository: 'other/repo' }, valid.repository), /repository mismatch/)
+  assert.throws(() => parseStarHistoryData({ ...valid, snapshots: [{ date: '2026-02-30', count: 1 }] }, valid.repository), /invalid date/)
+  assert.throws(() => parseStarHistoryData({ ...valid, snapshots: [{ date: '2026-07-14', count: 1 }, { date: '2026-07-14', count: 2 }] }, valid.repository), /strictly increasing/)
+  assert.throws(() => parseStarHistoryData({ ...valid, snapshots: [{ date: '2026-07-14', count: -1 }] }, valid.repository), /non-negative integer/)
+})
+
+test('updateDailySnapshots replaces today and fills missing UTC days', () => {
+  assert.deepEqual(
+    updateDailySnapshots([{ date: '2026-07-13', count: 151 }], '2026-07-16', 150),
+    [
+      { date: '2026-07-13', count: 151 },
+      { date: '2026-07-14', count: 151 },
+      { date: '2026-07-15', count: 151 },
+      { date: '2026-07-16', count: 150 }
+    ]
+  )
+  assert.deepEqual(
+    updateDailySnapshots([{ date: '2026-07-14', count: 151 }], '2026-07-14', 152),
+    [{ date: '2026-07-14', count: 152 }]
   )
 })
 

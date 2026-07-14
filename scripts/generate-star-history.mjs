@@ -61,6 +61,114 @@ function displayName(repository) {
     .join('-')
 }
 
+function repositoryParts(repository) {
+  const [owner, repo, ...extra] = repository.split('/')
+  if (!owner || !repo || extra.length > 0) {
+    throw new Error(`GITHUB_REPOSITORY must use owner/repo format, received: ${repository}`)
+  }
+  return { owner, repo }
+}
+
+function isUtcDateKey(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const timestamp = Date.parse(`${value}T00:00:00Z`)
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value
+}
+
+export async function fetchStarCount({ repository, token, fetchImpl = fetch }) {
+  const { owner, repo } = repositoryParts(repository)
+  if (!token) {
+    throw new Error('GITHUB_TOKEN is required to read repository metadata')
+  }
+
+  const response = await fetchImpl(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    {
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${token}`,
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'agent-session-search-star-history'
+      }
+    }
+  )
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`GitHub repository metadata request failed (${response.status}): ${body.slice(0, 300)}`)
+  }
+
+  let metadata
+  try {
+    metadata = await response.json()
+  } catch (error) {
+    throw new Error(`Invalid GitHub repository metadata response for ${repository}: response is not valid JSON`, { cause: error })
+  }
+  if (!Number.isInteger(metadata?.stargazers_count) || metadata.stargazers_count < 0) {
+    throw new Error(`Invalid GitHub repository metadata response for ${repository}: invalid stargazers_count`)
+  }
+  return metadata.stargazers_count
+}
+
+export function parseStarHistoryData(value, repository) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Star History data: expected an object')
+  }
+  if (value.repository !== repository) {
+    throw new Error(`Invalid Star History data: repository mismatch, expected ${repository}`)
+  }
+  if (!Array.isArray(value.snapshots)) {
+    throw new Error('Invalid Star History data: snapshots must be an array')
+  }
+
+  let previousDate = null
+  const snapshots = value.snapshots.map((snapshot, index) => {
+    if (!snapshot || typeof snapshot !== 'object' || !isUtcDateKey(snapshot.date)) {
+      throw new Error(`Invalid Star History data: snapshot ${index} has an invalid date`)
+    }
+    if (previousDate !== null && snapshot.date <= previousDate) {
+      throw new Error('Invalid Star History data: snapshot dates must be strictly increasing')
+    }
+    if (!Number.isInteger(snapshot.count) || snapshot.count < 0) {
+      throw new Error(`Invalid Star History data: snapshot ${index} count must be a non-negative integer`)
+    }
+    previousDate = snapshot.date
+    return { date: snapshot.date, count: snapshot.count }
+  })
+
+  return { repository, snapshots }
+}
+
+export function updateDailySnapshots(snapshots, date, count) {
+  if (!isUtcDateKey(date)) {
+    throw new Error(`Invalid snapshot date: ${date}`)
+  }
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error(`Invalid snapshot count: ${count}`)
+  }
+  if (snapshots.length === 0) {
+    return [{ date, count }]
+  }
+
+  const next = snapshots.map((snapshot) => ({ ...snapshot }))
+  const last = next.at(-1)
+  if (date < last.date) {
+    throw new Error(`Snapshot date ${date} is earlier than existing history ending ${last.date}`)
+  }
+  if (date === last.date) {
+    next[next.length - 1] = { date, count }
+    return next
+  }
+
+  for (let timestamp = Date.parse(`${last.date}T00:00:00Z`) + DAY_MS; ; timestamp += DAY_MS) {
+    const missingDate = new Date(timestamp).toISOString().slice(0, 10)
+    if (missingDate >= date) break
+    next.push({ date: missingDate, count: last.count })
+  }
+  next.push({ date, count })
+  return next
+}
+
 export function buildDailySeries(starredAtValues) {
   if (starredAtValues.length === 0) return []
 
