@@ -50,6 +50,7 @@ const LIVE_SESSION_KEY_SQL = `
     WHEN source = 'tclaude-cli' THEN 'tclaude:' || raw_id
     WHEN source = 'tcodex-cli' THEN 'tcodex:' || raw_id
     WHEN source = 'codebuddy-cli' THEN 'codebuddy:' || raw_id
+    WHEN source = 'codewiz-cli' THEN 'codewiz:' || raw_id
     WHEN source = 'trae' THEN 'trae:' || raw_id
     ELSE NULL
   END
@@ -1496,7 +1497,7 @@ export class SessionStore {
         first_question,
         content_text,
         project_path,
-        tokenize = 'unicode61'
+        tokenize = 'trigram'
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_hidden_favorited_pinned
@@ -1562,7 +1563,28 @@ export class SessionStore {
         COALESCE(CAST(strftime('%s', timestamp) AS INTEGER) * 1000, 0)
       FROM messages;
     `);
+    this.upgradeFtsTokenizer();
     this.ensureLocalEnvironment();
+  }
+
+  private upgradeFtsTokenizer(): void {
+    const row = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='session_fts'").get() as { sql: string } | undefined;
+    if (!row?.sql || !row.sql.includes("unicode61")) return;
+    this.db.exec("DROP TABLE IF EXISTS session_fts");
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+        session_key UNINDEXED,
+        title,
+        first_question,
+        content_text,
+        project_path,
+        tokenize = 'trigram'
+      );
+    `);
+    const sessionKeys = this.db.prepare("SELECT session_key FROM sessions").all() as Array<{ session_key: string }>;
+    for (const { session_key } of sessionKeys) {
+      this.refreshFtsForSession(session_key);
+    }
   }
 
   private addColumnIfMissing(tableName: string, columnName: string, definition: string): boolean {
@@ -2359,7 +2381,7 @@ function buildFtsQuery(query: string): string {
   return tokens
     .map((token) => token.replace(/"/g, ""))
     .filter(Boolean)
-    .map((token) => `${token}*`)
+    .map((token) => `"${token.replace(/"/g, "\"\"")}"`)
     .join(" ");
 }
 
@@ -2403,6 +2425,11 @@ function sessionSortSql(sortBy: SessionSortBy = "activity"): string {
 function sessionActivitySql(sessionTable: string): string {
   return `
     COALESCE(
+      (
+        SELECT MAX(message_events.timestamp)
+        FROM message_events
+        WHERE message_events.session_key = ${sessionTable}.session_key
+      ),
       (
         SELECT MAX(CAST(strftime('%s', messages.timestamp) AS INTEGER) * 1000)
         FROM messages
