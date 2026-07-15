@@ -476,19 +476,27 @@ function nodeSubprocessEnvironment(baseEnvironment = {}) {
   return environment;
 }
 
+function nodeSubprocessPath(options = {}) {
+  if (!process.versions.electron) return process.execPath;
+  const candidate = options.nodePath || process.env.NODE || "node";
+  if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
+  return "node";
+}
+
 async function ensureInstalledElectron(options = {}) {
   const packagePath = options.packagePath || globalPackageRoot({ npmCommand: options.npmCommand });
   const electronModulePath = path.join(packagePath, "node_modules", "electron");
   const installScript = path.join(electronModulePath, "install.js");
   const environment = nodeSubprocessEnvironment(options.env);
   const run = options.execFileImpl || execFileAsync;
+  const nodePath = nodeSubprocessPath(options);
   const timeout = options.timeoutMs ?? 5 * 60_000;
   const validationScript = [
     'const fs = require("node:fs");',
     `const electronPath = require(${JSON.stringify(electronModulePath)});`,
     'if (!fs.existsSync(electronPath)) throw new Error(`Electron executable is missing: ${electronPath}`);',
   ].join(" ");
-  const validate = () => run(process.execPath, ["-e", validationScript], {
+  const validate = () => run(nodePath, ["-e", validationScript], {
     env: environment,
     timeout,
     maxBuffer: 4 * 1024 * 1024,
@@ -505,7 +513,7 @@ async function ensureInstalledElectron(options = {}) {
   }
 
   try {
-    await run(process.execPath, [installScript], {
+    await run(nodePath, [installScript], {
       cwd: electronModulePath,
       env: environment,
       timeout,

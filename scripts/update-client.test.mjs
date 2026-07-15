@@ -380,6 +380,46 @@ test("validates Electron runtime with Node semantics when launched by Electron",
   assert.ok(invocation);
 });
 
+test("uses a stable Node executable for Electron runtime checks after npm replaces Electron", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "agent-session-electron-stable-node-"));
+  const packagePath = path.join(directory, "agent-session-search");
+  const electronPath = path.join(packagePath, "node_modules", "electron");
+  await mkdir(path.join(electronPath, "dist", "Electron.app", "Contents", "MacOS"), { recursive: true });
+  await mkdir(path.join(electronPath, "dist", "Electron.app", "Contents", "Resources"), { recursive: true });
+  await writeFile(
+    path.join(electronPath, "index.js"),
+    'module.exports = require("node:path").join(__dirname, "dist", "Electron.app", "Contents", "MacOS", "Electron");\n',
+    "utf8",
+  );
+  await writeFile(path.join(electronPath, "install.js"), "throw new Error('install script should not run');\n", "utf8");
+  await writeFile(path.join(electronPath, "path.txt"), "Electron.app/Contents/MacOS/Electron", "utf8");
+  await writeFile(path.join(electronPath, "dist", "Electron.app", "Contents", "MacOS", "Electron"), "ok", "utf8");
+  await writeFile(path.join(electronPath, "dist", "Electron.app", "Contents", "Resources", "default_app.asar"), "ok", "utf8");
+  await writeFile(path.join(electronPath, "dist", "version"), "42.3.0", "utf8");
+  const stableNodePath = path.join(directory, "node");
+  await writeFile(stableNodePath, "ok", "utf8");
+
+  const commands = [];
+  Object.defineProperty(process.versions, "electron", { value: "42.3.0", configurable: true });
+  try {
+    await ensureInstalledElectron({
+      packagePath,
+      nodePath: stableNodePath,
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      execFileImpl: async (command, args, options) => {
+        commands.push({ command, args, options });
+        if (command.includes("Electron.app")) throw new Error(`spawn ${command} ENOENT`);
+        return { stdout: "", stderr: "" };
+      },
+    });
+  } finally {
+    delete process.versions.electron;
+  }
+
+  assert.deepEqual(commands.map((call) => call.command), [stableNodePath]);
+  assert.equal(commands[0].options.env.ELECTRON_RUN_AS_NODE, "1");
+});
+
 test("serializes concurrent first-launch Electron preparation", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "agent-session-electron-lock-"));
   const lockPath = path.join(directory, "electron.lock");
