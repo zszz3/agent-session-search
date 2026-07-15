@@ -1,5 +1,5 @@
 {
-  "repository": "zszz3/agent-session-search",
+  "repository": "zszz3/AgentRecall",
   "snapshots": [
     {
       "date": "2026-06-01",
@@ -179,7 +179,7 @@
     },
     {
       "date": "2026-07-15",
-      "count": 155
+      "count": 157
     }
   ]
 }
