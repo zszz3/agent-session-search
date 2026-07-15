@@ -609,9 +609,10 @@ function listRemoteSessions(query = ""): Promise<RemoteSessionListItem[]> {
 
 async function listSessionSyncItems(): Promise<SessionSyncItem[]> {
   const client = createRemoteSessionClient();
-  const remotes = await client.listRemoteSessions();
+  const remotes = (await client.listRemoteSessions())
+    .filter((remote) => store.getSession(remote.sourceSessionKey)?.isSubagent !== true);
   const locals: Array<{ session: SessionSearchResult; revision: string }> = [];
-  await runBounded(store.searchSessions({ limit: 100_000 }), 4, async (session) => {
+  await runBounded(store.searchSessions({ limit: 100_000, excludeSubagents: true }), 4, async (session) => {
     if (!migrationAgentForSource(session.source) || !session.projectPath.trim()) return;
     try {
       await ensureRemoteSessionDetailsLoaded(session.sessionKey);

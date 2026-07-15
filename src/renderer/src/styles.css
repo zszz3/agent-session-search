@@ -3601,9 +3601,7 @@ select:focus-visible {
 }
 
 .skill-preview-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  display: block;
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -3638,12 +3636,40 @@ select:focus-visible {
   line-height: 1.45;
 }
 
-.skill-version-summary {
-  align-self: center;
+.skill-version-strip {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 42px;
+  padding: 7px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--panel-bg);
+}
+
+.skill-version-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.skill-version-copy small,
+.skill-version-managed {
   color: var(--text-muted);
+  font-size: 11px;
+}
+
+.skill-version-copy strong {
+  color: var(--text);
   font-family: var(--mono);
-  font-size: 11.5px;
-  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.skill-version-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-subtle);
 }
 
 .skill-detail-tabs {
@@ -3723,6 +3749,7 @@ select:focus-visible {
 
 .skill-diff-view {
   display: flex;
+  height: 100%;
   min-height: 0;
   flex: 1;
   flex-direction: column;
@@ -3749,12 +3776,22 @@ select:focus-visible {
 
 .skill-diff-files {
   display: grid;
+  flex: 1;
   align-content: start;
   gap: 8px;
   min-height: 0;
   padding: 12px 18px 22px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--message-bg);
+}
+
+.skill-diff-empty {
+  display: grid;
+  min-height: 140px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .skill-diff-file {
@@ -3796,10 +3833,10 @@ select:focus-visible {
 }
 
 .skill-diff-file pre {
-  max-height: 320px;
   margin: 0;
   padding: 10px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   border-top: 1px solid var(--border-subtle);
   background: var(--panel-subtle);
   color: var(--text-dim);
@@ -6200,10 +6237,18 @@ body.overlay-open .sidebar {
   background: var(--panel-subtle);
 }
 
+.settings-feedback.inline.remote-session-feedback {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--panel-bg);
+}
+
 .remote-session-row {
   position: relative;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) 280px;
   align-items: center;
   gap: 10px;
   margin-top: 6px;
@@ -6275,32 +6320,42 @@ body.overlay-open .sidebar {
 .remote-session-comparison {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .remote-copy {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 2px;
-  padding: 8px 10px;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 5px 8px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--panel-subtle);
+  overflow: hidden;
 }
 
 .remote-copy-title {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 650;
 }
 
+.remote-copy-title svg {
+  width: 12px;
+  height: 12px;
+}
+
 .remote-copy > strong {
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6312,11 +6367,46 @@ body.overlay-open .sidebar {
 
 .remote-copy > span,
 .remote-copy > small {
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.remote-copy > small {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.remote-session-tags {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.remote-session-tags span {
+  flex: 0 0 auto;
+  max-width: 220px;
+  padding: 2px 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-session-tags span.branch-tag {
+  border: 1px solid var(--branch-border);
+  background: var(--branch-bg);
+  color: var(--branch-text);
 }
 
 .sync-location {
@@ -6337,10 +6427,21 @@ body.overlay-open .sidebar {
 
 .remote-session-actions {
   display: flex;
+  width: 280px;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   opacity: 0.88;
   transition: opacity 0.15s ease;
+}
+
+.remote-session-actions.cloud-empty {
+  justify-content: center;
+}
+
+.remote-session-actions.synced .remote-session-action:not(.icon-only) {
+  padding-right: 14px;
+  padding-left: 14px;
 }
 
 .remote-session-more {
@@ -6412,6 +6513,9 @@ body.overlay-open .sidebar {
 }
 
 .remote-session-action.primary {
+  width: auto;
+  min-height: 0;
+  margin-bottom: 0;
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--accent);
@@ -6552,6 +6656,7 @@ body.overlay-open .sidebar {
   }
 
   .remote-session-actions {
+    width: auto;
     grid-column: 2;
     justify-content: flex-end;
   }
@@ -6619,6 +6724,7 @@ body.overlay-open .sidebar {
   }
 
   .remote-session-actions {
+    width: auto;
     justify-content: flex-start;
     flex-wrap: wrap;
   }

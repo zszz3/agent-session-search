@@ -99,6 +99,7 @@ export function SkillsDialog({
   const selectedEntry = filteredEntries.find((entry) => entry.id === selectedEntryId) ?? filteredEntries[0] ?? null;
   const selectedSkill = selectedEntry?.local ?? null;
   const selectedGroup = selectedEntry?.remote ?? null;
+  const selectedVersions = selectedEntry ? skillSyncVersions(selectedEntry, language) : null;
   const selectedVersion =
     selectedGroup?.versions.find((version) => version.id === selectedVersionId) ?? selectedGroup?.latest ?? null;
   const selectedSkillBinding = selectedSkill ? syncSnapshot.bindings.find((binding) => binding.localSkillPath === selectedSkill.path) : null;
@@ -137,6 +138,9 @@ export function SkillsDialog({
 
   // Default to the latest version whenever the selected skill group changes.
   useEffect(() => {
+    if (detailView === "diff" && (!selectedSkill || !selectedGroup)) {
+      setDetailView(selectedSkill ? "local" : "remote");
+    }
     if (!selectedGroup) {
       if (selectedVersionId) setSelectedVersionId(null);
       return;
@@ -144,7 +148,7 @@ export function SkillsDialog({
     if (!selectedVersionId || !selectedGroup.versions.some((version) => version.id === selectedVersionId)) {
       setSelectedVersionId(selectedGroup.latest.id);
     }
-  }, [selectedGroup, selectedVersionId]);
+  }, [detailView, selectedGroup, selectedSkill, selectedVersionId]);
 
   // The version list is lightweight (no markdown); fetch the body on demand for preview.
   useEffect(() => {
@@ -383,7 +387,9 @@ export function SkillsDialog({
           <div className="skills-list">
             {loading && filteredEntries.length === 0 ? <div className="skills-empty">{l("Loading Skills...", "正在加载 Skills...")}</div> : null}
             {!loading && filteredEntries.length === 0 ? <div className="skills-empty">{l("No skills found.", "没有找到 Skill。")}</div> : null}
-            {filteredEntries.map((entry) => (
+            {filteredEntries.map((entry) => {
+              const versions = skillSyncVersions(entry, language);
+              return (
               <div
                 key={entry.id}
                 ref={selectedEntry?.id === entry.id ? activeItemRef : undefined}
@@ -415,24 +421,31 @@ export function SkillsDialog({
                   {entry.state ? <SkillSyncStateBadge state={entry.state} language={language} /> : null}
                 </span>
                 <span className="skill-item-desc">{entry.description || l("No description", "无描述")}</span>
-                <span className="skill-item-path">{skillSyncVersionsLabel(entry, language)}</span>
+                <span className="skill-item-path">
+                  {versions.managed ?? l(`Local ${versions.local} · Cloud ${versions.cloud}`, `本地 ${versions.local} · 云端 ${versions.cloud}`)}
+                </span>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="skill-preview">
             {selectedEntry ? <>
               <div className="skill-preview-head">
-                <div>
-                  <div className="skill-preview-title">
-                    <h3>{selectedEntry.name}</h3>
-                    <SkillSourceBadge source={selectedEntry.source} language={language} />
-                    {selectedEntry.state ? <SkillSyncStateBadge state={selectedEntry.state} language={language} /> : null}
-                  </div>
-                  <p>{selectedEntry.description || l("No description", "无描述")}</p>
+                <div className="skill-preview-title">
+                  <h3>{selectedEntry.name}</h3>
+                  <SkillSourceBadge source={selectedEntry.source} language={language} />
+                  {selectedEntry.state ? <SkillSyncStateBadge state={selectedEntry.state} language={language} /> : null}
                 </div>
-                <span className="skill-version-summary">{skillSyncVersionsLabel(selectedEntry, language)}</span>
+                <p>{selectedEntry.description || l("No description", "无描述")}</p>
               </div>
+              {selectedVersions ? <div className="skill-version-strip">
+                {selectedVersions.managed ? <span className="skill-version-managed">{selectedVersions.managed}</span> : <>
+                  <span className="skill-version-copy"><small>{l("Local", "本地")}</small><strong>{selectedVersions.local}</strong></span>
+                  <span className="skill-version-divider" aria-hidden="true" />
+                  <span className="skill-version-copy"><small>{l("Cloud", "云端")}</small><strong>{selectedVersions.cloud}</strong></span>
+                </>}
+              </div> : null}
               <div className="skill-detail-tabs" role="tablist" aria-label={l("Skill details", "Skill 详情")}>
                 <button type="button" className={detailView === "local" ? "active" : ""} onClick={() => setDetailView("local")}>{l("Local", "本地")}</button>
                 <button type="button" className={detailView === "remote" ? "active" : ""} onClick={() => setDetailView("remote")}>{l("Remote", "云端")}</button>
@@ -546,30 +559,30 @@ export function SkillsDialog({
   );
 }
 
-function skillSyncVersionsLabel(entry: UnifiedSkillEntry, language: LanguageMode): string {
+function skillSyncVersions(entry: UnifiedSkillEntry, language: LanguageMode): { managed: string | null; local: string; cloud: string } {
   const managed = entry.local ? skillManagementLabel(entry.local.source, language) : null;
-  if (managed) return managed;
   const localVersion = entry.relation?.localSkillPath
     ? entry.remote && entry.relation.remoteContentHash === entry.relation.localContentHash
       ? `v${entry.remote.latest.version}`
       : localize(language, "present", "已安装")
     : localize(language, "not installed", "未安装");
   const cloudVersion = entry.remote ? `v${entry.remote.latest.version}` : localize(language, "not uploaded", "未上传");
-  return localize(language, `Local ${localVersion} · Cloud ${cloudVersion}`, `本地 ${localVersion} · 云端 ${cloudVersion}`);
+  return { managed, local: localVersion, cloud: cloudVersion };
 }
 
 function SkillDiffView({ snapshot, language }: { snapshot: SkillDiffSnapshot; language: LanguageMode }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
-  const changed = snapshot.files.filter((file) => file.status !== "unchanged").length;
+  const changedFiles = snapshot.files.filter((file) => file.status !== "unchanged");
   return (
     <div className="skill-diff-view">
       <div className={`skill-diff-summary ${snapshot.state}`}>
-        <strong>{snapshot.state === "identical" ? l("Local and cloud files are identical", "本地与云端文件完全一致") : l(`${changed} files differ`, `${changed} 个文件有差异`)}</strong>
+        <strong>{snapshot.state === "identical" ? l("Local and cloud files are identical", "本地与云端文件完全一致") : l(`${changedFiles.length} files differ`, `${changedFiles.length} 个文件有差异`)}</strong>
         <span>{l(`${snapshot.files.length} files compared`, `已比较 ${snapshot.files.length} 个文件`)}</span>
       </div>
       <div className="skill-diff-files">
-        {snapshot.files.map((file) => (
-          <details key={file.relativePath} className={`skill-diff-file ${file.status}`} open={file.relativePath === "SKILL.md" && file.status !== "unchanged"}>
+        {changedFiles.length === 0 ? <div className="skill-diff-empty">{l("No different files to display.", "没有需要显示的差异文件。")}</div> : null}
+        {changedFiles.map((file) => (
+          <details key={file.relativePath} className={`skill-diff-file ${file.status}`} open={file.relativePath === "SKILL.md"}>
             <summary>
               <span className="skill-diff-status">
                 {file.status === "added"

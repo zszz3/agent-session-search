@@ -93,12 +93,24 @@ describe("remote session comparison cards", () => {
     expect(sessionCopySummary(item("remote-only", { local: false }), "local")).toEqual({ present: false, missing: "no-local-copy" });
   });
 
-  it("renders a two-column comparison, one primary action, and a secondary menu", () => {
+  it("renders compact comparisons, keeps View visible, and aligns branch tags", () => {
     expect(source).toContain('className="remote-session-comparison"');
     expect(source).toContain('className={`remote-copy ${isLocal ? "local" : "cloud"}`}');
     expect(source).toContain("remote-session-primary-action");
+    expect(source).toContain("remote-session-view-action");
+    expect(source).toContain('remote && item.state !== "conflict"');
+    expect(source).toContain('l("Restore", "恢复")');
+    expect(source).toContain('remote ? l("Update", "更新") : l("Upload", "上传")');
+    expect(source).toContain('remote ? "" : "cloud-empty"');
+    expect(source).toContain("Number.isFinite(summary.updatedAt)");
+    expect(source).toContain('className="remote-session-tags"');
     expect(source).toContain("MoreHorizontal");
     expect(source).toContain("Resolve conflict");
     expect(stylesheet).toMatch(/\.remote-session-comparison\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
+    expect(stylesheet).toMatch(/\.remote-copy\s*\{[^}]*display:\s*flex/);
+    expect(stylesheet).toMatch(/\.remote-session-row\s*\{[^}]*grid-template-columns:\s*20px minmax\(0, 1fr\) 280px/);
+    expect(stylesheet).toMatch(/\.settings-feedback\.inline\.remote-session-feedback\s*\{[^}]*flex:\s*0 0 auto/);
+    expect(stylesheet).toMatch(/\.remote-session-action\.primary\s*\{[^}]*width:\s*auto/);
+    expect(stylesheet).toMatch(/\.remote-session-actions\.cloud-empty\s*\{[^}]*justify-content:\s*center/);
   });
 });

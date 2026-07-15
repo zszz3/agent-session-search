@@ -66,8 +66,18 @@ describe("skills dialog actions", () => {
     expect(unifiedList).toContain('className="unified-skill-item-head"');
     expect(unifiedList).toContain("title={entry.name}");
     expect(unifiedList).toContain("<SkillSourceBadge");
-    expect(unifiedList).toContain("skillSyncVersionsLabel(entry");
+    expect(unifiedList).toContain("skillSyncVersions(entry");
     expect(compactHead).toMatch(/display:\s*flex/);
     expect(compactHead).toMatch(/white-space:\s*nowrap/);
+  });
+
+  it("separates version status from the description and scrolls only changed files", () => {
+    const diffFiles = stylesheet.match(/\.skill-diff-files\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(skillsDialogSource).toContain('className="skill-version-strip"');
+    expect(skillsDialogSource).toContain('className="skill-version-copy"');
+    expect(skillsDialogSource).toContain('snapshot.files.filter((file) => file.status !== "unchanged")');
+    expect(skillsDialogSource).toContain("changedFiles.map");
+    expect(diffFiles).toMatch(/overflow-y:\s*auto/);
   });
 });

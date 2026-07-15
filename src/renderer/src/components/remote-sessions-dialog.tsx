@@ -377,7 +377,7 @@ export function RemoteSessionsDialog({
           />
         ) : null}
 
-        {feedback ? <div className={`settings-feedback inline ${feedback.kind}`}>{feedback.message}</div> : null}
+        {feedback ? <div className={`settings-feedback inline remote-session-feedback ${feedback.kind}`}>{feedback.message}</div> : null}
         <div className="remote-session-list">
           {loading ? <div className="remote-empty">{l("Loading remote sessions...", "正在加载远程会话...")}</div> : null}
           {!loading && status?.kind === "ready" && filtered.length === 0 ? <div className="remote-empty">{l("No syncable sessions found.", "没有找到可同步的会话。")}</div> : null}
@@ -389,6 +389,10 @@ export function RemoteSessionsDialog({
              const localCopy = sessionCopySummary(item, "local");
              const remoteCopy = sessionCopySummary(item, "remote");
              const primaryAction = primarySessionAction(item);
+             const branchLabel = local?.gitBranch
+               ? local.gitBranch.startsWith("branch:") ? local.gitBranch : `branch:${local.gitBranch}`
+               : null;
+             const tags = (local?.tags ?? remote?.tags ?? []).filter((tag) => tag !== branchLabel).slice(0, 5);
              return (
             <article key={item.id} className={`remote-session-row ${selectedIds.has(item.id) ? "selected" : ""}`}>
               <label className="remote-session-select" title={l("Select session", "选择会话")}>
@@ -404,33 +408,33 @@ export function RemoteSessionsDialog({
                  </div>
                  <div className="remote-session-context">
                    <span>{local?.projectPath || remote?.projectPath || l("No project path", "无项目路径")}</span>
-                   {local?.gitBranch ? <span>#{local.gitBranch}</span> : null}
                  </div>
                  <div className="remote-session-comparison">
                    <SessionCopyCard side="local" summary={localCopy} language={language} />
                    <SessionCopyCard side="remote" summary={remoteCopy} language={language} />
                  </div>
                 {local?.aiSummary || remote?.aiSummary ? <p>{local?.aiSummary ?? remote?.aiSummary}</p> : null}
-                {(local?.tags ?? remote?.tags ?? []).length > 0 ? (
-                  <div className="row-tags">
-                    {(local?.tags ?? remote?.tags ?? []).slice(0, 5).map((tag) => (
+                {branchLabel || tags.length > 0 ? (
+                  <div className="remote-session-tags">
+                    {branchLabel ? <span className="branch-tag">#{branchLabel}</span> : null}
+                    {tags.map((tag) => (
                       <span key={tag}>#{tag}</span>
                     ))}
                   </div>
                 ) : null}
                </div>
-               <div className="remote-session-actions">
-                 {primaryAction === "upload" && local ? <button type="button" className="remote-session-action primary remote-session-primary-action" disabled={uploading || deleting} onClick={() => void uploadOne(item)}>
-                   <CloudUpload size={14} />
-                   <span>{l("Upload", "上传")}</span>
-                 </button> : null}
-                 {primaryAction === "view" && remote ? <button type="button" className="remote-session-action primary remote-session-primary-action" onClick={() => void openDetail(remote)} disabled={detailLoadingId === remote.id || restoringId === remote.id}>
+               <div className={`remote-session-actions ${item.state} ${remote ? "" : "cloud-empty"}`}>
+                 {remote ? <button type="button" className="remote-session-action remote-session-view-action" onClick={() => void openDetail(remote)} disabled={detailLoadingId === remote.id || restoringId === remote.id}>
                    <Eye size={14} />
                    <span>{detailLoadingId === remote.id ? l("Loading...", "加载中...") : l("View", "查看")}</span>
                  </button> : null}
-                 {primaryAction === "restore" && remote ? <button type="button" className="remote-session-action primary remote-session-primary-action" onClick={() => setRestoreRequest({ remote, destination: "local" })} disabled={restoringId === remote.id}>
+                 {remote && item.state !== "conflict" ? <button type="button" className="remote-session-action primary remote-session-primary-action" onClick={() => setRestoreRequest({ remote, destination: "local" })} disabled={restoringId === remote.id}>
                    <ArrowRightLeft size={14} />
                    <span>{l("Restore", "恢复")}</span>
+                 </button> : null}
+                 {primaryAction === "upload" && local ? <button type="button" className="remote-session-action primary remote-session-primary-action" disabled={uploading || deleting} onClick={() => void uploadOne(item)}>
+                   <CloudUpload size={14} />
+                   <span>{remote ? l("Update", "更新") : l("Upload", "上传")}</span>
                  </button> : null}
                  {primaryAction === "resolve" ? <button type="button" className="remote-session-action primary remote-session-primary-action" disabled={uploading || deleting} onClick={() => setConflictItem(item)}>
                    <ArrowRightLeft size={14} />
@@ -441,7 +445,6 @@ export function RemoteSessionsDialog({
                      <MoreHorizontal size={15} />
                    </button>
                    {openActionsId === item.id ? <div className="remote-session-more-menu" onMouseDown={(event) => event.stopPropagation()}>
-                     {primaryAction !== "view" ? <button type="button" onClick={() => void openDetail(remote)}><Eye size={14} />{l("View", "查看")}</button> : null}
                      {remote.sourceEnvironmentKind === "ssh" ? <button type="button" onClick={() => setRestoreRequest({ remote, destination: "source" })}><Server size={14} />{l("Restore to source", "恢复到来源")}</button> : null}
                      <button type="button" className="danger" onClick={() => setDeleteCandidates([item])}><Trash2 size={14} />{l("Delete cloud copy", "删除云端副本")}</button>
                    </div> : null}
@@ -506,6 +509,9 @@ function SessionCopyCard({
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   const isLocal = side === "local";
+  const updatedLabel = summary.present && Number.isFinite(summary.updatedAt) && summary.updatedAt > 0
+    ? formatRelativeTime(summary.updatedAt)
+    : null;
   return (
     <div className={`remote-copy ${isLocal ? "local" : "cloud"}`}>
       <div className="remote-copy-title">
@@ -514,7 +520,7 @@ function SessionCopyCard({
       </div>
       {summary.present ? (
         <>
-          <strong>{formatRelativeTime(summary.updatedAt)}</strong>
+          {updatedLabel ? <strong>{updatedLabel}</strong> : null}
           <span>{l(`${summary.messageCount} messages`, `${summary.messageCount} 条消息`)}</span>
           {!isLocal && summary.syncedAt ? <small>{l(`Synced ${formatRelativeTime(summary.syncedAt)}`, `同步于 ${formatRelativeTime(summary.syncedAt)}`)}</small> : null}
         </>
