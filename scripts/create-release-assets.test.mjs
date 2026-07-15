@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { createReleaseAssets, LATEST_PACKAGE_NAME } from "./create-release-assets.mjs";
+import * as releaseAssetModule from "./create-release-assets.mjs";
+
+const { createReleaseAssets, LATEST_PACKAGE_NAME } = releaseAssetModule;
 
 test("creates a structured update manifest, checksum, and release notes from one source", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-session-release-"));
@@ -52,4 +54,50 @@ test("keeps update manifest URLs compatible after the repository rename", async 
 
   assert.equal(manifest.releaseUrl, "https://github.com/zszz3/agent-session-search/releases/tag/v0.5.0");
   assert.equal(manifest.package.url, "https://github.com/zszz3/agent-session-search/releases/download/v0.5.0/agent-session-search-0.5.0.tgz");
+});
+
+test("rejects a package filename that does not match the release version", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-session-release-version-"));
+  const notePath = path.join(root, "note.md");
+  const packagePath = path.join(root, "agent-session-search-0.1.0.tgz");
+  const outputDirectory = path.join(root, "release");
+  await writeFile(notePath, "# 自动更新\n\n## Bug 修复\n\n- 修复发布包版本错配。\n", "utf8");
+  await writeFile(packagePath, "package bytes", "utf8");
+
+  await assert.rejects(
+    releaseAssetModule.createReleaseAssets({
+      notePath,
+      version: "0.5.4",
+      packagePath,
+      repository: "zszz3/agent-session-search",
+      outputDirectory,
+    }),
+    /Release package filename .* does not match release version 0\.5\.4/,
+  );
+});
+
+test("validates the complete release asset set before publication", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-session-release-validation-"));
+  const notePath = path.join(root, "note.md");
+  const outputDirectory = path.join(root, "release");
+  const packagePath = path.join(outputDirectory, "agent-session-search-0.2.0.tgz");
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(notePath, "# 自动更新\n\n## 新增功能\n\n- 发布包可验证。\n", "utf8");
+  await writeFile(packagePath, "package bytes", "utf8");
+
+  await createReleaseAssets({
+    notePath,
+    version: "0.2.0",
+    packagePath,
+    repository: "zszz3/agent-session-search",
+    outputDirectory,
+  });
+  assert.equal(typeof releaseAssetModule.validateReleaseAssets, "function");
+  await releaseAssetModule.validateReleaseAssets({ outputDirectory, version: "0.2.0" });
+
+  await unlink(path.join(outputDirectory, "agent-session-search-0.2.0.tgz"));
+  await assert.rejects(
+    releaseAssetModule.validateReleaseAssets({ outputDirectory, version: "0.2.0" }),
+    /Missing release asset: agent-session-search-0\.2\.0\.tgz/,
+  );
 });

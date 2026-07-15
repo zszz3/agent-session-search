@@ -102,6 +102,10 @@ jobs:
             --package "release/$package_file" \
             --repository "$GITHUB_REPOSITORY" \
             --output release
+          node scripts/create-release-assets.mjs \
+            --validate \
+            --version "$VERSION" \
+            --output release
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
@@ -126,6 +130,18 @@ jobs:
             publish_draft=true
           fi
           gh release upload "$TAG" release/*.tgz release/*.sha256 release/update.json --clobber
+          verify_directory="$(mktemp -d)"
+          gh release download "$TAG" \
+            --pattern "agent-session-search-${VERSION}.tgz" \
+            --pattern "agent-session-search-${VERSION}.tgz.sha256" \
+            --pattern "agent-session-search.tgz" \
+            --pattern "agent-session-search.tgz.sha256" \
+            --pattern "update.json" \
+            --dir "$verify_directory"
+          node scripts/create-release-assets.mjs \
+            --validate \
+            --version "$VERSION" \
+            --output "$verify_directory"
           if [ "$publish_draft" = true ]; then
             gh release edit "$TAG" --draft=false
           fi
