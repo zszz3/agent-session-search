@@ -62,18 +62,20 @@ describe("remote sync", () => {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n"), "utf8");
     };
-    const codexRows = (rawId: string) => [
-      { type: "session_meta", timestamp: "2026-07-15T10:00:00Z", payload: { id: rawId, cwd: "/repo" } },
-      { type: "response_item", timestamp: "2026-07-15T10:00:01Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `question ${rawId}` }] } },
+    const codexRows = (rawId: string, sessionTimestamp = "2026-07-15T10:00:00Z", messageTimestamp = "2026-07-15T10:00:01Z") => [
+      { type: "session_meta", timestamp: sessionTimestamp, payload: { id: rawId, cwd: "/repo" } },
+      { type: "response_item", timestamp: messageTimestamp, payload: { type: "message", role: "user", content: [{ type: "input_text", text: `question ${rawId}` }] } },
     ];
-    const claudeRows = (rawId: string) => [
-      { type: "user", uuid: `${rawId}-user`, sessionId: rawId, cwd: "/repo", timestamp: "2026-07-15T10:00:00Z", message: { content: [{ type: "text", text: `question ${rawId}` }] } },
+    const claudeRows = (rawId: string, timestamp = "2026-07-15T10:00:00Z") => [
+      { type: "user", uuid: `${rawId}-user`, sessionId: rawId, cwd: "/repo", timestamp, message: { content: [{ type: "text", text: `question ${rawId}` }] } },
     ];
     try {
-      writeJsonl(path.join(tempHome, ".codex", "sessions", "claude", "codex.jsonl"), codexRows("codex-1"));
+      const codexPath = path.join(tempHome, ".codex", "sessions", "claude", "codex.jsonl");
+      writeJsonl(codexPath, codexRows("codex-1", "2026-07-15T10:00:00.123Z", "2026-07-15T10:00:01.456Z"));
+      fs.utimesSync(codexPath, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
       writeJsonl(path.join(tempHome, ".claude", "projects", "repo", "claude-1.jsonl"), claudeRows("claude-1"));
-      writeJsonl(path.join(tempHome, ".tclaude", "projects", "repo", "tclaude-1.jsonl"), claudeRows("tclaude-1"));
-      writeJsonl(path.join(tempHome, ".tcodex", "sessions", "tcodex.jsonl"), codexRows("tcodex-1"));
+      writeJsonl(path.join(tempHome, ".tclaude", "projects", "repo", "tclaude-1.jsonl"), claudeRows("tclaude-1", "2026-07-15T18:00:00+08:00"));
+      writeJsonl(path.join(tempHome, ".tcodex", "sessions", "tcodex.jsonl"), codexRows("tcodex-1", "2026-07-15T10:00:00+0000", "2026-07-15T05:30:01-04:30"));
       writeJsonl(path.join(tempHome, ".codebuddy", "projects", "repo", "codebuddy.jsonl"), [
         { type: "ai-title", aiTitle: "CodeBuddy title", sessionId: "codebuddy-1", cwd: "/repo", timestamp: 1_752_573_600_000 },
         { type: "message", role: "user", content: [{ type: "input_text", text: "CodeBuddy question" }], sessionId: "codebuddy-1", cwd: "/repo", timestamp: 1_752_573_601_000 },
@@ -109,10 +111,17 @@ describe("remote sync", () => {
         },
       });
 
-      const summaries = execFileSync("python3", ["-c", decodeCollectorScript(collectorCommand)], {
+      const collectorScript = decodeCollectorScript(collectorCommand);
+      expect(collectorScript).not.toContain("fromisoformat");
+      const summaries = execFileSync("python3", ["-c", collectorScript], {
         encoding: "utf8",
         env: { ...process.env, HOME: tempHome },
-      }).trim().split(/\r?\n/).map((line) => JSON.parse(line) as { source?: string; rawId: string });
+      }).trim().split(/\r?\n/).map((line) => JSON.parse(line) as {
+        source?: string;
+        rawId: string;
+        timestamp: number;
+        messageEvents: Array<{ index: number; timestamp: number }>;
+      });
       expect(summaries.map((item) => [item.source, item.rawId])).toEqual(expect.arrayContaining([
         ["claude-cli", "claude-1"],
         ["codex-cli", "codex-1"],
@@ -120,6 +129,24 @@ describe("remote sync", () => {
         ["tcodex-cli", "tcodex-1"],
         ["codebuddy-cli", "codebuddy-1"],
       ]));
+      const bySource = new Map(summaries.map((summary) => [summary.source, summary]));
+      expect(bySource.get("codex-cli")?.timestamp).toBe(new Date("2026-07-15T10:00:00.123Z").getTime());
+      expect(bySource.get("codex-cli")?.messageEvents).toEqual([
+        { index: 0, timestamp: new Date("2026-07-15T10:00:01.456Z").getTime() },
+      ]);
+      expect(bySource.get("claude-cli")?.messageEvents).toEqual([
+        { index: 0, timestamp: new Date("2026-07-15T10:00:00Z").getTime() },
+      ]);
+      expect(bySource.get("tclaude-cli")?.messageEvents).toEqual([
+        { index: 0, timestamp: new Date("2026-07-15T10:00:00Z").getTime() },
+      ]);
+      expect(bySource.get("tcodex-cli")?.messageEvents).toEqual([
+        { index: 0, timestamp: new Date("2026-07-15T10:00:01Z").getTime() },
+      ]);
+      expect(bySource.get("codebuddy-cli")?.messageEvents).toEqual([
+        { index: 0, timestamp: 1_752_573_601_000 },
+        { index: 1, timestamp: 1_752_573_602_000 },
+      ]);
       expect(store.getSession("ssh:ssh-devbox:claude-cli:same-id")).not.toBeNull();
       expect(store.getSession("ssh:ssh-devbox:tclaude-cli:same-id")).not.toBeNull();
       expect(store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-1")?.tokenUsage).toEqual({
@@ -1205,6 +1232,7 @@ describe("remote sync", () => {
         { type: "user", timestamp: "2026-07-15T10:00:00Z", message: { content: "remote question" } },
         { type: "assistant", timestamp: "2026-07-15T10:01:00Z", message: { content: "remote answer" } },
       ],
+      ["2026-07-15T10:00:00Z", "2026-07-15T10:01:00Z"],
     ],
     [
       "tcodex-cli",
@@ -1213,6 +1241,7 @@ describe("remote sync", () => {
         { type: "response_item", timestamp: "2026-07-15T10:00:00Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "remote question" }] } },
         { type: "response_item", timestamp: "2026-07-15T10:01:00Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "remote answer" }] } },
       ],
+      ["2026-07-15T10:00:00Z", "2026-07-15T10:01:00Z"],
     ],
     [
       "codebuddy-cli",
@@ -1221,8 +1250,9 @@ describe("remote sync", () => {
         { type: "message", role: "user", content: [{ type: "input_text", text: "remote question" }], timestamp: 1_752_573_600_000 },
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "remote answer" }], timestamp: 1_752_573_601_000 },
       ],
+      [new Date(1_752_573_600_000).toISOString(), new Date(1_752_573_601_000).toISOString()],
     ],
-  ] as const)("fetches the tail message page for %s", async (source, rows) => {
+  ] as const)("fetches the tail message page for %s", async (source, rows, expectedTimestamps) => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-page-"));
@@ -1242,6 +1272,7 @@ describe("remote sync", () => {
         ["user", "remote question"],
         ["assistant", "remote answer"],
       ]);
+      expect(messages.map((message) => message.timestamp)).toEqual(expectedTimestamps);
     } finally {
       store.close();
       fs.rmSync(tempDir, { recursive: true, force: true });

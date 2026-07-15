@@ -60,7 +60,7 @@ export const REMOTE_SYNC_EXEC_OPTIONS = {
 // pager enumerates, otherwise the detail view (which loads the tail window
 // `[messageCount - limit, messageCount)`) shows the wrong slice or hides the newest messages.
 const REMOTE_MESSAGE_PARSER_PY = String.raw`import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 def text_from_blocks(content):
   if isinstance(content, str):
@@ -172,16 +172,40 @@ def _tok_add(total, nxt):
   total["reasoningOutputTokens"] += nxt["reasoningOutputTokens"]
   total["totalTokens"] += nxt["totalTokens"]
 
+def _iso_timestamp_ms(value):
+  if not isinstance(value, str):
+    return None
+  match = re.match(r"^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$", value.strip())
+  if not match:
+    return None
+  try:
+    fraction = match.group(7) or ""
+    microsecond = int((fraction + "000000")[:6])
+    if match.group(8) or not match.group(9):
+      tz = timezone.utc
+    else:
+      offset_hours = int(match.group(10))
+      offset_minutes = int(match.group(11))
+      if offset_hours > 23 or offset_minutes > 59:
+        return None
+      sign = 1 if match.group(9) == "+" else -1
+      tz = timezone(timedelta(minutes=sign * (offset_hours * 60 + offset_minutes)))
+    parsed = datetime(
+      int(match.group(1)), int(match.group(2)), int(match.group(3)),
+      int(match.group(4)), int(match.group(5)), int(match.group(6)),
+      microsecond=microsecond, tzinfo=tz,
+    )
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = parsed.astimezone(timezone.utc) - epoch
+    return delta.days * 86400000 + delta.seconds * 1000 + delta.microseconds // 1000
+  except (OverflowError, TypeError, ValueError):
+    return None
+
 def _tok_timestamp(value):
   if isinstance(value, (int, float)) and not isinstance(value, bool):
     return int(value)
-  if isinstance(value, str):
-    try:
-      from datetime import datetime
-      return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
-    except Exception:
-      return 0
-  return 0
+  parsed = _iso_timestamp_ms(value)
+  return parsed if parsed is not None else 0
 
 def _tok_event(timestamp, key, usage):
   event = dict(usage)
@@ -940,12 +964,9 @@ def emit_codex_summary(path, stat, titles, source):
             git = payload.get("git")
             if isinstance(git, dict) and isinstance(git.get("branch"), str):
               git_branch = git.get("branch")
-          if isinstance(row.get("timestamp"), str):
-            try:
-              from datetime import datetime
-              timestamp = int(datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")).timestamp() * 1000)
-            except Exception:
-              pass
+          parsed_timestamp = _iso_timestamp_ms(row.get("timestamp"))
+          if parsed_timestamp is not None:
+            timestamp = parsed_timestamp
           continue
         accumulate_codex_tokens(token_state, row)
         parsed = parse_message(row, "codex")
