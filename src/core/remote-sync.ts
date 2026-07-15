@@ -60,6 +60,7 @@ export const REMOTE_SYNC_EXEC_OPTIONS = {
 // pager enumerates, otherwise the detail view (which loads the tail window
 // `[messageCount - limit, messageCount)`) shows the wrong slice or hides the newest messages.
 const REMOTE_MESSAGE_PARSER_PY = String.raw`import re
+from datetime import datetime, timezone
 
 def text_from_blocks(content):
   if isinstance(content, str):
@@ -97,6 +98,16 @@ def meaningful_user(text):
     return False
   return True
 
+def codebuddy_timestamp(value):
+  if isinstance(value, str):
+    return value
+  if isinstance(value, (int, float)) and not isinstance(value, bool):
+    try:
+      return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+      return ""
+  return ""
+
 def parse_message(row, kind):
   if not isinstance(row, dict):
     return None
@@ -124,7 +135,9 @@ def parse_message(row, kind):
     role = row.get("role")
     if not text or (role == "user" and not meaningful_user(text)):
       return None
-    return {"role": role, "content": text, "timestamp": row.get("timestamp")}
+    if role == "user" and row.get("parentId") is None and text.strip() == "code":
+      return None
+    return {"role": role, "content": text, "timestamp": codebuddy_timestamp(row.get("timestamp"))}
   if row.get("type") not in {"user", "assistant"}:
     return None
   message = row.get("message")

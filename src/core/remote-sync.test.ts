@@ -1095,6 +1095,54 @@ describe("remote sync", () => {
     expect(collectorScript).not.toContain("def meaningful(text):");
   });
 
+  it("keeps remote CodeBuddy summary counts and tail paging aligned with the local adapter", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-codebuddy-parser-"));
+    const filePath = path.join(tempHome, ".codebuddy", "projects", "repo", "codebuddy-parser.jsonl");
+    const userTimestamp = Date.UTC(2026, 6, 15, 10, 0, 0);
+    const assistantTimestamp = "2026-07-15T10:01:00.000Z";
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, [
+      { type: "ai-title", aiTitle: "CodeBuddy parser", sessionId: "codebuddy-parser", cwd: "/repo" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "code" }], sessionId: "codebuddy-parser", cwd: "/repo", timestamp: Date.UTC(2026, 6, 15, 9, 58, 0) },
+      { type: "message", role: "assistant", parentId: "root", content: [{ type: "output_text", text: "older answer" }], timestamp: Date.UTC(2026, 6, 15, 9, 59, 0) },
+      { type: "message", role: "user", parentId: "older", content: [{ type: "input_text", text: "remote question" }], timestamp: userTimestamp },
+      { type: "message", role: "assistant", parentId: "question", content: [{ type: "output_text", text: "remote answer" }], timestamp: assistantTimestamp },
+    ].map((row) => JSON.stringify(row)).join("\n"), "utf8");
+
+    try {
+      await syncRemoteEnvironment(store, environment, {
+        enabledOptionalSources: ["codebuddy-cli"],
+        runSsh: async (_remoteEnvironment, remoteCommand) => execFileSync(
+          "python3",
+          ["-c", decodeCollectorScript(remoteCommand)],
+          { encoding: "utf8", env: { ...process.env, HOME: tempHome } },
+        ),
+      });
+      const summary = store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-parser");
+      expect(summary).toMatchObject({ messageCount: 3, firstQuestion: "remote question" });
+
+      const session = summary as SessionSearchResult;
+      const allMessages = await fetchRemoteSessionMessagePage(environment, session, 0, 10, { runSsh: executeDecodedPython });
+      expect(allMessages.map((message) => message.content)).toEqual(["older answer", "remote question", "remote answer"]);
+      expect(allMessages.map((message) => message.timestamp)).toEqual([
+        "2026-07-15T09:59:00.000Z",
+        "2026-07-15T10:00:00.000Z",
+        assistantTimestamp,
+      ]);
+
+      const tailMessages = await fetchRemoteSessionMessagePage(environment, session, 1, 2, { runSsh: executeDecodedPython });
+      expect(tailMessages.map((message) => [message.role, message.content])).toEqual([
+        ["user", "remote question"],
+        ["assistant", "remote answer"],
+      ]);
+    } finally {
+      store.close();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("fetches one remote session file on demand without exposing the path to the remote shell", async () => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);
