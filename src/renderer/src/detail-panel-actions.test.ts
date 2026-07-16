@@ -89,6 +89,19 @@ describe("detail panel actions", () => {
     expect(detailPanelSource).not.toContain('`${messages.length} messages`');
   });
 
+  it("renders truncated assistant replies as Markdown before they are expanded", () => {
+    const messageBlock = detailPanelSource.slice(
+      detailPanelSource.indexOf("function MessageBlock"),
+      detailPanelSource.indexOf("function traceStatusSymbol"),
+    );
+
+    expect(messageBlock).toContain('const useMarkdown = message.role === "assistant" && !highlight;');
+    expect(messageBlock).toContain("<Markdown text={content} />");
+    expect(messageBlock).not.toContain(
+      'const useMarkdown = message.role === "assistant" && !highlight && (!truncated || expanded);',
+    );
+  });
+
   it("filters the loaded full conversation by role while keeping pagination available", () => {
     const showOlderIndex = detailPanelSource.indexOf("olderMessageCount > 0");
     const visibleItemsIndex = detailPanelSource.indexOf("visibleTimelineItems.map");
