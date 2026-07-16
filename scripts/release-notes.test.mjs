@@ -68,6 +68,11 @@ test("workflows require branch notes and publish only main commits associated wi
   assert.match(releaseWorkflow, /gh release upload/);
   assert.match(releaseWorkflow, /gh release view "\$TAG" --json isDraft --jq '\.isDraft'/);
   assert.match(releaseWorkflow, /already exists and is published; refusing to overwrite it/);
+  assert.match(releaseWorkflow, /node scripts\/compute-release-version\.mjs/);
+  const releaseRequiredGuards = releaseWorkflow.match(
+    /if: steps\.merged\.outputs\.publish == 'true' && steps\.version\.outputs\.release_required == 'true'/g,
+  );
+  assert.equal(releaseRequiredGuards?.length, 4, "all post-version release work must skip an already published commit");
   assert.match(releaseWorkflow, /gh release edit "\$TAG" --draft=false/);
   const tagIdentityName = releaseWorkflow.indexOf('git config user.name "github-actions[bot]"');
   const tagIdentityEmail = releaseWorkflow.indexOf('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');

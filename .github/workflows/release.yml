@@ -56,39 +56,24 @@ jobs:
         if: steps.merged.outputs.publish == 'true'
         id: version
         env:
+          GH_TOKEN: ${{ github.token }}
           NOTE_FILE: ${{ steps.merged.outputs.note_file }}
           MERGED_SHA: ${{ github.sha }}
-        run: |
-          git fetch --tags --force
-          existing_tag="$(git tag --points-at "$MERGED_SHA" --list 'v[0-9]*' --sort=-v:refname | head -1)"
-          if [ -n "$existing_tag" ]; then
-            version="${existing_tag#v}"
-          else
-            latest_tag="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)"
-            if [ -n "$latest_tag" ]; then
-              current_version="${latest_tag#v}"
-            else
-              current_version="$(node -p "require('./package.json').version")"
-            fi
-            version="$(node scripts/release-notes.mjs next-version "$current_version" "$NOTE_FILE")"
-          fi
-          npm version "$version" --no-git-tag-version
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+        run: node scripts/compute-release-version.mjs
 
       - name: Install dependencies
-        if: steps.merged.outputs.publish == 'true'
+        if: steps.merged.outputs.publish == 'true' && steps.version.outputs.release_required == 'true'
         run: npm ci
 
       - name: Test and build
-        if: steps.merged.outputs.publish == 'true'
+        if: steps.merged.outputs.publish == 'true' && steps.version.outputs.release_required == 'true'
         run: |
           npm test
           npm run typecheck
           npm run build
 
       - name: Build release assets
-        if: steps.merged.outputs.publish == 'true'
+        if: steps.merged.outputs.publish == 'true' && steps.version.outputs.release_required == 'true'
         id: assets
         env:
           NOTE_FILE: ${{ steps.merged.outputs.note_file }}
@@ -110,7 +95,7 @@ jobs:
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
-        if: steps.merged.outputs.publish == 'true'
+        if: steps.merged.outputs.publish == 'true' && steps.version.outputs.release_required == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
