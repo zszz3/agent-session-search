@@ -1121,6 +1121,7 @@ db.close()
     expect(capturedCommand).toMatch(/^python3 -c '[^']+'$/);
     expect(capturedCommand).not.toContain("<<");
     expect(capturedCommand).not.toContain("\n");
+    expect(Buffer.byteLength(capturedCommand, "utf-8")).toBeLessThan(32_767);
   });
 
   it("sends the remote collector as a manifest scanner without embedding session content", async () => {
