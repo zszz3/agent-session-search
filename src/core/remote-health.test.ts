@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { inflateRawSync } from "node:zlib";
 import { diagnoseRemoteEnvironment, preflightRemoteSessionResume } from "./remote-health";
 import type { SessionEnvironment, SessionSearchResult } from "./types";
 
@@ -31,7 +32,7 @@ const session = {
 function decodePythonCommand(command: string): string {
   const match = command.match(/base64\.b64decode\("([A-Za-z0-9+/=]+)"\)/);
   if (!match?.[1]) throw new Error("Expected an encoded Python command");
-  return Buffer.from(match[1], "base64").toString("utf-8");
+  return inflateRawSync(Buffer.from(match[1], "base64")).toString("utf-8");
 }
 
 describe("remote health checks", () => {

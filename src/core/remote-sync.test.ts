@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { inflateRawSync } from "node:zlib";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,7 +19,8 @@ import type { RemoteSessionFilePayload } from "./remote-session-loader";
 import type { SessionSearchResult } from "./types";
 
 function decodeCollectorScript(command: string): string {
-  return Buffer.from(command.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+  const encoded = command.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "";
+  return inflateRawSync(Buffer.from(encoded, "base64")).toString("utf-8");
 }
 
 async function executeDecodedPython(_environment: unknown, remoteCommand: string): Promise<string> {
@@ -728,7 +730,7 @@ describe("remote sync", () => {
         return "";
       },
     });
-    const collectorScript = Buffer.from(collectorCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+    const collectorScript = inflateRawSync(Buffer.from(collectorCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64")).toString("utf-8");
     expect(collectorScript).toContain("total_token_usage");
     expect(collectorScript).toContain('"tokenUsage"');
   });
@@ -878,7 +880,7 @@ db.close()
           return "";
         },
       });
-      const collectorScript = Buffer.from(collectorCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+      const collectorScript = inflateRawSync(Buffer.from(collectorCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64")).toString("utf-8");
       const output = execFileSync("python3", ["-c", collectorScript], {
         encoding: "utf8",
         env: { ...process.env, HOME: tempHome },
@@ -1135,7 +1137,7 @@ db.close()
     });
 
     const encodedScript = capturedCommand.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "";
-    const script = Buffer.from(encodedScript, "base64").toString("utf-8");
+    const script = inflateRawSync(Buffer.from(encodedScript, "base64")).toString("utf-8");
     expect(script).toContain("emit_codex_summary");
     expect(script).toContain("emit_claude_summary");
     expect(script).toContain("sorted(candidates");
@@ -1170,7 +1172,7 @@ db.close()
     );
 
     const decodeScript = (command: string): string =>
-      Buffer.from(command.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64").toString("utf-8");
+      inflateRawSync(Buffer.from(command.match(/b64decode\("([^"]+)"\)/)?.[1] ?? "", "base64")).toString("utf-8");
     const collectorScript = decodeScript(collectorCommand);
     const pageScript = decodeScript(pageCommand);
 
