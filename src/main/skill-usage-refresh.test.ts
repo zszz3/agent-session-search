@@ -1,33 +1,134 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { defaultSettings } from "../core/platform";
+import {
+  AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS,
+  INITIAL_SKILL_USAGE_REFRESH_DELAY_MS,
+} from "../core/refresh-policy";
+import { SkillService, type SkillStorePort } from "./services/skill-service";
 
-const mainSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-
-function sourceBlock(startNeedle: string, endNeedles: string[]): string {
-  const start = mainSource.indexOf(startNeedle);
-  expect(start).toBeGreaterThanOrEqual(0);
-  const ends = endNeedles.map((needle) => mainSource.indexOf(needle, start + startNeedle.length)).filter((index) => index >= 0);
-  expect(ends.length).toBeGreaterThan(0);
-  return mainSource.slice(start, Math.min(...ends));
+function createHarness(options: { throwOnSources?: boolean } = {}) {
+  const store: SkillStorePort = {
+    listProjects: vi.fn(() => []),
+    getSkillUsageSnapshot: vi.fn(() => ({
+      path: "/tmp/usage.jsonl",
+      exists: false,
+      totalEvents: 0,
+      stats: [],
+      byName: {},
+      byAgentName: {},
+    })),
+    isSkillUsageSourceFresh: vi.fn(() => false),
+    upsertSkillUsageSource: vi.fn(),
+    pruneSkillUsageSources: vi.fn(),
+    listSkillSyncBindings: vi.fn(() => []),
+    getSkillSyncBindingForPortableIdentity: vi.fn(() => null),
+    upsertSkillSyncBinding: vi.fn(),
+    deleteSkillSyncBindingsForRemoteIds: vi.fn(),
+  };
+  const timeoutCallbacks = new Map<number, () => void>();
+  const intervalCallbacks = new Map<number, () => void>();
+  const clearTimeout = vi.fn();
+  const clearInterval = vi.fn();
+  const listSkillUsageSources = vi.fn(() => {
+    if (options.throwOnSources) throw new Error("usage source failed");
+    return [];
+  });
+  const logError = vi.fn();
+  const service = new SkillService({
+    getStore: () => store,
+    getSettings: () => defaultSettings,
+    getHookSetup: () => ({
+      installSkillUsageHook: () => ({ status: "installed" }),
+      uninstallSkillUsageHook: () => ({ status: "removed" }),
+      skillUsageHookStatus: () => ({ installed: false }),
+    }),
+    copyText: vi.fn(),
+    revealPath: vi.fn(async () => undefined),
+    now: () => 123,
+    logError,
+    operations: { listSkillUsageSources },
+    timers: {
+      setTimeout: (callback) => {
+        timeoutCallbacks.set(1, callback);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimeout,
+      setInterval: (callback) => {
+        intervalCallbacks.set(2, callback);
+        return 2 as unknown as ReturnType<typeof setInterval>;
+      },
+      clearInterval,
+    },
+  });
+  return {
+    service,
+    store,
+    timeoutCallbacks,
+    intervalCallbacks,
+    clearTimeout,
+    clearInterval,
+    listSkillUsageSources,
+    logError,
+  };
 }
 
 describe("skill usage refresh lifecycle", () => {
-  it("refreshes skill usage after startup and on a background interval", () => {
-    const startupBlock = sourceBlock("app.whenReady().then(() => {", ["app.on(\"window-all-closed\""]);
-    const refreshBlock = sourceBlock("function startAutoSkillUsageRefresh(): void", ["function stopAutoSkillUsageRefresh"]);
+  it("starts exactly one initial refresh and one background interval", () => {
+    const harness = createHarness();
+    harness.service.startUsageRefresh();
+    harness.service.startUsageRefresh();
 
-    expect(mainSource).toContain("AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS");
-    expect(startupBlock).toContain("startAutoSkillUsageRefresh()");
-    expect(refreshBlock).toContain("setTimeout(() => {");
-    expect(refreshBlock).toContain("INITIAL_SKILL_USAGE_REFRESH_DELAY_MS");
-    expect(refreshBlock).toContain("setInterval(() => {");
-    expect(refreshBlock).toContain("refreshSkillUsageIndexSafely()");
-    expect(refreshBlock).toContain("AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS");
+    expect(harness.timeoutCallbacks.size).toBe(1);
+    expect(harness.intervalCallbacks.size).toBe(1);
+    harness.timeoutCallbacks.get(1)?.();
+    harness.intervalCallbacks.get(2)?.();
+
+    expect(harness.listSkillUsageSources).toHaveBeenCalledTimes(2);
+    expect(harness.store.pruneSkillUsageSources).toHaveBeenCalledTimes(2);
   });
 
-  it("stops skill usage refresh timers before quitting", () => {
-    const quitBlock = sourceBlock("app.on(\"before-quit\", () => {", ["});"]);
+  it("uses the configured refresh delays", () => {
+    const setTimeout = vi.fn(() => 1 as unknown as ReturnType<typeof globalThis.setTimeout>);
+    const setInterval = vi.fn(() => 2 as unknown as ReturnType<typeof globalThis.setInterval>);
+    const harness = createHarness();
+    const service = new SkillService({
+      getStore: () => harness.store,
+      getSettings: () => defaultSettings,
+      getHookSetup: () => ({
+        installSkillUsageHook: () => ({ status: "installed" }),
+        uninstallSkillUsageHook: () => ({ status: "removed" }),
+        skillUsageHookStatus: () => ({ installed: false }),
+      }),
+      copyText: vi.fn(),
+      revealPath: vi.fn(async () => undefined),
+      now: () => 123,
+      logError: vi.fn(),
+      operations: { listSkillUsageSources: vi.fn(() => []) },
+      timers: {
+        setTimeout,
+        clearTimeout: vi.fn(),
+        setInterval,
+        clearInterval: vi.fn(),
+      },
+    });
 
-    expect(quitBlock).toContain("stopAutoSkillUsageRefresh()");
+    service.startUsageRefresh();
+    expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), INITIAL_SKILL_USAGE_REFRESH_DELAY_MS);
+    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), AUTO_SKILL_USAGE_REFRESH_INTERVAL_MS);
+  });
+
+  it("clears both timers during shutdown", () => {
+    const harness = createHarness();
+    harness.service.startUsageRefresh();
+    harness.service.stopUsageRefresh();
+
+    expect(harness.clearTimeout).toHaveBeenCalledWith(1);
+    expect(harness.clearInterval).toHaveBeenCalledWith(2);
+  });
+
+  it("isolates background refresh failures and reports them", () => {
+    const harness = createHarness({ throwOnSources: true });
+    expect(() => harness.service.refreshUsageSafely()).not.toThrow();
+    expect(harness.logError).toHaveBeenCalledWith("Failed to refresh skill usage: usage source failed");
   });
 });

@@ -1,33 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AiChatMessage } from "../core/ai-assistant";
-import type { ApiConfig, ClaudeApiConfig } from "../core/api-config";
-import type { ApplyClaudeProfileResult } from "../core/claude-profile";
-import type { CodexChatProxyStatus } from "../core/codex-chat-proxy";
-import type { ApplyCodexProfileResult, CodexConfigSnapshot, CodexModelProbeResult } from "../core/codex-profile";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
-import type { AppUpdateInstallResult, AppUpdateStatus } from "../core/app-update-types";
 import type { IndexStatus } from "../core/indexer";
 import type { RemoteHealthReport } from "../core/remote-health";
-import type {
-  RemoteSessionDetailSnapshot,
-  RemoteSessionDeleteResult,
-  RemoteSessionListItem,
-  RemoteSessionStatus,
-  RemoteSessionUploadResult,
-  SessionSyncItem,
-} from "../core/remote-session-sync";
 import type { ResumeRouteResult } from "../core/resume-router";
-import type { SessionSyncHookStatus } from "../core/session-sync-queue";
 import type { TraceEventQueryOptions } from "../core/session-store";
-import type { RemoteSkill, SkillSyncBatchResult, SkillSyncInstallResult, SkillSyncSnapshot, SkillSyncUploadOutcome } from "../core/skill-sync";
-import type { DeleteInstalledSkillResult, InstalledSkillsSnapshot } from "../core/skill-manager";
-import type { SkillDiffSnapshot } from "../core/skill-diff";
-import type { SkillUsageRefreshStatus } from "../core/skill-usage";
 import type { SshConfigHost } from "../core/ssh-config";
 import type {
   EnvironmentUpsertInput,
   LiveSessionSnapshot,
-  MigrationAgent,
   MigrationTarget,
   ProjectSummary,
   ProjectQueryOptions,
@@ -45,6 +26,10 @@ import type {
   TagListOptions,
   UsageQuotaSnapshot,
 } from "../core/types";
+import { createAppUpdateApi } from "./app-update";
+import { createProvidersApi } from "./providers";
+import { createRemoteSessionsApi } from "./remote-sessions";
+import { createSkillsApi } from "./skills";
 
 export interface AiAssistantReply {
   reply: string;
@@ -95,54 +80,14 @@ const api = {
   deleteSession: (sessionKey: string): Promise<boolean> => ipcRenderer.invoke("session:delete", sessionKey),
   refreshIndex: (): Promise<IndexStatus> => ipcRenderer.invoke("index:refresh"),
   getIndexStatus: (): Promise<IndexStatus> => ipcRenderer.invoke("index:status"),
-  getAppUpdateStatus: (force = false): Promise<AppUpdateStatus> => ipcRenderer.invoke("app-update:get-status", force),
-  installAppUpdate: (): Promise<AppUpdateInstallResult> => ipcRenderer.invoke("app-update:install"),
-  skipAppUpdate: (untilNextVersion = false): Promise<AppUpdateStatus> => ipcRenderer.invoke("app-update:skip", untilNextVersion),
+  ...createAppUpdateApi(ipcRenderer),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
   setSettings: (settings: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke("settings:set", settings),
-  getCodexConfig: (): Promise<CodexConfigSnapshot> => ipcRenderer.invoke("codex-config:get"),
-  probeCodexModels: (input: { baseUrl: string; apiKey: string; providerId?: string }): Promise<CodexModelProbeResult> => ipcRenderer.invoke("codex-config:probe-models", input),
-  applyCodexProfile: (apiConfig: ApiConfig): Promise<ApplyCodexProfileResult> => ipcRenderer.invoke("codex-profile:apply", apiConfig),
-  getCodexChatProxyStatus: (): Promise<CodexChatProxyStatus | null> => ipcRenderer.invoke("codex-chat-proxy:status"),
-  stopCodexChatProxy: (): Promise<null> => ipcRenderer.invoke("codex-chat-proxy:stop"),
-  applyClaudeProfile: (apiConfig: ClaudeApiConfig): Promise<ApplyClaudeProfileResult> => ipcRenderer.invoke("claude-profile:apply", apiConfig),
-  getApiProviderKey: (target: "codex" | "claude" | "summary", providerId: string): Promise<string> =>
-    ipcRenderer.invoke("api-provider-key:get", target, providerId),
-  listSkills: (): Promise<InstalledSkillsSnapshot> => ipcRenderer.invoke("skills:list"),
-  refreshSkillUsage: (): Promise<SkillUsageRefreshStatus> => ipcRenderer.invoke("skills:refresh-usage"),
-  getSkillSyncSnapshot: (): Promise<SkillSyncSnapshot> => ipcRenderer.invoke("skills:sync-snapshot"),
-  uploadSkillToSync: (skillPath: string, force?: boolean): Promise<SkillSyncUploadOutcome> => ipcRenderer.invoke("skills:sync-upload", skillPath, force),
-  installSyncedSkill: (remoteSkillId: string): Promise<SkillSyncInstallResult> => ipcRenderer.invoke("skills:sync-install", remoteSkillId),
-  downloadSyncedSkills: (fingerprints: string[]): Promise<SkillSyncBatchResult> => ipcRenderer.invoke("skills:sync-download-many", fingerprints),
-  deleteSyncedSkills: (fingerprints: string[]): Promise<SkillSyncBatchResult> => ipcRenderer.invoke("skills:sync-delete-many", fingerprints),
-  getSyncedSkillVersion: (remoteSkillId: string): Promise<RemoteSkill> => ipcRenderer.invoke("skills:sync-get-version", remoteSkillId),
-  getSyncedSkillDiff: (localSkillPath: string | null, remoteSkillId: string | null): Promise<SkillDiffSnapshot> =>
-    ipcRenderer.invoke("skills:sync-diff", localSkillPath, remoteSkillId),
-  copySkillSyncSetupSql: (): Promise<void> => ipcRenderer.invoke("skills:sync-copy-setup-sql"),
+  ...createProvidersApi(ipcRenderer),
+  ...createSkillsApi(ipcRenderer),
+  ...createRemoteSessionsApi(ipcRenderer),
   copyCombinedSyncSetupSql: (): Promise<void> => ipcRenderer.invoke("supabase:copy-combined-setup-sql"),
   openSupabaseSqlEditor: (target: "sessions" | "skills"): Promise<void> => ipcRenderer.invoke("supabase:open-sql-editor", target),
-  getRemoteSessionStatus: (): Promise<RemoteSessionStatus> => ipcRenderer.invoke("remote-session:status"),
-  copyRemoteSessionSetupSql: (): Promise<void> => ipcRenderer.invoke("remote-session:copy-setup-sql"),
-  getSessionSyncHookStatus: (): Promise<SessionSyncHookStatus> => ipcRenderer.invoke("remote-session:hook-status"),
-  installSessionSyncHooks: (): Promise<SessionSyncHookStatus> => ipcRenderer.invoke("remote-session:install-hooks"),
-  uninstallSessionSyncHooks: (): Promise<SessionSyncHookStatus> => ipcRenderer.invoke("remote-session:uninstall-hooks"),
-  uploadRemoteSession: (sessionKey: string, force?: boolean): Promise<RemoteSessionUploadResult> => ipcRenderer.invoke("remote-session:upload", sessionKey, force),
-  listRemoteSessions: (query?: string): Promise<RemoteSessionListItem[]> => ipcRenderer.invoke("remote-session:list", query),
-  listSessionSyncItems: (): Promise<SessionSyncItem[]> => ipcRenderer.invoke("remote-session:sync-items"),
-  getRemoteSessionDetail: (remoteId: string): Promise<RemoteSessionDetailSnapshot> => ipcRenderer.invoke("remote-session:detail", remoteId),
-  chooseRemoteRestoreProject: (): Promise<string | null> => ipcRenderer.invoke("remote-session:choose-project"),
-  restoreRemoteSession: (remoteId: string, target: MigrationAgent, localProjectPath: string): Promise<SessionMigrationResult> =>
-    ipcRenderer.invoke("remote-session:restore", remoteId, target, localProjectPath),
-  restoreRemoteSessionToSourceEnvironment: (remoteId: string, target: MigrationAgent): Promise<SessionMigrationResult> =>
-    ipcRenderer.invoke("remote-session:restore-to-source-environment", remoteId, target),
-  deleteRemoteSession: (remoteId: string): Promise<boolean> => ipcRenderer.invoke("remote-session:delete", remoteId),
-  deleteRemoteSessions: (remoteIds: string[]): Promise<RemoteSessionDeleteResult> => ipcRenderer.invoke("remote-session:delete-many", remoteIds),
-  copySkillPath: (skillPath: string): Promise<void> => ipcRenderer.invoke("skills:copy-path", skillPath),
-  revealSkill: (targetPath: string): Promise<void> => ipcRenderer.invoke("skills:reveal", targetPath),
-  deleteSkill: (skillPath: string): Promise<DeleteInstalledSkillResult> => ipcRenderer.invoke("skills:delete", skillPath),
-  getSkillUsageHookStatus: (): Promise<boolean> => ipcRenderer.invoke("skills:usage-hook-status"),
-  installSkillUsageHook: (): Promise<string> => ipcRenderer.invoke("skills:install-usage-hook"),
-  uninstallSkillUsageHook: (): Promise<string> => ipcRenderer.invoke("skills:uninstall-usage-hook"),
   copyResumeCommand: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-resume", sessionKey),
   resumeSession: (sessionKey: string): Promise<ResumeRouteResult> => ipcRenderer.invoke("command:resume", sessionKey),
   resumeSessionInIterm: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:resume-iterm", sessionKey),
@@ -157,11 +102,6 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: IndexStatus) => callback(status);
     ipcRenderer.on("index-status", listener);
     return () => ipcRenderer.removeListener("index-status", listener);
-  },
-  onAppUpdateStatus: (callback: (status: AppUpdateStatus) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, status: AppUpdateStatus) => callback(status);
-    ipcRenderer.on("app-update:status", listener);
-    return () => ipcRenderer.removeListener("app-update:status", listener);
   },
   onMigrationProgress: (callback: (progress: SessionMigrationProgress) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: SessionMigrationProgress) => callback(progress);

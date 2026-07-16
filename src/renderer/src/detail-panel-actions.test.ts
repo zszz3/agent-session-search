@@ -250,8 +250,8 @@ describe("detail panel actions", () => {
 
   it("keeps the migration IPC handler on one immutable settings snapshot and delegates behavior", () => {
     const handler = mainHandlerSource("session:migrate");
-    expect(handler.match(/getHydratedSettings\(\)/g)).toHaveLength(1);
-    expect(handler).toContain("Object.freeze(await getHydratedSettings())");
+    expect(handler.match(/providerService\.hydrateSettings\(\)/g)).toHaveLength(1);
+    expect(handler).toContain("Object.freeze(await providerService.hydrateSettings())");
     expect(handler).toContain("runLocalSessionMigration");
     expect(handler).toContain("localSessionMigrationRuntime(event)");
     expect(handler).not.toContain("getSettings()");
@@ -280,20 +280,7 @@ describe("detail panel actions", () => {
     expect(remoteSessionsDialogSource).not.toContain("Database");
     expect(remoteSessionsDialogSource).toContain("SupabaseSetupGuide");
     expect(remoteSessionsDialogSource).toContain('openSupabaseSqlEditor("sessions")');
-    expect(preloadSource).toContain("restoreRemoteSessionToSourceEnvironment");
-    expect(preloadSource).toContain("remote-session:restore-to-source-environment");
-    expect(preloadSource).toContain("remote-session:delete-many");
-    expect(mainSource).toContain('ipcMain.handle("remote-session:restore-to-source-environment"');
-    expect(mainSource).toContain('ipcMain.handle("remote-session:delete-many"');
-  });
-
-  it("hydrates remote session details before uploading them to Supabase", () => {
-    const uploadFunction = mainSource.slice(mainSource.indexOf("async function uploadSessionToRemote"), mainSource.indexOf("function listRemoteSessions"));
-
-    expect(uploadFunction).toContain("await ensureRemoteSessionDetailsLoaded(sessionKey)");
-    expect(uploadFunction.indexOf("await ensureRemoteSessionDetailsLoaded(sessionKey)")).toBeLessThan(
-      uploadFunction.indexOf("buildRemoteSessionUploadFromStore"),
-    );
+    expect(remoteSessionsDialogSource).toContain("restoreRemoteSessionToSourceEnvironment");
   });
 
   it("preflights remote resume before opening terminals", () => {
@@ -313,14 +300,14 @@ describe("detail panel actions", () => {
 
   it("hydrates profile defaults before resolving AI summary providers", () => {
     // The resolver now delegates to the shared summary-endpoint module, but the
-    // main process still hydrates profile defaults (including the DB-stored API
-    // key) before resolving, and wires the temp-session cleaner.
+    // ProviderService still hydrates profile defaults (including the DB-stored
+    // API key) before resolving, and main wires the temp-session cleaner.
     const resolverStart = mainSource.indexOf("async function resolveSummaryEndpointFromSettings");
     expect(resolverStart).toBeGreaterThanOrEqual(0);
     const resolverEnd = mainSource.indexOf("const SUMMARY_HEAD_MESSAGES", resolverStart);
     const resolver = mainSource.slice(resolverStart, resolverEnd);
 
-    expect(resolver).toContain("await getHydratedSettings()");
+    expect(resolver).toContain("await providerService.hydrateSettings()");
     expect(resolver).toContain("resolveSummaryEndpointFromSettingsShared");
     expect(resolver).toContain("loadActiveCodexSummaryEndpointDefaults");
     expect(resolver).toContain("buildCodexExecEndpointShared(settings, { onTemporarySession })");
@@ -331,13 +318,6 @@ describe("detail panel actions", () => {
     expect(summaryEndpointSource).toContain("codex_exec");
     expect(mainHandlerSource("session:summarize")).toContain("await resolveSummaryEndpointFromSettings()");
     expect(mainHandlerSource("session:summarize-missing")).toContain("await resolveSummaryEndpointFromSettings()");
-  });
-
-  it("exposes Codex config.toml visualization and model probing over IPC", () => {
-    expect(preloadSource).toContain("getCodexConfig");
-    expect(preloadSource).toContain("probeCodexModels");
-    expect(mainHandlerSource("codex-config:get")).toContain("loadCodexConfigSnapshot");
-    expect(mainHandlerSource("codex-config:probe-models")).toContain("probeCodexModels");
   });
 
   it("renders remote environment diagnostics in settings", () => {

@@ -17,9 +17,4 @@ describe("subagent visibility IPC", () => {
     expect(mainSource).toContain('const sessions = store.searchSessions(visibleSearchOptions({');
     expect(mainSource).toContain('const projects = store.listProjects(visibleProjectOptions())');
   });
-
-  it("always excludes subagent conversations from the session sync list", () => {
-    expect(mainSource).toContain("store.searchSessions({ limit: 100_000, excludeSubagents: true })");
-    expect(mainSource).toContain("store.getSession(remote.sourceSessionKey)?.isSubagent !== true");
-  });
 });

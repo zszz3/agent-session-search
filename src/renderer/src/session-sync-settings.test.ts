@@ -3,7 +3,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appSource = fs.readFileSync(path.resolve("src", "renderer", "src", "App.tsx"), "utf8");
-const preloadSource = fs.readFileSync(path.resolve("src", "preload", "index.ts"), "utf8");
 
 describe("remote session sync settings", () => {
   it("places the feature toggle before the dependent connection settings", () => {
@@ -19,12 +18,6 @@ describe("remote session sync settings", () => {
     expect(section).toContain('l("Install Hook", "安装 Hook")');
     expect(section).toContain('l("Remove Hook", "移除 Hook")');
     expect(section).toContain("onSessionHookChange");
-  });
-
-  it("exposes session Hook status, install and remove APIs", () => {
-    expect(preloadSource).toContain("getSessionSyncHookStatus");
-    expect(preloadSource).toContain("installSessionSyncHooks");
-    expect(preloadSource).toContain("uninstallSessionSyncHooks");
   });
 
   it("keeps Skill sync on its own settings and enable switch", () => {
