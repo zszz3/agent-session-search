@@ -10,6 +10,7 @@ import {
   loadOpenClawSessions,
   loadOpenCodeSessions,
   loadTraeSessions,
+  loadQoderSessions,
 } from "./session-loader";
 
 const require = createRequire(import.meta.url);
@@ -104,6 +105,50 @@ describe("extra session sources", () => {
     });
     expect(loaded[0].messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(loaded[0].messages[1].content).toContain("Found redundant API polling");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("loads Qoder conversation history JSONL as searchable sessions", () => {
+    const root = tmpDir("qoder");
+    const filePath = path.join(root, "cache", "projects", "demo-app-1a2b3c4d", "conversation-history", "task-fe3", "task-fe3.jsonl");
+    writeJsonl(filePath, [
+      { role: "user", message: { content: [{ type: "text", text: "Fix the login bug" }] } },
+      { role: "assistant", message: { content: [{ type: "text", text: "I will check the auth module." }] } },
+    ]);
+
+    const loaded = loadQoderSessions(root);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session).toMatchObject({
+      sessionKey: "qoder:demo-app-1a2b3c4d/task-fe3",
+      rawId: "demo-app-1a2b3c4d/task-fe3",
+      source: "qoder",
+      projectPath: "demo-app",
+      firstQuestion: "Fix the login bug",
+      originalTitle: "Fix the login bug",
+    });
+    expect(loaded[0].messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(loaded[0].messages[0].content).toBe("Fix the login bug");
+    expect(loaded[0].messages[1].content).toBe("I will check the auth module.");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("skips empty Qoder conversation files and concatenates multi-element content", () => {
+    const root = tmpDir("qoder-edge");
+    const emptyPath = path.join(root, "cache", "projects", "proj-aabbccdd", "conversation-history", "task-empty", "task-empty.jsonl");
+    writeJsonl(emptyPath, []);
+    const multiPath = path.join(root, "cache", "projects", "proj-aabbccdd", "conversation-history", "task-multi", "task-multi.jsonl");
+    writeJsonl(multiPath, [
+      { role: "user", message: { content: [{ type: "text", text: "First part" }, { type: "text", text: "Second part" }] } },
+    ]);
+
+    const loaded = loadQoderSessions(root);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session.rawId).toBe("proj-aabbccdd/task-multi");
+    expect(loaded[0].messages[0].content).toBe("First part\nSecond part");
 
     fs.rmSync(root, { recursive: true, force: true });
   });

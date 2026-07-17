@@ -107,6 +107,7 @@ describe("platform application resolution", () => {
     expect(defaultSettings.includeOpenCode).toBe(false);
     expect(defaultSettings.includeCursorAgent).toBe(false);
     expect(defaultSettings.includeTrae).toBe(false);
+    expect(defaultSettings.includeQoder).toBe(false);
   });
 
   it("preserves persisted personalization flags across app restarts and updates", () => {

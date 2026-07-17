@@ -36,6 +36,7 @@ const LIVE_SESSION_KEY_SQL = `
     WHEN source = 'codebuddy-cli' THEN 'codebuddy:' || raw_id
     WHEN source = 'codewiz-cli' THEN 'codewiz:' || raw_id
     WHEN source = 'trae' THEN 'trae:' || raw_id
+    WHEN source = 'qoder' THEN 'qoder:' || raw_id
     ELSE NULL
   END
 `;

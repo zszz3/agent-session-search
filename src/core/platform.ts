@@ -84,6 +84,7 @@ export interface AppSettings {
   includeOpenCode: boolean;
   includeCursorAgent: boolean;
   includeTrae: boolean;
+  includeQoder: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
   hideSubagentSessions: boolean;
@@ -140,6 +141,7 @@ export const defaultSettings: AppSettings = {
   includeOpenCode: false,
   includeCursorAgent: false,
   includeTrae: false,
+  includeQoder: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
   hideSubagentSessions: true,
@@ -198,7 +200,7 @@ function normalizeCompressionConcurrency(value: number): number {
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
 
-type SourceFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+type SourceFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
 
 function sourceDisplayName(source: SessionSource): string {
   if (source === "opencode-cli") return "OpenCode";
@@ -206,6 +208,7 @@ function sourceDisplayName(source: SessionSource): string {
   if (source === "openclaw") return "OpenClaw";
   if (source === "hermes") return "Hermes";
   if (source === "trae") return "Trae";
+  if (source === "qoder") return "Qoder";
   if (source === "tclaude-cli") return "TClaude";
   if (source === "tcodex-cli") return "TCodex";
   if (source === "codebuddy-cli") return "CodeBuddy";
@@ -224,6 +227,7 @@ export function sourceFamily(source: SessionSource): SourceFamily {
   if (source === "opencode-cli") return "opencode";
   if (source === "cursor-agent") return "cursor";
   if (source === "trae") return "trae";
+  if (source === "qoder") return "qoder";
   return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
 }
 

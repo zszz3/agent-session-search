@@ -652,6 +652,19 @@ export function SettingsDialog({
                     onChange={(event) => onSettingsChange({ includeTrae: event.currentTarget.checked })}
                   />
                 </label>
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">Include Qoder</span>
+                    <span className="settings-field-sub">{l("Indexes local Qoder conversation history.", "索引本地 Qoder 对话记录。")}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.includeQoder)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ includeQoder: event.currentTarget.checked })}
+                  />
+                </label>
               </section>
             ) : null}
             {activeSection === "usage" ? (

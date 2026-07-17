@@ -172,7 +172,7 @@ const DEFAULT_MIGRATION_TARGET_SETTINGS = {
 } satisfies MigrationTargetSettings;
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
-type PendingSourceKey = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+type PendingSourceKey = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
 type OptionalSourceSettingKey = keyof Pick<
   AppSettings,
   | "includeClaudeInternal"
@@ -186,6 +186,7 @@ type OptionalSourceSettingKey = keyof Pick<
   | "includeOpenCode"
   | "includeCursorAgent"
   | "includeTrae"
+  | "includeQoder"
 >;
 
 const OPTIONAL_SOURCE_SETTINGS: Array<{ key: OptionalSourceSettingKey; pendingKey: PendingSourceKey; filter: SearchOptions["source"] }> = [
@@ -200,6 +201,7 @@ const OPTIONAL_SOURCE_SETTINGS: Array<{ key: OptionalSourceSettingKey; pendingKe
   { key: "includeOpenCode", pendingKey: "opencode", filter: "opencode-cli" },
   { key: "includeCursorAgent", pendingKey: "cursor", filter: "cursor-agent" },
   { key: "includeTrae", pendingKey: "trae", filter: "trae" },
+  { key: "includeQoder", pendingKey: "qoder", filter: "qoder" },
 ];
 
 const INITIAL_SESSION_LIMIT = 30;
@@ -382,6 +384,7 @@ export function App(): ReactElement {
     opencode: false,
     cursor: false,
     trae: false,
+    qoder: false,
   });
   const loadSeqRef = useRef(0);
   const metadataLoadSeqRef = useRef(0);
@@ -1087,6 +1090,7 @@ export function App(): ReactElement {
       includeOpenCode: appSettings.includeOpenCode && !pendingPersonalSources.opencode,
       includeCursorAgent: appSettings.includeCursorAgent && !pendingPersonalSources.cursor,
       includeTrae: appSettings.includeTrae && !pendingPersonalSources.trae,
+      includeQoder: appSettings.includeQoder && !pendingPersonalSources.qoder,
     });
   }, [appSettings, pendingPersonalSources]);
   const selectedProject = useMemo(

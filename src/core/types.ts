@@ -13,8 +13,9 @@ export type SessionSource =
   | "hermes"
   | "opencode-cli"
   | "cursor-agent"
-  | "trae";
-export type SessionFormat = "claude" | "codex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+  | "trae"
+  | "qoder";
+export type SessionFormat = "claude" | "codex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
 export type SessionSortBy = "activity" | "created";
 export type EnvironmentKind = "local" | "ssh";
 export type EnvironmentSyncState = "idle" | "syncing" | "watching" | "disconnected" | "error";

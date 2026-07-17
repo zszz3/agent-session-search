@@ -110,7 +110,7 @@ const PRODUCT_NAME = "AgentRecall";
 const TRAY_ICON_RELATIVE_PATH = path.join("assets", "tray-iconTemplate.png");
 const releaseUpdateRuntime = app.isPackaged || process.env.AGENT_RECALL_RELEASE_BUILD === "1";
 
-const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeTclaude" | "includeTcodex" | "includeCodeBuddyCli" | "includeCodeWizCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae">; sources: SessionSource[] }> = [
+const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeTclaude" | "includeTcodex" | "includeCodeBuddyCli" | "includeCodeWizCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae" | "includeQoder">; sources: SessionSource[] }> = [
   { key: "includeClaudeInternal", sources: ["claude-internal"] },
   { key: "includeCodexInternal", sources: ["codex-internal"] },
   { key: "includeTclaude", sources: ["tclaude-cli"] },
@@ -122,6 +122,7 @@ const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeCla
   { key: "includeOpenCode", sources: ["opencode-cli"] },
   { key: "includeCursorAgent", sources: ["cursor-agent"] },
   { key: "includeTrae", sources: ["trae"] },
+  { key: "includeQoder", sources: ["qoder"] },
 ];
 
 // The skill-usage hook installer is a self-contained CommonJS script in bin/

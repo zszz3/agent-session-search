@@ -188,6 +188,7 @@ describe("session migration model", () => {
     ["opencode-cli", null],
     ["cursor-agent", "cursor"],
     ["trae", null],
+    ["qoder", null],
   ] as const)("maps %s to %s", (source, expected) => {
     expect(migrationAgentForSource(source)).toBe(expected);
   });

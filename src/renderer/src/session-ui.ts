@@ -33,6 +33,7 @@ export const SOURCE_LABEL: Record<SessionSource, string> = {
   "opencode-cli": "OpenCode",
   "cursor-agent": "Cursor Agent",
   trae: "Trae",
+  qoder: "Qoder",
 };
 
 export interface UsageStatsDisplayRow extends SessionStatsSummary {
@@ -96,6 +97,7 @@ export function sourceFilters(settings: AppSettings | null): Array<{ label: stri
     ...(settings?.includeOpenCode ? [{ label: "OpenCode", value: "opencode-cli" as const }] : []),
     ...(settings?.includeCursorAgent ? [{ label: "Cursor Agent", value: "cursor-agent" as const }] : []),
     ...(settings?.includeTrae ? [{ label: "Trae", value: "trae" as const }] : []),
+    ...(settings?.includeQoder ? [{ label: "Qoder", value: "qoder" as const }] : []),
   ];
 }
 

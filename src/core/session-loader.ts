@@ -31,6 +31,7 @@ const TCLAUDE_DIR = ".tclaude";
 const TCODEX_DIR = ".tcodex";
 const CODEBUDDY_DIR = ".codebuddy";
 const CODEWIZ_SHARE_DIR = path.join(".local", "share", "codewiz");
+const QODER_DIR = ".qoder";
 
 export interface SessionLoadOptions {
   homeDir?: string;
@@ -45,6 +46,7 @@ export interface SessionLoadOptions {
   includeOpenCode?: boolean;
   includeCursorAgent?: boolean;
   includeTrae?: boolean;
+  includeQoder?: boolean;
   cursorWorkspacePathMap?: ReadonlyMap<string, string>;
   shouldSkipFile?: (filePath: string, stat: VirtualSessionFileStat, dependencyMtimeMs?: number) => boolean;
   onSkippedFile?: (filePath: string, stat: VirtualSessionFileStat) => void;
@@ -723,7 +725,7 @@ function firstClaudeGitBranch(rows: unknown[]): string | null {
 }
 
 function createIndexedSession(input: {
-  keyPrefix: "claude" | "codex" | "claude-internal" | "codex-internal" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae";
+  keyPrefix: "claude" | "codex" | "claude-internal" | "codex-internal" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
   rawId: string;
   source: SessionSource;
   projectPath: string;
@@ -1367,6 +1369,75 @@ export function* loadTraeSessionsIterator(traeDir = path.join(os.homedir(), ".tr
   }
 }
 
+export function loadQoderSessions(qoderDir = path.join(os.homedir(), QODER_DIR)): LoadedSession[] {
+  return [...loadQoderSessionsIterator(qoderDir)];
+}
+
+export function* loadQoderSessionsIterator(qoderDir = path.join(os.homedir(), QODER_DIR), options: SessionLoadOptions = {}): Generator<LoadedSession> {
+  const projectsDir = path.join(qoderDir, "cache", "projects");
+  if (!fs.existsSync(projectsDir)) return;
+  for (const projectEntry of fs.readdirSync(projectsDir, { withFileTypes: true })) {
+    if (!projectEntry.isDirectory()) continue;
+    const slug = projectEntry.name;
+    const conversationDir = path.join(projectsDir, slug, "conversation-history");
+    if (!fs.existsSync(conversationDir)) continue;
+    for (const filePath of walkJsonlFiles(conversationDir)) {
+      const stat = safeStat(filePath);
+      if (shouldSkipFile(options, filePath, stat)) continue;
+      const loaded = loadQoderConversationFile(filePath, slug, stat);
+      if (loaded) yield loaded;
+    }
+  }
+}
+
+function stripQoderSlugHash(slug: string): string {
+  return slug.replace(/-[0-9a-f]{8}$/, "") || slug;
+}
+
+function qoderContentFromRow(row: Record<string, unknown>): string {
+  const message = row.message;
+  if (!isRecord(message)) return "";
+  const content = message.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item): item is Record<string, unknown> => isRecord(item) && stringField(item, "type") === "text")
+    .map((item) => stringField(item, "text"))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function loadQoderConversationFile(filePath: string, slug: string, stat: VirtualSessionFileStat): LoadedSession | null {
+  const rows = readJsonl(filePath).filter(isRecord);
+  if (rows.length === 0) return null;
+  const taskId = path.basename(filePath, ".jsonl");
+  const rawId = `${slug}/${taskId}`;
+  const projectPath = stripQoderSlugHash(slug);
+  const messages: SessionMessage[] = [];
+  for (const row of rows) {
+    const role = stringField(row, "role");
+    if (role !== "user" && role !== "assistant") continue;
+    const content = qoderContentFromRow(row);
+    if (!content) continue;
+    messages.push(messageFromParts(role, content, "", messages.length));
+  }
+  if (messages.length === 0) return null;
+  const question = firstQuestion(messages);
+  return {
+    session: createIndexedSession({
+      keyPrefix: "qoder",
+      rawId,
+      source: "qoder",
+      projectPath,
+      filePath,
+      originalTitle: cleanTitle(question) || rawId,
+      firstQuestion: cleanTitle(question),
+      timestamp: stat.mtimeMs,
+      stat,
+    }),
+    messages,
+  };
+}
+
 function extractProjectPathFromJson(value: unknown): string {
   const parsed = parseJsonText(value);
   if (!isRecord(parsed)) return "";
@@ -1847,6 +1918,7 @@ export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): 
   if (options.includeCodeWizCli) yield* loadCodeWizSessions(path.join(homeDir, CODEWIZ_SHARE_DIR));
   if (options.includeCursorAgent) yield* loadCursorAgentSessionsIterator(path.join(homeDir, ".cursor"), options);
   if (options.includeTrae) yield* loadTraeSessionsIterator(path.join(homeDir, ".trae-cn"), options);
+  if (options.includeQoder) yield* loadQoderSessionsIterator(path.join(homeDir, QODER_DIR), options);
   if (options.includeClaudeInternal) yield* loadClaudeCliSessionsIterator(path.join(homeDir, CLAUDE_INTERNAL_DIR), "claude-internal", options);
   if (options.includeCodexInternal) yield* loadCodexSessionsIterator(path.join(homeDir, CODEX_INTERNAL_DIR), "codex-internal", options);
   if (options.includeTclaude) yield* loadClaudeCliSessionsIterator(path.join(homeDir, TCLAUDE_DIR), "tclaude-cli", options);
