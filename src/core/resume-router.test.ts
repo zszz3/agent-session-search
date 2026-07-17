@@ -54,6 +54,23 @@ describe("resume routing", () => {
     });
   });
 
+  it("opens a local Codex App session directly on macOS and Windows", () => {
+    const appSession = session({
+      sessionKey: "codex-app:550e8400-e29b-41d4-a716-446655440000",
+      rawId: "550e8400-e29b-41d4-a716-446655440000",
+      source: "codex-app",
+    });
+
+    expect(routeResumeSession(appSession, [{ family: "codex", rawId: appSession.rawId, pid: 20 }], { platform: "darwin" })).toEqual({ route: "app" });
+    expect(routeResumeSession(appSession, [], { platform: "win32" })).toEqual({ route: "app" });
+  });
+
+  it("does not open a local App for remote or unsupported Codex App sessions", () => {
+    const appSession = session({ source: "codex-app" });
+    expect(routeResumeSession({ ...appSession, environmentId: "server", environmentKind: "ssh" }, [], { platform: "darwin" })).toEqual({ route: "resume" });
+    expect(routeResumeSession(appSession, [], { platform: "linux" })).toEqual({ route: "resume" });
+  });
+
   it("resumes when the session is not open or focusing is unsupported", () => {
     expect(routeResumeSession(session(), [], { platform: "darwin" })).toEqual({ route: "resume" });
     expect(routeResumeSession(session(), [{ family: "codex", rawId: "codex-1", pid: 20 }], { platform: "linux" })).toEqual({ route: "resume" });

@@ -1363,7 +1363,12 @@ function registerIpc(): void {
       return { route: "resume" as const };
     }
     const snapshot = await loadCachedLiveSessionSnapshot({ includeTrae: getSettings().includeTrae });
-    const route = snapshot.error ? { route: "resume" as const } : routeResumeSession(session, snapshot.sessions);
+    const route = routeResumeSession(session, snapshot.error ? [] : snapshot.sessions);
+    if (route.route === "app") {
+      await openNativeApp(session, { openExternal: (url) => shell.openExternal(url) });
+      store.markResumed(sessionKey);
+      return route;
+    }
     if (route.route === "focus") {
       await focusLiveSessionTerminal(route.pid);
       store.markResumed(sessionKey);
@@ -1398,7 +1403,7 @@ function registerIpc(): void {
     const session = store.getSession(sessionKey);
     if (!session) return false;
     if (!isLocalSessionEnvironment(session)) return false;
-    await openNativeApp(session.source);
+    await openNativeApp(session, { openExternal: (url) => shell.openExternal(url) });
     return true;
   });
   ipcMain.handle("command:reveal", async (_event, sessionKey: string) => {

@@ -221,6 +221,15 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain("return { route: \"resume\" as const };");
   });
 
+  it("opens local Codex App resumes and Open App actions through the exact-session URL handler", () => {
+    const resumeHandler = mainHandlerSource("command:resume");
+    const openAppHandler = mainHandlerSource("command:open-app");
+
+    expect(resumeHandler).toContain('if (route.route === "app")');
+    expect(resumeHandler).toContain("openNativeApp(session, { openExternal: (url) => shell.openExternal(url) })");
+    expect(openAppHandler).toContain("openNativeApp(session, { openExternal: (url) => shell.openExternal(url) })");
+  });
+
   it("loads remote session details on demand before returning messages, trace events, or exports", () => {
     expect(mainSource).toContain("ensureRemoteSessionDetailsLoaded");
     expect(mainSource).toContain("fetchRemoteSessionFilePayload");

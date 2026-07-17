@@ -229,7 +229,7 @@ describe("AppUpdateService", () => {
 });
 
 describe("detached update installer", () => {
-  it("writes a temporary manifest and launches Node-mode Electron before returning", async () => {
+  it("writes a temporary manifest and launches the stable npm Node before returning", async () => {
     const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
     child.unref = vi.fn();
     let invocation: { command: string; args: string[]; options: SpawnOptions } | undefined;
@@ -241,13 +241,16 @@ describe("detached update installer", () => {
 
     await launchDetachedAppUpdateInstaller(manifest(), {
       applyUpdatePath: "/app/bin/apply-update.cjs",
-      executablePath: "/app/Electron",
       processId: 456,
-      environment: { EXISTING_VALUE: "kept" },
+      environment: {
+        EXISTING_VALUE: "kept",
+        AGENT_RECALL_NODE_PATH: "/usr/local/bin/node",
+        ELECTRON_RUN_AS_NODE: "1",
+      },
       spawnProcess,
     });
 
-    expect(invocation?.command).toBe("/app/Electron");
+    expect(invocation?.command).toBe("/usr/local/bin/node");
     expect(invocation?.args).toEqual([
       "/app/bin/apply-update.cjs",
       "--manifest",
@@ -258,12 +261,28 @@ describe("detached update installer", () => {
     expect(invocation?.options).toMatchObject({
       detached: true,
       stdio: "ignore",
-      env: { EXISTING_VALUE: "kept", ELECTRON_RUN_AS_NODE: "1" },
+      env: {
+        EXISTING_VALUE: "kept",
+        AGENT_RECALL_NODE_PATH: "/usr/local/bin/node",
+      },
     });
+    expect(invocation?.options.env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
     expect(child.unref).toHaveBeenCalledOnce();
 
     const manifestPath = invocation?.args[2];
     expect(JSON.parse(await readFile(manifestPath!, "utf8"))).toEqual(manifest());
     await rm(path.dirname(manifestPath!), { recursive: true, force: true });
+  });
+
+  it("fails before spawning when the npm launcher did not provide a stable Node path", async () => {
+    const spawnProcess = vi.fn();
+
+    await expect(launchDetachedAppUpdateInstaller(manifest(), {
+      applyUpdatePath: "/app/bin/apply-update.cjs",
+      environment: { EXISTING_VALUE: "kept" },
+      spawnProcess,
+    })).rejects.toThrow("stable Node executable");
+
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 });

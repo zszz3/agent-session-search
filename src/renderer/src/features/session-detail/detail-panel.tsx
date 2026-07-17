@@ -413,7 +413,7 @@ export function DetailPanel({
         {!readOnly ? <div className="detail-actions">
           {canResume ? (
             <button onClick={onResume} disabled={actionRunning}>
-              <Play size={15} /> Resume
+              <Play size={15} /> {session.source === "codex-app" ? l("Open in Codex", "在 Codex 中打开") : "Resume"}
             </button>
           ) : null}
           {canResume && showItermAction ? (
@@ -693,4 +693,3 @@ function TraceEventBlock({ event, language, timelineKey }: { event: SessionTrace
     </details>
   );
 }
-

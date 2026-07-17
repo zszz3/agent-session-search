@@ -25,6 +25,7 @@ import {
   normalizeClaudeApiConfig,
   normalizeTerminal,
   migrationBinary,
+  openNativeApp,
   openMigrationResumeInTerminal,
   resolveMacApplicationName,
   terminalOptionsFor,
@@ -138,6 +139,37 @@ describe("platform application resolution", () => {
     };
 
     await expect(resolveMacApplicationName(["iTerm", "iTerm2"], runner)).resolves.toBeNull();
+  });
+});
+
+describe("native app opening", () => {
+  it.each(["darwin", "win32"] as const)("opens an exact Codex App task on %s", async (platform) => {
+    const urls: string[] = [];
+
+    await openNativeApp(
+      { source: "codex-app", rawId: "550e8400-e29b-41d4-a716-446655440000" },
+      { platform, openExternal: async (url) => { urls.push(url); } },
+    );
+
+    expect(urls).toEqual(["codex://threads/550e8400-e29b-41d4-a716-446655440000"]);
+  });
+
+  it("rejects invalid Codex task IDs before opening a URL", async () => {
+    let opened = false;
+    await expect(openNativeApp(
+      { source: "codex-app", rawId: "../../not-a-task" },
+      { platform: "darwin", openExternal: async () => { opened = true; } },
+    )).rejects.toThrow("valid UUID");
+    expect(opened).toBe(false);
+  });
+
+  it("rejects unsupported platforms and propagates URL handler failures", async () => {
+    const session = { source: "codex-app" as const, rawId: "550e8400-e29b-41d4-a716-446655440000" };
+    await expect(openNativeApp(session, { platform: "linux", openExternal: async () => undefined })).rejects.toThrow("not supported");
+    await expect(openNativeApp(session, {
+      platform: "darwin",
+      openExternal: async () => { throw new Error("Codex is not installed"); },
+    })).rejects.toThrow("Codex is not installed");
   });
 });
 

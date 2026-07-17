@@ -174,9 +174,16 @@ export function localizedLiveStateLabel(state: LiveSessionState, language: Langu
 }
 
 export function resumeRouteMessage(result: ResumeRouteResult, language: LanguageMode): string {
+  if (result.route === "app") return localize(language, "Codex task opened.", "已打开 Codex 会话。");
   return result.route === "focus"
     ? localize(language, "Terminal brought to front.", "终端已前置。")
     : localize(language, "Resume command sent to terminal.", "Resume 命令已发送到终端。");
+}
+
+export function resumeActionLabel(source: SessionSource, language: LanguageMode): string {
+  return source === "codex-app"
+    ? localize(language, "Opening in Codex", "正在 Codex 中打开")
+    : localize(language, "Opening terminal", "正在打开终端");
 }
 
 export function isRemoteSession(session: Pick<SessionSearchResult, "environmentId" | "environmentKind">): boolean {

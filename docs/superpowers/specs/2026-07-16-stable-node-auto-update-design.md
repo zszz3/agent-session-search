@@ -14,7 +14,7 @@
 
 ## 执行流程
 
-1. npm 启动器继续通过 `AGENT_SESSION_SEARCH_NODE_PATH` 把稳定 Node 路径传给 Electron App。
+1. npm 启动器继续通过 `AGENT_RECALL_NODE_PATH` 把稳定 Node 路径传给 Electron App。
 2. App 发起更新时，独立更新器必须使用该 Node 路径启动；不得回退到当前 Electron 的 `process.execPath`。
 3. 更新器启动环境移除 `ELECTRON_RUN_AS_NODE`，等待 App 主进程退出后执行现有安装与校验流程。
 4. 缺少或无法启动稳定 Node 时，在覆盖安装开始前失败，沿用现有原生错误弹窗和手动 npm 命令。

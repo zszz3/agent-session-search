@@ -5,6 +5,8 @@ import {
   migrationTargetsForSession,
   migrationTargetsForSource,
   projectSortTimestamp,
+  resumeActionLabel,
+  resumeRouteMessage,
   sessionSortTimestamp,
   sourceFilterLabel,
   sourceFilters,
@@ -14,8 +16,25 @@ import {
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const sessionRowSource = readFileSync(new URL("./features/search/session-row.tsx", import.meta.url), "utf8");
+const detailPanelSource = readFileSync(new URL("./features/session-detail/detail-panel.tsx", import.meta.url), "utf8");
 
 describe("session source labels", () => {
+  it("uses Codex App wording for App resume actions and results", () => {
+    expect(resumeActionLabel("codex-app", "en")).toBe("Opening in Codex");
+    expect(resumeActionLabel("codex-app", "zh")).toBe("正在 Codex 中打开");
+    expect(resumeRouteMessage({ route: "app" }, "en")).toBe("Codex task opened.");
+    expect(resumeRouteMessage({ route: "app" }, "zh")).toBe("已打开 Codex 会话。");
+    expect(resumeActionLabel("codex-cli", "en")).toBe("Opening terminal");
+  });
+
+  it("routes keyboard, detail, and context-menu actions through Codex-aware Resume UI", () => {
+    expect(appSource.match(/resumeActionLabel\(/g)).toHaveLength(4);
+    expect(appSource).toContain('showItermAction={IS_MAC && detail.source !== "codex-app"}');
+    expect(appSource).toContain('state.session.source !== "codex-app"');
+    expect(detailPanelSource).toContain('session.source === "codex-app"');
+    expect(detailPanelSource).toContain('l("Open in Codex", "在 Codex 中打开")');
+  });
+
   it("renders structured message hits with role, count, highlighting, and a dedicated open action", () => {
     const sessionRow = sessionRowSource;
     expect(sessionRow).toContain("session.messageMatchCount");

@@ -132,6 +132,7 @@ import {
   remoteOpenAppTitle,
   remoteMigrationTitle,
   remoteRevealTitle,
+  resumeActionLabel,
   resumeRouteMessage,
   sessionSortTimestamp,
   sourceFilterLabel,
@@ -1025,7 +1026,7 @@ export function App(): ReactElement {
         if (actionStatus?.kind === "running" || !selectedKey) return;
         const session = displayedResults.find((item) => item.sessionKey === selectedKey);
         if (session && supportsResumeSource(session.source)) {
-          void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(session.sessionKey), (result) => resumeRouteMessage(result, language));
+          void runAction(resumeActionLabel(session.source, language), () => window.sessionSearch.resumeSession(session.sessionKey), (result) => resumeRouteMessage(result, language));
         }
         return;
       }
@@ -2162,7 +2163,7 @@ export function App(): ReactElement {
           messagePageSize={MESSAGE_PAGE_SIZE}
           olderMessageCount={messageOffset}
           revealLabel={FILE_MANAGER_LABEL}
-          showItermAction={IS_MAC}
+          showItermAction={IS_MAC && detail.source !== "codex-app"}
           onClose={closeDetail}
           onShowMore={() => void loadMoreMessages()}
           onRename={() => beginRename(detail)}
@@ -2181,7 +2182,7 @@ export function App(): ReactElement {
                 : unsupportedMigrationTitle(language)
           }
           onResume={() =>
-            void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(detail.sessionKey), (result) => resumeRouteMessage(result, language))
+            void runAction(resumeActionLabel(detail.source, language), () => window.sessionSearch.resumeSession(detail.sessionKey), (result) => resumeRouteMessage(result, language))
           }
           onResumeIterm={() =>
             void runAction(t("Opening iTerm", "正在打开 iTerm"), () => window.sessionSearch.resumeSessionInIterm(detail.sessionKey), t("Resume command sent to iTerm.", "Resume 命令已发送到 iTerm。"))
@@ -2278,13 +2279,17 @@ export function App(): ReactElement {
             )
           }
           onResume={() =>
-            void runAction(t("Opening terminal", "正在打开终端"), () => window.sessionSearch.resumeSession(contextMenu.session.sessionKey), (result) => resumeRouteMessage(result, language))
+            void runAction(resumeActionLabel(contextMenu.session.source, language), () => window.sessionSearch.resumeSession(contextMenu.session.sessionKey), (result) => resumeRouteMessage(result, language))
           }
           onResumeIterm={() =>
             void runAction(t("Opening iTerm", "正在打开 iTerm"), () => window.sessionSearch.resumeSessionInIterm(contextMenu.session.sessionKey), t("Resume command sent to iTerm.", "Resume 命令已发送到 iTerm。"))
           }
           onOpenApp={() =>
-            void runAction(t("Opening native app", "正在打开原生应用"), () => window.sessionSearch.openNativeApp(contextMenu.session.sessionKey), t("Native app opened.", "原生应用已打开。"))
+            void runAction(
+              contextMenu.session.source === "codex-app" ? resumeActionLabel("codex-app", language) : t("Opening native app", "正在打开原生应用"),
+              () => window.sessionSearch.openNativeApp(contextMenu.session.sessionKey),
+              contextMenu.session.source === "codex-app" ? resumeRouteMessage({ route: "app" }, language) : t("Native app opened.", "原生应用已打开。"),
+            )
           }
           onMigrate={() => beginMigrate(contextMenu.session)}
           onCopyResume={() =>
@@ -2716,10 +2721,10 @@ function ContextMenu({
       <hr />
       {canResume ? (
         <button onClick={onResume}>
-          <Play size={14} /> {l("Resume in Terminal", "在终端恢复")}
+          <Play size={14} /> {state.session.source === "codex-app" ? l("Open in Codex", "在 Codex 中打开") : l("Resume in Terminal", "在终端恢复")}
         </button>
       ) : null}
-      {canResume && showMacActions ? (
+      {canResume && showMacActions && state.session.source !== "codex-app" ? (
         <button onClick={onResumeIterm}>
           <TerminalIcon size={14} /> Resume in iTerm
         </button>

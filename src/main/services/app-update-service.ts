@@ -196,6 +196,12 @@ export async function launchDetachedAppUpdateInstaller(
   manifest: AppUpdateManifest,
   options: DetachedAppUpdateInstallerOptions,
 ): Promise<void> {
+  const environment = { ...(options.environment ?? process.env) };
+  const executablePath = options.executablePath ?? environment.AGENT_RECALL_NODE_PATH;
+  if (!executablePath) {
+    throw new Error("The npm launcher did not provide a stable Node executable for the update.");
+  }
+  delete environment.ELECTRON_RUN_AS_NODE;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "agent-recall-app-update-"));
   const manifestPath = path.join(directory, "update.json");
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -203,7 +209,7 @@ export async function launchDetachedAppUpdateInstaller(
   let child: ReturnType<typeof spawnProcess>;
   try {
     child = spawnProcess(
-      options.executablePath ?? process.execPath,
+      executablePath,
       [
         options.applyUpdatePath,
         "--manifest",
@@ -214,7 +220,7 @@ export async function launchDetachedAppUpdateInstaller(
       {
         detached: true,
         stdio: "ignore",
-        env: { ...(options.environment ?? process.env), ELECTRON_RUN_AS_NODE: "1" },
+        env: environment,
       },
     );
     await new Promise<void>((resolve, reject) => {

@@ -1083,14 +1083,34 @@ export async function resolveMacApplicationName(names: string[], runner: Process
   return null;
 }
 
-export async function openNativeApp(source: SessionSource): Promise<void> {
-  const family = sourceFamily(source);
+export async function openNativeApp(
+  session: Pick<SessionSearchResult, "source" | "rawId">,
+  options: {
+    platform?: NodeJS.Platform;
+    openExternal?: (url: string) => Promise<unknown>;
+    runProcess?: ProcessRunner;
+  } = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  if (session.source === "codex-app") {
+    if (platform !== "darwin" && platform !== "win32") {
+      throw new Error(`Opening Codex App sessions is not supported on ${platform}.`);
+    }
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(session.rawId)) {
+      throw new Error("The Codex App task ID is not a valid UUID.");
+    }
+    if (!options.openExternal) throw new Error("No system URL opener is available for Codex App sessions.");
+    await options.openExternal(`codex://threads/${encodeURIComponent(session.rawId)}`);
+    return;
+  }
+
+  const family = sourceFamily(session.source);
   if (family !== "claude" && family !== "codex" && family !== "codebuddy") {
-    throw new Error(`Native app opening is not configured for ${sourceDisplayName(source)} sessions yet.`);
+    throw new Error(`Native app opening is not configured for ${sourceDisplayName(session.source)} sessions yet.`);
   }
   const appName = family === "claude" ? "Claude" : family === "codebuddy" ? "CodeBuddy CN" : "Codex";
-  if (process.platform === "darwin") {
-    await runProcess("/usr/bin/open", ["-a", appName]);
+  if (platform === "darwin") {
+    await (options.runProcess ?? runProcess)("/usr/bin/open", ["-a", appName]);
   }
 }
 
