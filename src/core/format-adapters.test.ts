@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claudeAdapter, codebuddyAdapter, codexAdapter, cleanTitle, cursorAdapter, extractCursorUserQuery, isMeaningfulUserMessage } from "./format-adapters";
+import { claudeAdapter, codebuddyAdapter, codexAdapter, cleanTitle, cursorAdapter, extractCursorUserQuery, getAdapter, getFormatForSource, isMeaningfulUserMessage } from "./format-adapters";
 import { decodeCursorWorkspaceSlug, parseCursorTranscriptPath } from "./session-loader";
 import * as path from "node:path";
 
@@ -63,6 +63,14 @@ describe("format adapters", () => {
       content: "我来处理",
       timestamp: new Date(1_780_321_303_135).toISOString(),
     });
+  });
+
+  it("resolves Qoder through its declared format instead of the Codex fallback", () => {
+    expect(getFormatForSource("qoder")).toBe("qoder");
+    expect(getAdapter("qoder").parseLine({
+      role: "assistant",
+      message: { content: [{ type: "text", text: "Qoder reply" }] },
+    })).toMatchObject({ role: "assistant", content: "Qoder reply" });
   });
 
   it("skips the CodeBuddy CLI bootstrap 'code' root message", () => {

@@ -45,6 +45,7 @@ import type { MigrationTargetSettings } from "../../core/migration-targets";
 import type { RemoteHealthReport } from "../../core/remote-health";
 import type { RemoteSessionDetailSnapshot, RemoteSessionListItem } from "../../core/remote-session-sync";
 import type { SessionSyncHookStatus } from "../../core/session-sync-queue";
+import { OPTIONAL_SESSION_SOURCE_DESCRIPTORS } from "../../core/session-sources";
 import type { TraceEventQueryOptions } from "../../core/session-store";
 import type { RemoteSkill, SkillSyncSnapshot, SkillSyncUploadOutcome } from "../../core/skill-sync";
 import type { InstalledSkill, InstalledSkillsSnapshot } from "../../core/skill-manager";
@@ -172,37 +173,19 @@ const DEFAULT_MIGRATION_TARGET_SETTINGS = {
 } satisfies MigrationTargetSettings;
 
 type ViewMode = "default" | "favorites" | "pinned" | "hidden";
-type PendingSourceKey = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
-type OptionalSourceSettingKey = keyof Pick<
-  AppSettings,
-  | "includeClaudeInternal"
-  | "includeCodexInternal"
-  | "includeTclaude"
-  | "includeTcodex"
-  | "includeCodeBuddyCli"
-  | "includeCodeWizCli"
-  | "includeOpenClaw"
-  | "includeHermes"
-  | "includeOpenCode"
-  | "includeCursorAgent"
-  | "includeTrae"
-  | "includeQoder"
->;
+type PendingSourceKey = (typeof OPTIONAL_SESSION_SOURCE_DESCRIPTORS)[number]["pendingKey"];
 
-const OPTIONAL_SOURCE_SETTINGS: Array<{ key: OptionalSourceSettingKey; pendingKey: PendingSourceKey; filter: SearchOptions["source"] }> = [
-  { key: "includeClaudeInternal", pendingKey: "claude", filter: "claude-internal" },
-  { key: "includeCodexInternal", pendingKey: "codex", filter: "codex-internal" },
-  { key: "includeTclaude", pendingKey: "tclaude", filter: "tclaude-cli" },
-  { key: "includeTcodex", pendingKey: "tcodex", filter: "tcodex-cli" },
-  { key: "includeCodeBuddyCli", pendingKey: "codebuddy", filter: "codebuddy-cli" },
-  { key: "includeCodeWizCli", pendingKey: "codewiz", filter: "codewiz-cli" },
-  { key: "includeOpenClaw", pendingKey: "openclaw", filter: "openclaw" },
-  { key: "includeHermes", pendingKey: "hermes", filter: "hermes" },
-  { key: "includeOpenCode", pendingKey: "opencode", filter: "opencode-cli" },
-  { key: "includeCursorAgent", pendingKey: "cursor", filter: "cursor-agent" },
-  { key: "includeTrae", pendingKey: "trae", filter: "trae" },
-  { key: "includeQoder", pendingKey: "qoder", filter: "qoder" },
-];
+const OPTIONAL_SOURCE_SETTINGS = OPTIONAL_SESSION_SOURCE_DESCRIPTORS.map((descriptor) => ({
+  key: descriptor.optionalSetting,
+  pendingKey: descriptor.pendingKey,
+  filter: descriptor.id,
+}));
+
+function emptyPendingPersonalSources(): Record<PendingSourceKey, boolean> {
+  return Object.fromEntries(
+    OPTIONAL_SESSION_SOURCE_DESCRIPTORS.map(({ pendingKey }) => [pendingKey, false]),
+  ) as Record<PendingSourceKey, boolean>;
+}
 
 const INITIAL_SESSION_LIMIT = 30;
 const SESSION_PAGE_SIZE = 30;
@@ -372,20 +355,9 @@ export function App(): ReactElement {
   const [skillHookBusy, setSkillHookBusy] = useState(false);
   const [sessionHookStatus, setSessionHookStatus] = useState<SessionSyncHookStatus | null>(null);
   const [sessionHookBusy, setSessionHookBusy] = useState(false);
-  const [pendingPersonalSources, setPendingPersonalSources] = useState<Record<PendingSourceKey, boolean>>({
-    claude: false,
-    codex: false,
-    tclaude: false,
-    tcodex: false,
-    codebuddy: false,
-    codewiz: false,
-    openclaw: false,
-    hermes: false,
-    opencode: false,
-    cursor: false,
-    trae: false,
-    qoder: false,
-  });
+  const [pendingPersonalSources, setPendingPersonalSources] = useState<Record<PendingSourceKey, boolean>>(
+    emptyPendingPersonalSources,
+  );
   const loadSeqRef = useRef(0);
   const metadataLoadSeqRef = useRef(0);
   const statsLoadSeqRef = useRef(0);
@@ -1077,21 +1049,12 @@ export function App(): ReactElement {
   const visibleSourceFilters = useMemo(() => {
     if (!appSettings) return sourceFilters(null);
     // Reveal an extra source filter only once its background load has finished.
-    return sourceFilters({
-      ...appSettings,
-      includeClaudeInternal: appSettings.includeClaudeInternal && !pendingPersonalSources.claude,
-      includeCodexInternal: appSettings.includeCodexInternal && !pendingPersonalSources.codex,
-      includeTclaude: appSettings.includeTclaude && !pendingPersonalSources.tclaude,
-      includeTcodex: appSettings.includeTcodex && !pendingPersonalSources.tcodex,
-      includeCodeBuddyCli: appSettings.includeCodeBuddyCli && !pendingPersonalSources.codebuddy,
-      includeCodeWizCli: appSettings.includeCodeWizCli && !pendingPersonalSources.codewiz,
-      includeOpenClaw: appSettings.includeOpenClaw && !pendingPersonalSources.openclaw,
-      includeHermes: appSettings.includeHermes && !pendingPersonalSources.hermes,
-      includeOpenCode: appSettings.includeOpenCode && !pendingPersonalSources.opencode,
-      includeCursorAgent: appSettings.includeCursorAgent && !pendingPersonalSources.cursor,
-      includeTrae: appSettings.includeTrae && !pendingPersonalSources.trae,
-      includeQoder: appSettings.includeQoder && !pendingPersonalSources.qoder,
-    });
+    const visibleSettings = { ...appSettings };
+    for (const descriptor of OPTIONAL_SESSION_SOURCE_DESCRIPTORS) {
+      visibleSettings[descriptor.optionalSetting] =
+        appSettings[descriptor.optionalSetting] && !pendingPersonalSources[descriptor.pendingKey];
+    }
+    return sourceFilters(visibleSettings);
   }, [appSettings, pendingPersonalSources]);
   const selectedProject = useMemo(
     () =>

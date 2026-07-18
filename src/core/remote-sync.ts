@@ -5,6 +5,7 @@ import {
   type RemoteSessionFilePayload,
 } from "./remote-session-loader";
 import type { SessionStore } from "./session-store";
+import { SESSION_SOURCE_DESCRIPTORS, sessionSourceDescriptor } from "./session-sources";
 import { buildSshArgs } from "./ssh-config";
 import type {
   IndexedSession,
@@ -29,7 +30,7 @@ export interface RemoteSyncOptions {
 }
 
 export interface RemoteSessionSummaryPayload {
-  kind: "codex-session" | "claude-project" | "codebuddy-project" | "codewiz-session";
+  kind: "codex-session" | "claude-project" | "codebuddy-project" | "codewiz-session" | "qoder-project";
   source?: SessionSource;
   path: string;
   mtimeMs: number;
@@ -420,7 +421,7 @@ function summarySource(summary: RemoteSessionSummaryPayload): SessionSource {
 }
 
 function isOptionalRemoteSource(source: SessionSource): boolean {
-  return source === "tclaude-cli" || source === "tcodex-cli" || source === "codebuddy-cli";
+  return sessionSourceDescriptor(source).remoteCollectorOptional;
 }
 
 export function encodeRemotePayloadForTest(payloads: RemoteSessionFilePayload[]): string {
@@ -510,13 +511,8 @@ export async function fetchRemoteSessionMessagePage(
   return decodeRemoteMessagePage(output);
 }
 
-export function remoteFamilyForSource(source: SessionSource): "claude" | "codex" | "codebuddy" | "codewiz" {
-  if (source === "codewiz-cli") return "codewiz";
-  if (source === "codebuddy-cli") return "codebuddy";
-  if (source === "claude-cli" || source === "claude-app" || source === "claude-internal" || source === "tclaude-cli") {
-    return "claude";
-  }
-  return "codex";
+export function remoteFamilyForSource(source: SessionSource): "claude" | "codex" | "codebuddy" | "codewiz" | "qoder" {
+  return sessionSourceDescriptor(source).remoteFamily ?? "codex";
 }
 
 function remoteKindForSource(source: SessionSource): RemoteSessionFileKind {
@@ -524,6 +520,7 @@ function remoteKindForSource(source: SessionSource): RemoteSessionFileKind {
   if (family === "codewiz") return "codewiz-session";
   if (family === "claude") return "claude-project";
   if (family === "codebuddy") return "codebuddy-project";
+  if (family === "qoder") return "qoder-project";
   return "codex-session";
 }
 
@@ -702,20 +699,12 @@ const REMOTE_SESSION_FILE_KINDS = new Set<RemoteSessionFilePayload["kind"]>([
   "claude-session-index",
   "codewiz-session",
   "codebuddy-project",
+  "qoder-project",
 ]);
 
-const REMOTE_SUMMARY_SOURCES = new Set<SessionSource>([
-  "claude-cli",
-  "claude-app",
-  "claude-internal",
-  "codex-cli",
-  "codex-app",
-  "codex-internal",
-  "tclaude-cli",
-  "tcodex-cli",
-  "codebuddy-cli",
-  "codewiz-cli",
-]);
+const REMOTE_SUMMARY_SOURCES = new Set<SessionSource>(
+  SESSION_SOURCE_DESCRIPTORS.filter(({ remoteFamily }) => remoteFamily !== null).map(({ id }) => id),
+);
 
 const REMOTE_SYNC_SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
 

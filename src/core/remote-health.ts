@@ -1,6 +1,7 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
 import { buildRemoteSyncSshArgs, formatRemoteSyncProcessError } from "./remote-sync";
 import type { SessionEnvironment, SessionSearchResult, SessionSource } from "./types";
+import { sessionSourceDescriptor } from "./session-sources";
 
 export type RemoteHealthStatus = "ok" | "warning" | "error";
 
@@ -131,11 +132,9 @@ function buildReport(checks: RemoteHealthCheck[]): RemoteHealthReport {
 }
 
 export function resumeCliForSource(source: SessionSource): "codex" | "claude" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" {
-  if (source === "tclaude-cli") return "tclaude";
-  if (source === "tcodex-cli") return "tcodex";
-  if (source === "codebuddy-cli") return "codebuddy";
-  if (source === "codewiz-cli") return "codewiz";
-  if (source.startsWith("claude")) return "claude";
+  const family = sessionSourceDescriptor(source).family;
+  if (family === "tclaude" || family === "tcodex" || family === "codebuddy" || family === "codewiz") return family;
+  if (family === "claude") return "claude";
   return "codex";
 }
 

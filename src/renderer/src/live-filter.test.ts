@@ -6,6 +6,8 @@ const claude = { source: "claude-cli", rawId: "claude-1", sessionKey: "claude:cl
 const codebuddy = { source: "codebuddy-cli", rawId: "codebuddy-1", sessionKey: "codebuddy:codebuddy-1" } as const;
 const opencode = { source: "opencode-cli", rawId: "codebuddy-1", sessionKey: "opencode:codebuddy-1" } as const;
 const trae = { source: "trae", rawId: "session_memory_trae-1", sessionKey: "trae:session_memory_trae-1" } as const;
+const tclaude = { source: "tclaude-cli", rawId: "tclaude-1", sessionKey: "tclaude:tclaude-1" } as const;
+const tcodex = { source: "tcodex-cli", rawId: "tcodex-1", sessionKey: "tcodex:tcodex-1" } as const;
 
 describe("live session filtering", () => {
   it("builds stable live keys from session source family and raw id", () => {
@@ -13,6 +15,8 @@ describe("live session filtering", () => {
     expect(liveSessionKeyForSession(claude)).toBe("claude:claude-1");
     expect(liveSessionKeyForSession(codebuddy)).toBe("codebuddy:codebuddy-1");
     expect(liveSessionKeyForSession(trae)).toBe("trae:session_memory_trae-1");
+    expect(liveSessionKeyForSession(tclaude)).toBe("tclaude:tclaude-1");
+    expect(liveSessionKeyForSession(tcodex)).toBe("tcodex:tcodex-1");
     expect(liveSessionKeyForSession(opencode)).toBeNull();
   });
 

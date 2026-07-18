@@ -2,6 +2,7 @@ import type { MigrationCompressionListener, PreparedMigrationSession } from "./s
 import { BASE_MIGRATION_TARGETS, isMigrationTarget } from "./migration-targets";
 import type { WrittenMigratedSession } from "./session-migration-writers";
 import { isLocalSessionEnvironment } from "./session-environment";
+import { sessionSourceDescriptor } from "./session-sources";
 import type {
   MigrationAgent,
   MigrationCompressionEvent,
@@ -59,26 +60,7 @@ export interface MigrateSessionOptions {
 }
 
 export function migrationAgentForSource(source: SessionSource): MigrationAgent | null {
-  switch (source) {
-    case "claude-cli":
-    case "claude-app":
-    case "claude-internal":
-    case "tclaude-cli":
-      return "claude";
-    case "codex-cli":
-    case "codex-app":
-    case "codex-internal":
-    case "tcodex-cli":
-      return "codex";
-    case "codebuddy-cli":
-      return "codebuddy";
-    case "codewiz-cli":
-      return "codewiz";
-    case "cursor-agent":
-      return "cursor";
-    default:
-      return null;
-  }
+  return sessionSourceDescriptor(source).migrationAgent;
 }
 
 export function supportedMigrationTargets(source: SessionSource): MigrationAgent[];

@@ -1,22 +1,5 @@
 import type { IndexedSession, SessionMessage, SessionSearchResult, SessionTraceEvent } from "./types";
-
-const SOURCE_LABEL: Record<string, string> = {
-  "claude-cli": "Claude Code",
-  "claude-app": "Claude Code",
-  "claude-internal": "Claude Code Internal",
-  "codex-cli": "Codex",
-  "codex-app": "Codex",
-  "codex-internal": "Codex Internal",
-  "tclaude-cli": "TClaude",
-  "tcodex-cli": "TCodex",
-  "codebuddy-cli": "CodeBuddy CLI",
-  "codewiz-cli": "CodeWiz",
-  openclaw: "OpenClaw",
-  hermes: "Hermes",
-  "opencode-cli": "OpenCode",
-  "cursor-agent": "Cursor Agent",
-  trae: "Trae",
-};
+import { sessionSourceLabel } from "./session-sources";
 
 export function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -74,7 +57,7 @@ export function formatSessionMarkdown(
   traceEvents: SessionTraceEvent[] = [],
 ): string {
   const title = "displayTitle" in session ? session.displayTitle : session.firstQuestion || session.originalTitle;
-  const source = SOURCE_LABEL[session.source] || session.source;
+  const source = sessionSourceLabel(session.source);
   const header = [
     `# ${title}`,
     "",

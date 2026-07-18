@@ -183,6 +183,7 @@ describe("session migration model", () => {
     ["codex-internal", "codex"],
     ["tcodex-cli", "codex"],
     ["codebuddy-cli", "codebuddy"],
+    ["codewiz-cli", "codewiz"],
     ["openclaw", null],
     ["hermes", null],
     ["opencode-cli", null],
@@ -203,6 +204,7 @@ describe("session migration model", () => {
     "codex-internal",
     "tcodex-cli",
     "codebuddy-cli",
+    "codewiz-cli",
     "cursor-agent",
   ] as const)("returns all enabled migration targets for %s", (source) => {
     const enabledTargets = [

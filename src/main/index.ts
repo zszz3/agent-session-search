@@ -73,6 +73,7 @@ import { buildSshArgs, readUserSshConfig } from "../core/ssh-config";
 import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
 import { isLocalSessionEnvironment } from "../core/session-environment";
+import { OPTIONAL_SESSION_SOURCE_DESCRIPTORS } from "../core/session-sources";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import { APP_UPDATE_EVENTS } from "../shared/ipc/app-update";
 import { registerAppUpdateIpc } from "./ipc/app-update";
@@ -110,20 +111,10 @@ const PRODUCT_NAME = "AgentRecall";
 const TRAY_ICON_RELATIVE_PATH = path.join("assets", "tray-iconTemplate.png");
 const releaseUpdateRuntime = app.isPackaged || process.env.AGENT_RECALL_RELEASE_BUILD === "1";
 
-const OPTIONAL_SOURCE_SETTINGS: Array<{ key: keyof Pick<AppSettings, "includeClaudeInternal" | "includeCodexInternal" | "includeTclaude" | "includeTcodex" | "includeCodeBuddyCli" | "includeCodeWizCli" | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeCursorAgent" | "includeTrae" | "includeQoder">; sources: SessionSource[] }> = [
-  { key: "includeClaudeInternal", sources: ["claude-internal"] },
-  { key: "includeCodexInternal", sources: ["codex-internal"] },
-  { key: "includeTclaude", sources: ["tclaude-cli"] },
-  { key: "includeTcodex", sources: ["tcodex-cli"] },
-  { key: "includeCodeBuddyCli", sources: ["codebuddy-cli"] },
-  { key: "includeCodeWizCli", sources: ["codewiz-cli"] },
-  { key: "includeOpenClaw", sources: ["openclaw"] },
-  { key: "includeHermes", sources: ["hermes"] },
-  { key: "includeOpenCode", sources: ["opencode-cli"] },
-  { key: "includeCursorAgent", sources: ["cursor-agent"] },
-  { key: "includeTrae", sources: ["trae"] },
-  { key: "includeQoder", sources: ["qoder"] },
-];
+const OPTIONAL_SOURCE_SETTINGS = OPTIONAL_SESSION_SOURCE_DESCRIPTORS.map((descriptor) => ({
+  key: descriptor.optionalSetting,
+  sources: [descriptor.id],
+}));
 
 // The skill-usage hook installer is a self-contained CommonJS script in bin/
 // (sibling of out/), shared with the global-install path. Load it lazily via a
@@ -299,12 +290,9 @@ function pruneDisabledOptionalSources(settings: AppSettings): void {
 }
 
 function enabledRemoteOptionalSources(settings: AppSettings): SessionSource[] {
-  return [
-    ...(settings.includeTclaude ? ["tclaude-cli" as const] : []),
-    ...(settings.includeTcodex ? ["tcodex-cli" as const] : []),
-    ...(settings.includeCodeBuddyCli ? ["codebuddy-cli" as const] : []),
-    ...(settings.includeQoder ? ["qoder" as const] : []),
-  ];
+  return OPTIONAL_SESSION_SOURCE_DESCRIPTORS
+    .filter((descriptor) => descriptor.remoteCollectorOptional && settings[descriptor.optionalSetting])
+    .map((descriptor) => descriptor.id);
 }
 
 function markdownExportFileName(title: string): string {

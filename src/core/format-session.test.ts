@@ -58,6 +58,10 @@ describe("formatSessionMarkdown", () => {
     expect(markdown).toContain("shell · npm test");
     expect(markdown).toContain("stdout:");
   });
+
+  it("uses the shared source label for Qoder exports", () => {
+    expect(formatSessionMarkdown({ ...session, source: "qoder" }, messages)).toContain("Qoder · `/repo`");
+  });
 });
 
 describe("formatSessionPlainText", () => {

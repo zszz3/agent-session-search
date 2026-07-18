@@ -24,6 +24,7 @@ import {
   withPosixTerminalTitle,
   withPowerShellTerminalTitle,
 } from "./terminal-title";
+import { sessionSourceDescriptor } from "./session-sources";
 import type { MigrationTarget, SessionSearchResult, SessionSource } from "./types";
 
 export { type TerminalChoice, defaultTerminalFor, normalizeTerminal, terminalOptionsFor } from "./terminal-options";
@@ -200,35 +201,8 @@ function normalizeCompressionConcurrency(value: number): number {
 
 const ITERM_APPLICATION_NAMES = ["iTerm", "iTerm2"];
 
-type SourceFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
-
 function sourceDisplayName(source: SessionSource): string {
-  if (source === "opencode-cli") return "OpenCode";
-  if (source === "cursor-agent") return "Cursor Agent";
-  if (source === "openclaw") return "OpenClaw";
-  if (source === "hermes") return "Hermes";
-  if (source === "trae") return "Trae";
-  if (source === "qoder") return "Qoder";
-  if (source === "tclaude-cli") return "TClaude";
-  if (source === "tcodex-cli") return "TCodex";
-  if (source === "codebuddy-cli") return "CodeBuddy";
-  if (source === "codewiz-cli") return "CodeWiz";
-  if (source.startsWith("claude")) return "Claude";
-  return "Codex";
-}
-
-export function sourceFamily(source: SessionSource): SourceFamily {
-  if (source === "tclaude-cli") return "tclaude";
-  if (source === "tcodex-cli") return "tcodex";
-  if (source === "codebuddy-cli") return "codebuddy";
-  if (source === "codewiz-cli") return "codewiz";
-  if (source === "openclaw") return "openclaw";
-  if (source === "hermes") return "hermes";
-  if (source === "opencode-cli") return "opencode";
-  if (source === "cursor-agent") return "cursor";
-  if (source === "trae") return "trae";
-  if (source === "qoder") return "qoder";
-  return source === "claude-cli" || source === "claude-app" || source === "claude-internal" ? "claude" : "codex";
+  return sessionSourceDescriptor(source).label;
 }
 
 export function migrationBinary(target: MigrationTarget, settings: AppSettings): string {
@@ -317,16 +291,7 @@ function migrationCodexHome(homeDir: string, platform: NodeJS.Platform): string 
 }
 
 function migrationTargetForResumeSource(source: SessionSource): MigrationTarget | null {
-  if (source === "claude-cli" || source === "claude-app") return "claude";
-  if (source === "claude-internal") return "claude-internal";
-  if (source === "codex-cli" || source === "codex-app") return "codex";
-  if (source === "codex-internal") return "codex-internal";
-  if (source === "tclaude-cli") return "tclaude";
-  if (source === "tcodex-cli") return "tcodex";
-  if (source === "codebuddy-cli") return "codebuddy";
-  if (source === "codewiz-cli") return "codewiz";
-  if (source === "cursor-agent") return "cursor";
-  return null;
+  return sessionSourceDescriptor(source).resumeTarget;
 }
 
 function legacyMigratedCodexProvider(session: SessionSearchResult, target: MigrationTarget): string | null {
@@ -1108,8 +1073,8 @@ export async function openNativeApp(
     return;
   }
 
-  const family = sourceFamily(session.source);
-  if (family !== "claude" && family !== "codex" && family !== "codebuddy") {
+  const family = sessionSourceDescriptor(session.source).nativeAppFamily;
+  if (!family) {
     throw new Error(`Native app opening is not configured for ${sourceDisplayName(session.source)} sessions yet.`);
   }
   const appName = family === "claude" ? "Claude" : family === "codebuddy" ? "CodeBuddy CN" : "Codex";

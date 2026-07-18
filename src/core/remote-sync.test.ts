@@ -63,6 +63,7 @@ describe("remote sync", () => {
     ["tcodex-cli", "codex"],
     ["codebuddy-cli", "codebuddy"],
     ["codewiz-cli", "codewiz"],
+    ["qoder", "qoder"],
   ] as const)("maps %s to the %s remote family", (source, family) => {
     expect(remoteFamilyForSource(source)).toBe(family);
   });
@@ -1257,6 +1258,7 @@ db.close()
     ["tclaude-cli", "claude-project"],
     ["tcodex-cli", "codex-session"],
     ["codebuddy-cli", "codebuddy-project"],
+    ["qoder", "qoder-project"],
   ] as const)("fetches %s files with an explicit source", async (source, kind) => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);
@@ -1312,6 +1314,15 @@ db.close()
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "remote answer" }], timestamp: 1_752_573_601_000 },
       ],
       [new Date(1_752_573_600_000).toISOString(), new Date(1_752_573_601_000).toISOString()],
+    ],
+    [
+      "qoder",
+      [
+        { role: "assistant", message: { content: [{ type: "text", text: "older answer" }] } },
+        { role: "user", message: { content: [{ type: "text", text: "remote question" }] } },
+        { role: "assistant", message: { content: [{ type: "text", text: "remote answer" }] } },
+      ],
+      ["", ""],
     ],
   ] as const)("fetches the tail message page for %s", async (source, rows, expectedTimestamps) => {
     const store = createInMemoryStore();

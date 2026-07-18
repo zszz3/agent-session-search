@@ -6,6 +6,7 @@ import type {
   SessionMessage,
   SessionSource,
 } from "./types";
+import { sessionSourceDescriptor } from "./session-sources";
 
 export type ParsedLine = Omit<SessionMessage, "index"> | null;
 
@@ -185,16 +186,10 @@ export const hermesAdapter = genericAdapter("hermes");
 export const openCodeAdapter = genericAdapter("opencode");
 export const codeWizAdapter = genericAdapter("codewiz");
 export const traeAdapter = genericAdapter("trae");
+export const qoderAdapter = genericAdapter("qoder");
 
 export function getFormatForSource(source: SessionSource): SessionFormat {
-  if (source === "codebuddy-cli") return "codebuddy";
-  if (source === "codewiz-cli") return "codewiz";
-  if (source === "openclaw") return "openclaw";
-  if (source === "hermes") return "hermes";
-  if (source === "opencode-cli") return "opencode";
-  if (source === "cursor-agent") return "cursor";
-  if (source === "trae") return "trae";
-  return source === "claude-cli" || source === "claude-app" || source === "claude-internal" || source === "tclaude-cli" ? "claude" : "codex";
+  return sessionSourceDescriptor(source).format;
 }
 
 export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): FormatAdapter {
@@ -208,6 +203,7 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (sourceOrFormat === "opencode") return openCodeAdapter;
   if (sourceOrFormat === "cursor") return cursorAdapter;
   if (sourceOrFormat === "trae") return traeAdapter;
+  if (sourceOrFormat === "qoder") return qoderAdapter;
   const format = getFormatForSource(sourceOrFormat);
   if (format === "claude") return claudeAdapter;
   if (format === "codebuddy") return codebuddyAdapter;
@@ -217,6 +213,7 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (format === "opencode") return openCodeAdapter;
   if (format === "cursor") return cursorAdapter;
   if (format === "trae") return traeAdapter;
+  if (format === "qoder") return qoderAdapter;
   return codexAdapter;
 }
 
