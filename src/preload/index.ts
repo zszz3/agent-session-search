@@ -98,6 +98,7 @@ const api = {
   copyMarkdown: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-markdown", sessionKey),
   exportMarkdown: (sessionKey: string): Promise<boolean> => ipcRenderer.invoke("command:export-markdown", sessionKey),
   copyPlainText: (sessionKey: string): Promise<void> => ipcRenderer.invoke("command:copy-plain", sessionKey),
+  openExternalLink: (url: string): Promise<void> => ipcRenderer.invoke("markdown:open-external", url),
   onIndexStatus: (callback: (status: IndexStatus) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: IndexStatus) => callback(status);
     ipcRenderer.on("index-status", listener);

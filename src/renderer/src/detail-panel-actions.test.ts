@@ -97,7 +97,9 @@ describe("detail panel actions", () => {
     );
 
     expect(messageBlock).toContain('const useMarkdown = message.role === "assistant" && !highlight;');
-    expect(messageBlock).toContain("<Markdown text={content} />");
+    expect(messageBlock).toContain("markdownPreview(");
+    expect(messageBlock).toContain("<Markdown text={content} language={language} />");
+    expect(messageBlock).not.toContain("message.content.slice(0, MESSAGE_TRUNCATE_LIMIT)");
     expect(messageBlock).not.toContain(
       'const useMarkdown = message.role === "assistant" && !highlight && (!truncated || expanded);',
     );

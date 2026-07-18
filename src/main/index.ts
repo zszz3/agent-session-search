@@ -24,6 +24,7 @@ import { execFile } from "node:child_process";
 import { loadActiveCodexSummaryEndpointDefaults } from "../core/codex-profile";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
 import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-session";
+import { normalizeExternalLink } from "../core/external-link";
 import {
   defaultSettings,
   getMigrationResumeProcessSpec,
@@ -488,6 +489,9 @@ function createWindow(): void {
     if (level >= 2) console.error("[renderer]", message, `${sourceId}:${line}`);
     else console.log("[renderer]", message);
   });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
 
   mainWindow.on("ready-to-show", () => mainWindow?.show());
   mainWindow.on("closed", () => {
@@ -1080,6 +1084,11 @@ function stopAutoIndexRefresh(): void {
 }
 
 function registerIpc(): void {
+  ipcMain.handle("markdown:open-external", (_event, value: unknown) => {
+    const url = normalizeExternalLink(value);
+    if (!url) throw new Error("Only HTTP, HTTPS, and mailto links can be opened externally.");
+    return shell.openExternal(url);
+  });
   ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(visibleSearchOptions(options)));
   ipcMain.handle("search:session-page", (_event, options: SearchOptions) => store.searchSessionPage(visibleSearchOptions(options)));
   ipcMain.handle("session:get", (_event, sessionKey: string) => {

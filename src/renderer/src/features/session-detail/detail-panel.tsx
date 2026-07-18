@@ -9,7 +9,8 @@ import { localize, type LanguageMode } from "../../language";
 import type { LiveSessionState } from "../../live-filter";
 import type { ActionStatus } from "../../app-types";
 import { HighlightedSearchText, searchHighlightTerms } from "../../search-highlight";
-import { Markdown } from "../../lightweight-markdown";
+import { Markdown } from "../../markdown";
+import { markdownPreview } from "../../markdown-preview";
 import {
   environmentBadgeLabel,
   environmentBadgeTitle,
@@ -631,7 +632,11 @@ function MessageBlock({
   const [expanded, setExpanded] = useState(false);
   const content = useMemo(() => {
     if (!truncated || expanded) return message.content;
-    return `${message.content.slice(0, MESSAGE_TRUNCATE_LIMIT)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`;
+    return markdownPreview(
+      message.content,
+      MESSAGE_TRUNCATE_LIMIT,
+      localize(language, "...(truncated)", "...（已截断）"),
+    );
   }, [message.content, truncated, expanded, language]);
   const highlightTerms = useMemo(() => (highlight ? searchHighlightTerms(query) : []), [highlight, query]);
 
@@ -645,7 +650,7 @@ function MessageBlock({
       </div>
       {useMarkdown ? (
         <div className="message-md">
-          <Markdown text={content} />
+          <Markdown text={content} language={language} />
         </div>
       ) : (
         <pre>{highlight ? <HighlightedSearchText text={content} terms={highlightTerms} /> : content}</pre>

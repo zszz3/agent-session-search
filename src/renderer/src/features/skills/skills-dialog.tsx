@@ -6,7 +6,8 @@ import type { SkillDiffSnapshot } from "../../../../core/skill-diff";
 import type { InstalledSkill, InstalledSkillsSnapshot, SkillRootStatus, SkillSource } from "../../../../core/skill-manager";
 import { formatCompactNumber } from "../../format-count";
 import { localize, type LanguageMode } from "../../language";
-import { Markdown } from "../../lightweight-markdown";
+import { Markdown } from "../../markdown";
+import { markdownPreview } from "../../markdown-preview";
 import { skillSourceLabel, type SkillSortKey, type SkillSourceFilter } from "../../skill-manager";
 import { buildUnifiedSkillEntries, type UnifiedSkillEntry } from "../../skill-sync-view-model";
 import type { SkillsFeedback } from "../../app-types";
@@ -469,7 +470,7 @@ export function SkillsDialog({
                       <div><dt>{l("Updated", "更新时间")}</dt><dd>{new Date(selectedSkill.mtimeMs).toLocaleString()}</dd></div>
                       <div><dt>{l("Path", "路径")}</dt><dd title={selectedSkill.path}>{selectedSkill.path}</dd></div>
                     </dl>
-                    <div className="skill-markdown-preview"><Markdown text={skillPreviewMarkdown(selectedSkill.markdown, language)} /></div>
+                    <div className="skill-markdown-preview"><Markdown text={skillPreviewMarkdown(selectedSkill.markdown, language)} language={language} /></div>
                   </> : <div className="skills-empty">{l("This Skill is not installed on this device.", "此设备尚未安装这个 Skill。")}</div>
                 ) : null}
                 {detailView === "remote" ? (
@@ -489,7 +490,7 @@ export function SkillsDialog({
                         <div><dt>{l("Updated", "更新时间")}</dt><dd>{new Date(selectedVersion.updatedAt).toLocaleString()}</dd></div>
                         <div><dt>{l("Location", "位置")}</dt><dd>{selectedGroup.legacy ? l("Legacy record", "旧版记录") : `${selectedGroup.portableScope}/${selectedGroup.relativePath}`}</dd></div>
                       </dl>
-                      <div className="skill-markdown-preview"><Markdown text={remoteVersionPreview(selectedVersion.id, versionContent, versionLoadingId, versionError, language)} /></div>
+                      <div className="skill-markdown-preview"><Markdown text={remoteVersionPreview(selectedVersion.id, versionContent, versionLoadingId, versionError, language)} language={language} /></div>
                     </> : <div className="skills-empty skill-cloud-empty"><p>{l("No cloud copy yet.", "还没有云端副本。")}</p>{selectedSkill && selectedEntry.syncable ? <button type="button" onClick={() => void handleUpload(selectedSkill)}><Upload size={14} />{l("Upload this Skill", "上传这个 Skill")}</button> : null}</div>
                 ) : null}
                 {detailView === "diff" ? (
@@ -895,6 +896,5 @@ function UploadVersionConfirmDialog({
 
 function skillPreviewMarkdown(markdown: string, language: LanguageMode): string {
   const limit = 12000;
-  if (markdown.length <= limit) return markdown;
-  return `${markdown.slice(0, limit)}\n\n${localize(language, "...(truncated)", "...（已截断）")}`;
+  return markdownPreview(markdown, limit, localize(language, "...(truncated)", "...（已截断）"));
 }
