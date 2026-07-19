@@ -9,6 +9,15 @@ npm install -g https://github.com/zszz3/AgentRecall/releases/latest/download/age
 agent-recall
 ```
 
+国内网络访问 npm 较慢时，可以只为本次安装使用阿里云 npm 镜像（macOS、Linux 和 Windows PowerShell 均适用）：
+
+```bash
+npm install -g https://github.com/zszz3/AgentRecall/releases/latest/download/agent-recall.tgz --registry=https://registry.npmmirror.com
+agent-recall
+```
+
+`--registry` 只影响本次命令，不会修改 npm 的全局镜像配置。安装包仍从 GitHub Release 下载；如果 Electron 运行时下载较慢，请继续使用下文的 `ELECTRON_MIRROR`。
+
 该方式不会克隆仓库，也不需要在本机执行构建。npm 会把编译后的应用安装到当前 Node.js 的全局目录，并下载当前操作系统对应的 Electron 运行时。
 
 装好后，在任意终端运行即可启动：
