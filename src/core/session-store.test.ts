@@ -40,6 +40,12 @@ const messages: SessionMessage[] = [
   { role: "assistant", content: "refresh token expired after 30 minutes", timestamp: "2026-06-01T10:01:00Z", index: 1 },
 ];
 
+function projectByPath(store: SessionStore, projectPath: string) {
+  const project = store.listProjects().find((item) => item.path === projectPath);
+  expect(project).toBeDefined();
+  return project!;
+}
+
 const traceEvents: SessionTraceEvent[] = [
   {
     index: 0,
@@ -1222,6 +1228,130 @@ describe("SessionStore", () => {
         lastActivityAt,
       },
     ]);
+  });
+
+  it("labels a Codex App dated task workspace from its unique root session", () => {
+    const store = createInMemoryStore();
+    const taskPath = "/Users/me/Documents/Codex/2026-07-18/https-example-com-wiki-token";
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:task-root",
+        rawId: "task-root",
+        source: "codex-app",
+        projectPath: taskPath,
+        originalTitle: "Hermes 重写",
+        firstQuestion: "https://example.com/wiki/token",
+        isSubagent: false,
+      }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:task-child",
+        rawId: "task-child",
+        source: "codex-app",
+        projectPath: taskPath,
+        originalTitle: "worker-1",
+        firstQuestion: "worker prompt",
+        isSubagent: true,
+        parentSessionId: "task-root",
+      }),
+      messages,
+    );
+
+    expect(projectByPath(store, taskPath)).toMatchObject({
+      label: "Hermes 重写",
+      labelKind: "codex-task-title",
+      labelSuffix: null,
+    });
+
+    store.setCustomTitle("codex:task-root", "Hermes 教程重写");
+    expect(projectByPath(store, taskPath).label).toBe("Hermes 教程重写");
+
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:task-root",
+        rawId: "task-root",
+        source: "codex-app",
+        projectPath: taskPath,
+        originalTitle: "重新索引后的原生标题",
+        firstQuestion: "https://example.com/wiki/token",
+        isSubagent: false,
+      }),
+      messages,
+    );
+    expect(projectByPath(store, taskPath).label).toBe("Hermes 教程重写");
+
+    store.setCustomTitle("codex:task-root", null);
+    expect(projectByPath(store, taskPath).label).toBe("重新索引后的原生标题");
+  });
+
+  it("recognizes Windows task paths but rejects invalid dates, normal projects, and multiple roots", () => {
+    const store = createInMemoryStore();
+    const windowsTask = "C:\\Users\\me\\Documents\\cOdEx\\2026-07-18\\new-chat";
+    const invalidDate = "/Users/me/Documents/Codex/2026-02-30/new-chat";
+    const normalRepo = "/Users/me/work/agent-recall";
+    const multipleRoots = "/Users/me/Documents/Codex/2026-07-19/shared";
+    const cliTask = "/Users/me/Documents/Codex/2026-07-19/cli-task";
+
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:win", rawId: "win", source: "codex-app", projectPath: windowsTask, originalTitle: "Windows 任务" }), messages);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:bad-date", rawId: "bad-date", source: "codex-app", projectPath: invalidDate, originalTitle: "无效日期" }), messages);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:repo", rawId: "repo", source: "codex-app", projectPath: normalRepo, originalTitle: "普通项目对话" }), messages);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:root-a", rawId: "root-a", source: "codex-app", projectPath: multipleRoots, originalTitle: "根 A" }), messages);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:root-b", rawId: "root-b", source: "codex-app", projectPath: multipleRoots, originalTitle: "根 B" }), messages);
+    store.upsertIndexedSession(sampleSession({ sessionKey: "codex:cli", rawId: "cli", source: "codex-cli", projectPath: cliTask, originalTitle: "CLI 任务" }), messages);
+
+    expect(projectByPath(store, windowsTask)).toMatchObject({ label: "Windows 任务", labelKind: "codex-task-title" });
+    expect(projectByPath(store, invalidDate)).toMatchObject({ label: "new-chat", labelKind: "path" });
+    expect(projectByPath(store, normalRepo)).toMatchObject({ label: "agent-recall", labelKind: "path" });
+    expect(projectByPath(store, multipleRoots)).toMatchObject({ label: "shared", labelKind: "path" });
+    expect(projectByPath(store, cliTask)).toMatchObject({ label: "cli-task", labelKind: "path" });
+  });
+
+  it("falls back to the root first question when no usable native title exists", () => {
+    const store = createInMemoryStore();
+    const taskPath = "/Users/me/Documents/Codex/2026-07-19/question-fallback";
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:question-fallback",
+        rawId: "question-fallback",
+        source: "codex-app",
+        projectPath: taskPath,
+        originalTitle: "Untitled Session",
+        firstQuestion: "分析 AgentRecall 项目名称",
+      }),
+      messages,
+    );
+
+    expect(projectByPath(store, taskPath)).toMatchObject({
+      label: "分析 AgentRecall 项目名称",
+      labelKind: "codex-task-title",
+      labelSuffix: null,
+    });
+  });
+
+  it("uses a localized-ready untitled label with the root creation time", () => {
+    const store = createInMemoryStore();
+    const timestamp = new Date(2026, 6, 19, 19, 25).getTime();
+    const taskPath = "/Users/me/Documents/Codex/2026-07-19/new-chat";
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:untitled",
+        rawId: "untitled",
+        source: "codex-app",
+        projectPath: taskPath,
+        originalTitle: "Untitled Session",
+        firstQuestion: "",
+        timestamp,
+      }),
+      [],
+    );
+
+    expect(projectByPath(store, taskPath)).toMatchObject({
+      label: "Untitled session",
+      labelKind: "codex-task-untitled",
+      labelSuffix: "07-19 19:25",
+    });
   });
 
   it("lists project creation and latest activity timestamps", () => {

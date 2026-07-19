@@ -83,6 +83,26 @@ interface SessionRow {
   parent_session_id: string | null;
 }
 
+type ProjectAggregateRow = {
+  project_path: string;
+  environment_id: string;
+  environment_label: string | null;
+  session_count: number;
+  created_at: number;
+  last_activity_at: number;
+  root_count: number;
+  root_source: SessionSource | null;
+  root_custom_title: string | null;
+  root_original_title: string | null;
+  root_first_question: string | null;
+  root_created_at: number | null;
+};
+
+type ProjectSummaryDraft = ProjectSummary & {
+  taskWorkspaceDate: string | null;
+  rootCreatedAt: number;
+};
+
 interface TraceEventRow {
   trace_index: number;
   kind: SessionTraceEvent["kind"];
@@ -752,7 +772,13 @@ export class SessionsStore {
           environments.label AS environment_label,
           COUNT(*) AS session_count,
           MAX(COALESCE(sessions.timestamp, 0)) AS created_at,
-          MAX(${sessionActivitySql("sessions")}) AS last_activity_at
+          MAX(${sessionActivitySql("sessions")}) AS last_activity_at,
+          SUM(CASE WHEN sessions.is_subagent = 0 THEN 1 ELSE 0 END) AS root_count,
+          MAX(CASE WHEN sessions.is_subagent = 0 THEN sessions.source END) AS root_source,
+          MAX(CASE WHEN sessions.is_subagent = 0 THEN sessions.custom_title END) AS root_custom_title,
+          MAX(CASE WHEN sessions.is_subagent = 0 THEN sessions.original_title END) AS root_original_title,
+          MAX(CASE WHEN sessions.is_subagent = 0 THEN sessions.first_question END) AS root_first_question,
+          MAX(CASE WHEN sessions.is_subagent = 0 THEN sessions.timestamp END) AS root_created_at
         FROM sessions
         LEFT JOIN environments ON environments.id = sessions.environment_id
         WHERE trim(project_path) != ''
@@ -761,30 +787,37 @@ export class SessionsStore {
         GROUP BY sessions.project_path, sessions.environment_id
       `,
       )
-      .all(...environmentArgs) as Array<{
-        project_path: string;
-        environment_id: string;
-        environment_label: string | null;
-        session_count: number;
-        created_at: number;
-        last_activity_at: number;
-      }>;
-    const summaries = rows.map((row) => ({
-      path: row.project_path,
-      label: projectLabel(row.project_path),
-      labelKind: "path" as const,
-      labelSuffix: null,
-      sessionCount: row.session_count,
-      environmentId: row.environment_id,
-      environmentLabel: row.environment_label ?? localEnvironment().label,
-      createdAt: row.created_at,
-      lastActivityAt: row.last_activity_at,
-    }));
+      .all(...environmentArgs) as ProjectAggregateRow[];
+    const summaries: ProjectSummaryDraft[] = rows.map((row) => {
+      const taskDate =
+        row.root_count === 1 && row.root_source === "codex-app"
+          ? codexTaskWorkspaceDate(row.project_path)
+          : null;
+      const rootTitle = rootProjectTitle(row);
+      const untitled = !rootTitle;
+      const taskWorkspace = taskDate !== null;
+
+      return {
+        path: row.project_path,
+        label: taskWorkspace ? (rootTitle || "Untitled session") : projectLabel(row.project_path),
+        labelKind: taskWorkspace ? (untitled ? "codex-task-untitled" : "codex-task-title") : "path",
+        labelSuffix: null,
+        sessionCount: row.session_count,
+        environmentId: row.environment_id,
+        environmentLabel: row.environment_label ?? localEnvironment().label,
+        createdAt: row.created_at,
+        lastActivityAt: row.last_activity_at,
+        taskWorkspaceDate: taskDate,
+        rootCreatedAt: row.root_created_at ?? 0,
+      };
+    });
     const basenameCounts = new Map<string, number>();
     const environmentsByPath = new Map<string, Set<string>>();
     for (const summary of summaries) {
-      const basename = projectBasename(summary.path);
-      basenameCounts.set(basename, (basenameCounts.get(basename) || 0) + 1);
+      if (summary.labelKind === "path") {
+        const basename = projectBasename(summary.path);
+        basenameCounts.set(basename, (basenameCounts.get(basename) || 0) + 1);
+      }
       const environmentIds = environmentsByPath.get(summary.path) ?? new Set<string>();
       environmentIds.add(summary.environmentId);
       environmentsByPath.set(summary.path, environmentIds);
@@ -796,7 +829,9 @@ export class SessionsStore {
         return {
           ...summary,
           label:
-            !repeatedAcrossEnvironments && (basenameCounts.get(projectBasename(summary.path)) || 0) > 1
+            summary.labelKind === "path" &&
+            !repeatedAcrossEnvironments &&
+            (basenameCounts.get(projectBasename(summary.path)) || 0) > 1
               ? projectParentLabel(summary.path)
               : summary.label,
           labelSuffix: repeatedAcrossEnvironments
@@ -804,12 +839,20 @@ export class SessionsStore {
             : summary.labelSuffix,
         };
       })
+      .map((summary) => ({
+        ...summary,
+        labelSuffix:
+          summary.labelKind === "codex-task-untitled"
+            ? appendLabelSuffix(summary.labelSuffix, formatMonthDayTime(summary.rootCreatedAt))
+            : summary.labelSuffix,
+      }))
       .sort(
         (a, b) =>
           environmentSortValue(a.environmentId) - environmentSortValue(b.environmentId) ||
           b.lastActivityAt - a.lastActivityAt ||
           a.label.localeCompare(b.label),
-      );
+      )
+      .map(publicProjectSummary);
   }
 
   getSession(sessionKey: string): SessionSearchResult | null {
@@ -1823,6 +1866,56 @@ function branchTagName(branch: string | null | undefined): string | null {
 
 function projectParts(projectPath: string): string[] {
   return projectPath.split(/[\\/]+/).filter(Boolean);
+}
+
+function validIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function codexTaskWorkspaceDate(projectPath: string): string | null {
+  const parts = projectParts(projectPath);
+  if (parts.length < 3) return null;
+  const codexSegment = parts.at(-3) || "";
+  const dateSegment = parts.at(-2) || "";
+  const taskSegment = parts.at(-1) || "";
+  if (codexSegment.toLowerCase() !== "codex" || !taskSegment || !validIsoDate(dateSegment)) return null;
+  return dateSegment;
+}
+
+function rootProjectTitle(row: ProjectAggregateRow): string | null {
+  const customTitle = row.root_custom_title?.trim();
+  if (customTitle) return customTitle;
+  const originalTitle = row.root_original_title?.trim();
+  if (originalTitle && originalTitle !== "Untitled Session") return originalTitle;
+  return row.root_first_question?.trim() || null;
+}
+
+function formatMonthDayTime(timestamp: number | null): string | null {
+  if (!timestamp || !Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function publicProjectSummary(draft: ProjectSummaryDraft): ProjectSummary {
+  return {
+    path: draft.path,
+    label: draft.label,
+    labelKind: draft.labelKind,
+    labelSuffix: draft.labelSuffix,
+    sessionCount: draft.sessionCount,
+    environmentId: draft.environmentId,
+    environmentLabel: draft.environmentLabel,
+    createdAt: draft.createdAt,
+    lastActivityAt: draft.lastActivityAt,
+  };
 }
 
 function projectBasename(projectPath: string): string {
