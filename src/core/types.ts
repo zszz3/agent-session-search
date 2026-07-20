@@ -277,6 +277,11 @@ export interface SessionSourceStats extends SessionStatsSummary {
   source: SessionSource;
 }
 
+export interface SessionDailyTokenUsage extends TokenUsage {
+  dayStart: number;
+  dayEndExclusive: number;
+}
+
 export type SessionStatsPeriod = "today" | "sevenDay" | "thirtyDay" | "allTime";
 
 export interface SessionStatsOptions {
@@ -287,6 +292,7 @@ export interface SessionStatsOptions {
 export interface SessionStats {
   total: SessionStatsSummary;
   bySource: SessionSourceStats[];
+  dailyTokenUsage: SessionDailyTokenUsage[];
   range: {
     period: SessionStatsPeriod;
     since: number | null;

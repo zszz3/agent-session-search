@@ -7,6 +7,7 @@ import type {
   ProjectSummary,
   ProjectTagEntry,
   SearchOptions,
+  SessionDailyTokenUsage,
   SessionEnvironment,
   SessionMessage,
   SessionMessageEvent,
@@ -45,6 +46,15 @@ interface StatsRange {
   period: SessionStatsPeriod;
   since: number | null;
   until: number;
+}
+
+interface DailyTokenRow {
+  day_index: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
 }
 
 interface SessionRow {
@@ -958,10 +968,16 @@ export class SessionsStore {
       }),
       emptyStatsSummary(),
     );
+    const dailyTokenUsage = this.aggregateDailyTokenUsage(
+      resolveDailyTokenRanges(now),
+      options.excludeSubagents ?? false,
+      now,
+    );
 
     return {
       total,
       bySource,
+      dailyTokenUsage,
       range,
     };
   }
@@ -1618,7 +1634,97 @@ export class SessionsStore {
       metadataMatch: null,
       isSubagent: row.is_subagent === 1,
       parentSessionId: row.parent_session_id,
-    };
+      };
+  }
+
+  private aggregateDailyTokenUsage(
+    days: Array<Pick<SessionDailyTokenUsage, "dayStart" | "dayEndExclusive">>,
+    excludeSubagents: boolean,
+    now: number,
+  ): SessionDailyTokenUsage[] {
+    if (days.length === 0) return [];
+    const bucketCase = days
+      .map((_, index) => `WHEN timestamp >= ? AND timestamp < ? THEN ${index}`)
+      .join("\n");
+    const rows = this.db
+      .prepare(
+        `
+        WITH ranked AS (
+          SELECT
+            sessions.source AS source,
+            token_events.dedupe_key AS dedupe_key,
+            token_events.timestamp AS timestamp,
+            token_events.input_tokens AS input_tokens,
+            token_events.output_tokens AS output_tokens,
+            token_events.cached_input_tokens AS cached_input_tokens,
+            token_events.reasoning_output_tokens AS reasoning_output_tokens,
+            token_events.total_tokens AS total_tokens,
+            ROW_NUMBER() OVER (
+              PARTITION BY token_events.dedupe_key
+              ORDER BY
+                token_events.total_tokens DESC,
+                CASE sessions.source
+                  WHEN 'codex-cli' THEN 1
+                  WHEN 'claude-cli' THEN 1
+                  WHEN 'codex-app' THEN 2
+                  WHEN 'claude-app' THEN 2
+                  ELSE 9
+                END,
+                token_events.timestamp ASC
+            ) AS row_rank
+          FROM token_events
+          JOIN sessions ON sessions.session_key = token_events.session_key
+          WHERE token_events.timestamp >= ?
+            AND token_events.timestamp <= ?
+            ${excludeSubagents ? "AND sessions.is_subagent = 0" : ""}
+        ),
+        deduped AS (
+          SELECT *
+          FROM ranked
+          WHERE row_rank = 1
+        ),
+        bucketed AS (
+          SELECT
+            CASE
+              ${bucketCase}
+            END AS day_index,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            reasoning_output_tokens,
+            total_tokens
+          FROM deduped
+        )
+        SELECT
+          day_index,
+          COALESCE(SUM(input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+          COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+          COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM bucketed
+        WHERE day_index IS NOT NULL
+        GROUP BY day_index
+        ORDER BY day_index
+      `,
+      )
+      .all(
+        days[0].dayStart,
+        now,
+        ...days.flatMap((day) => [day.dayStart, day.dayEndExclusive]),
+      ) as unknown as DailyTokenRow[];
+    const rowsByDay = new Map(rows.map((row) => [row.day_index, row]));
+    return days.map((day, index) => {
+      const row = rowsByDay.get(index);
+      return {
+        ...day,
+        inputTokens: row?.input_tokens ?? 0,
+        outputTokens: row?.output_tokens ?? 0,
+        cachedInputTokens: row?.cached_input_tokens ?? 0,
+        reasoningOutputTokens: row?.reasoning_output_tokens ?? 0,
+        totalTokens: row?.total_tokens ?? 0,
+      };
+    });
   }
 
   private score(result: SessionSearchResult, query: string, prioritizePinned = true): number {
@@ -1739,6 +1845,23 @@ function resolveStatsRange(options: SessionStatsOptions, now: number): StatsRang
   if (period === "today") return { period, since: startOfLocalDay(now), until: now };
   if (period === "thirtyDay") return { period, since: now - 30 * 24 * 60 * 60 * 1000, until: now };
   return { period: "sevenDay", since: now - 7 * 24 * 60 * 60 * 1000, until: now };
+}
+
+function resolveDailyTokenRanges(
+  now: number,
+): Array<Pick<SessionDailyTokenUsage, "dayStart" | "dayEndExclusive">> {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: 7 }, (_, index) => {
+    const start = new Date(today);
+    start.setDate(start.getDate() - (6 - index));
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return {
+      dayStart: start.getTime(),
+      dayEndExclusive: end.getTime(),
+    };
+  });
 }
 
 function startOfLocalDay(timestamp: number): number {

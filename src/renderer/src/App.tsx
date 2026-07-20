@@ -198,6 +198,7 @@ const EMPTY_STATS: SessionStats = {
     totalTokens: 0,
   },
   bySource: [],
+  dailyTokenUsage: [],
   range: {
     period: "today",
     since: null,

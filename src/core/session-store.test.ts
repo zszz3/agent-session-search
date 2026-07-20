@@ -528,7 +528,7 @@ describe("SessionStore", () => {
       reasoningOutputTokens: 10,
       totalTokens: 170,
     });
-    expect(store.getStats({ period: "today" }, now)).toEqual({
+    expect(store.getStats({ period: "today" }, now)).toMatchObject({
       total: {
         sessionCount: 1,
         messageCount: 2,
@@ -565,7 +565,7 @@ describe("SessionStore", () => {
       reasoningOutputTokens: 10,
       totalTokens: 600,
     });
-    expect(store.getStats({ period: "thirtyDay" }, now)).toEqual({
+    expect(store.getStats({ period: "thirtyDay" }, now)).toMatchObject({
       total: {
         sessionCount: 2,
         messageCount: 4,
@@ -634,6 +634,108 @@ describe("SessionStore", () => {
     expect(stats.total.totalTokens).toBe(170);
     expect(stats.bySource.find((item) => item.source === "codex-cli")?.totalTokens).toBe(170);
     expect(stats.bySource.find((item) => item.source === "codex-app")?.totalTokens).toBe(0);
+  });
+
+  it("reports seven local days of deduplicated token usage", () => {
+    const store = createInMemoryStore();
+    const now = new Date(2026, 6, 20, 12, 0, 0, 0).getTime();
+    const atLocalDay = (offset: number, hour: number): number => {
+      const date = new Date(now);
+      date.setDate(date.getDate() + offset);
+      date.setHours(hour, 0, 0, 0);
+      return date.getTime();
+    };
+
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:trend", rawId: "trend", source: "codex-cli" }),
+      messages,
+      [
+        {
+          dedupeKey: "turn:today",
+          timestamp: atLocalDay(0, 9),
+          inputTokens: 100,
+          cachedInputTokens: 20,
+          outputTokens: 30,
+          reasoningOutputTokens: 10,
+          totalTokens: 160,
+        },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:mirror", rawId: "mirror", source: "codex-app" }),
+      messages,
+      [
+        {
+          dedupeKey: "turn:today",
+          timestamp: atLocalDay(0, 10),
+          inputTokens: 100,
+          cachedInputTokens: 20,
+          outputTokens: 30,
+          reasoningOutputTokens: 10,
+          totalTokens: 160,
+        },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "claude:older", rawId: "older", source: "claude-cli" }),
+      messages,
+      [
+        {
+          dedupeKey: "turn:older",
+          timestamp: atLocalDay(-3, 14),
+          inputTokens: 40,
+          cachedInputTokens: 5,
+          outputTokens: 5,
+          reasoningOutputTokens: 0,
+          totalTokens: 50,
+        },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:subagent", rawId: "subagent", source: "codex-cli", isSubagent: true }),
+      messages,
+      [
+        {
+          dedupeKey: "turn:subagent",
+          timestamp: atLocalDay(-1, 14),
+          inputTokens: 90,
+          cachedInputTokens: 0,
+          outputTokens: 10,
+          reasoningOutputTokens: 0,
+          totalTokens: 100,
+        },
+      ],
+    );
+    store.upsertIndexedSession(
+      sampleSession({ sessionKey: "codex:future", rawId: "future", source: "codex-cli" }),
+      messages,
+      [
+        {
+          dedupeKey: "turn:future",
+          timestamp: atLocalDay(0, 18),
+          inputTokens: 90,
+          cachedInputTokens: 0,
+          outputTokens: 10,
+          reasoningOutputTokens: 0,
+          totalTokens: 100,
+        },
+      ],
+    );
+
+    const trend = store.getStats({ period: "today", excludeSubagents: true }, now).dailyTokenUsage;
+
+    expect(trend).toHaveLength(7);
+    expect(trend.map((day) => day.totalTokens)).toEqual([0, 0, 0, 50, 0, 0, 160]);
+    expect(trend[6]).toMatchObject({
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      outputTokens: 30,
+      reasoningOutputTokens: 10,
+    });
+    for (let index = 1; index < trend.length; index += 1) {
+      expect(trend[index - 1].dayEndExclusive).toBe(trend[index].dayStart);
+    }
+    expect(trend[6].dayStart).toBe(new Date(2026, 6, 20).getTime());
   });
 
   it("stores skill usage events by source and replaces them on rescan", () => {
