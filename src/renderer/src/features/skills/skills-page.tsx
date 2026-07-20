@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import { Compass, Download, RefreshCw, Upload, X } from "lucide-react";
+import { Compass, FolderInput, RefreshCw, Upload, X } from "lucide-react";
 import type { InstalledSkill, InstalledSkillsSnapshot, SkillRootStatus, SkillSource } from "../../../../core/skill-manager";
 import type { ManagedSkill, SkillInstallTarget } from "../../../../core/managed-skill-library";
 import type { RemoteSkill, SkillSyncSnapshot, SkillSyncUploadOutcome } from "../../../../core/skill-sync";
@@ -176,7 +176,7 @@ export function SkillsPage({
           </div>
           <div className="managed-skills-toolbar-actions">
             <button type="button" onClick={() => setDiscoveryOpen(true)}><Compass size={14} />{l("Discover Skill", "发现 Skill")}</button>
-            <button type="button" className="primary" onClick={() => setImportOpen(true)}><Download size={14} />{l("Import local Skill", "导入本机 Skill")}</button>
+            <button type="button" className="managed-skills-import-action" onClick={() => setImportOpen(true)}><FolderInput size={14} />{l("Import local Skill", "导入本机 Skill")}</button>
             <button type="button" className="icon-button" onClick={onRefresh} disabled={loading} aria-label={l("Refresh Skill library", "刷新 Skill 库")} title={l("Refresh Skill library", "刷新 Skill 库")}><RefreshCw size={14} /></button>
           </div>
         </header>

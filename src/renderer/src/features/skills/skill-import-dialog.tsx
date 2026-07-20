@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import { Check, Download, Search, X } from "lucide-react";
+import { Check, FolderInput, Search, X } from "lucide-react";
 import type { InstalledSkill } from "../../../../core/skill-manager";
 import { localize, type LanguageMode } from "../../language";
 import { skillSourceLabel } from "../../skill-manager";
@@ -117,8 +117,8 @@ export function SkillImportDialog({
         <footer className="managed-skill-dialog-actions">
           <span>{l(`${selected.size} selected`, `已选择 ${selected.size} 个`)}</span>
           <button type="button" onClick={onClose} disabled={importing}>{l("Cancel", "取消")}</button>
-          <button type="button" className="primary" onClick={() => void importSelected()} disabled={selected.size === 0 || importing}>
-            <Download size={13} />{importing ? l("Importing…", "正在导入…") : l("Import selected", "导入所选")}
+          <button type="button" className="managed-skills-import-action" onClick={() => void importSelected()} disabled={selected.size === 0 || importing}>
+            <FolderInput size={13} />{importing ? l("Importing…", "正在导入…") : l("Import selected", "导入所选")}
           </button>
         </footer>
       </section>

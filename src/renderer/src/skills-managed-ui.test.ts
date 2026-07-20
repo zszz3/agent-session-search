@@ -7,6 +7,8 @@ import type { SkillSyncSnapshot } from "../../core/skill-sync";
 import { SkillsPage } from "./features/skills/skills-page";
 
 const pageStyles = readFileSync(new URL("./styles/skills-page.css", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("./features/skills/skills-page.tsx", import.meta.url), "utf8");
+const importDialogSource = readFileSync(new URL("./features/skills/skill-import-dialog.tsx", import.meta.url), "utf8");
 
 function managedSkill(overrides: Partial<ManagedSkill> = {}): ManagedSkill {
   return {
@@ -88,5 +90,14 @@ describe("managed Skills page", () => {
     expect(pageStyles).toContain(".managed-skill-targets");
     expect(pageStyles).toContain("@media (max-width: 820px)");
     expect(pageStyles).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("keeps local import compact and softly emphasized beside the other toolbar actions", () => {
+    expect(pageSource).toContain('className="managed-skills-import-action"');
+    expect(pageSource).toContain("<FolderInput size={14} />");
+    expect(importDialogSource).toContain('className="managed-skills-import-action"');
+    expect(importDialogSource).toContain("<FolderInput size={13} />");
+    expect(pageStyles).toMatch(/\.managed-skills-toolbar-actions button\s*\{[^}]*white-space:\s*nowrap/s);
+    expect(pageStyles).toMatch(/\.managed-skills-import-action\s*\{[^}]*border-color:\s*var\(--accent-line\)[^}]*background:\s*var\(--accent-soft\)[^}]*color:\s*var\(--accent-bright\)/s);
   });
 });
