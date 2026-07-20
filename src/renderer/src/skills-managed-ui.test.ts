@@ -121,6 +121,7 @@ describe("managed Skills page", () => {
     if (!existsSync(localSkillsTabUrl)) return;
     const localTabSource = readFileSync(localSkillsTabUrl, "utf8");
     expect(localTabSource).toContain("loadedRequestKey.current === requestKey");
+    expect(localTabSource).toContain("listSkillImportCandidates(refreshVersion > 0 || reloadVersion > 0)");
     expect(localTabSource).toContain("LOCAL_SKILL_RENDER_BATCH");
     expect(localTabSource).toContain("filteredSkills.slice(0, visibleCount)");
     expect(localTabSource).toContain("onScroll={showMoreSkillsNearBottom}");

@@ -71,7 +71,7 @@ describe("app loading performance", () => {
     expect(loadSessionsEffect).toContain("void load()");
   });
 
-  it("refreshes skill usage when the Skills page is opened before listing skills", () => {
+  it("opens the Skills page from cached usage and reserves full rescans for manual refresh", () => {
     const loadSkillsBlock = sourceBlock("const loadSkills = useCallback(async (options:", [
       "const deleteSkill = useCallback",
       "useEffect(() => {",
@@ -83,10 +83,12 @@ describe("app loading performance", () => {
     ]);
 
     expect(loadSkillsBlock).toContain("window.sessionSearch.refreshSkillUsage()");
-    expect(loadSkillsBlock.indexOf("window.sessionSearch.refreshSkillUsage()")).toBeLessThan(
-      loadSkillsBlock.indexOf("window.sessionSearch.listSkills()"),
-    );
-    expect(skillsOpenEffect).toContain("loadSkills({ refreshUsage: true, silent: true })");
+    expect(loadSkillsBlock).toContain("onInstalledSkillsLoaded:");
+    expect(loadSkillsBlock).toContain("setSkillsLoading(false)");
+    expect(skillsOpenEffect).toContain("loadSkills({ silent: true })");
+    expect(skillsOpenEffect).toContain("if (!skillsLoadedRef.current)");
+    expect(skillsOpenEffect).not.toContain("refreshUsage: true");
+    expect(appSource).toContain("onRefresh={() => void loadSkills({ refreshUsage: true })}");
   });
 
   it("preloads and caches remote sessions instead of reloading them whenever the dialog opens", () => {

@@ -343,6 +343,8 @@ export function App(): ReactElement {
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsFeedback, setSkillsFeedback] = useState<SkillsFeedback>(null);
   const skillSyncSnapshotRef = useRef<SkillSyncSnapshot>(EMPTY_SKILL_SYNC);
+  const skillsLoadedRef = useRef(false);
+  const skillsLoadSeqRef = useRef(0);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [settingsFeedback, setSettingsFeedback] = useState<SettingsFeedback>(null);
   const [environmentHealthReports, setEnvironmentHealthReports] = useState<Record<string, RemoteHealthReport>>({});
@@ -519,6 +521,7 @@ export function App(): ReactElement {
   }, [t]);
 
   const loadSkills = useCallback(async (options: { refreshUsage?: boolean; silent?: boolean } = {}) => {
+    const requestId = ++skillsLoadSeqRef.current;
     const refreshUsage = options.refreshUsage ?? false;
     const silent = options.silent ?? false;
     setSkillsLoading(true);
@@ -534,15 +537,21 @@ export function App(): ReactElement {
         }
       }
       const {
-        installedSkills: nextSkills,
         skillSyncSnapshot: nextSkillSync,
         syncError,
       } = await loadSkillsPanelData({
         listSkills: () => window.sessionSearch.listSkills(),
         getSkillSyncSnapshot: () => window.sessionSearch.getSkillSyncSnapshot(),
         fallbackSyncSnapshot: skillSyncSnapshotRef.current,
+        onInstalledSkillsLoaded: (snapshot) => {
+          if (requestId !== skillsLoadSeqRef.current) return;
+          skillsLoadedRef.current = true;
+          setInstalledSkills(snapshot);
+          setSkillsLoading(false);
+        },
       });
-      setInstalledSkills(nextSkills);
+      if (requestId !== skillsLoadSeqRef.current) return;
+      skillsLoadedRef.current = true;
       setSkillSyncSnapshot(nextSkillSync);
       if (usageError) {
         if (!silent) setSkillsFeedback({ kind: "error", message: usageError instanceof Error ? usageError.message : String(usageError) });
@@ -563,13 +572,14 @@ export function App(): ReactElement {
         }, 2200);
       }
     } catch (error) {
+      if (requestId !== skillsLoadSeqRef.current) return;
       if (!refreshUsage) {
         setInstalledSkills(EMPTY_SKILLS);
         setSkillSyncSnapshot(EMPTY_SKILL_SYNC);
       }
       setSkillsFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
-      setSkillsLoading(false);
+      if (requestId === skillsLoadSeqRef.current) setSkillsLoading(false);
     }
   }, [t]);
 
@@ -802,7 +812,9 @@ export function App(): ReactElement {
   }, [loadRemoteSessionsCache]);
 
   useEffect(() => {
-    if (activePage === "skills") void loadSkills({ refreshUsage: true, silent: true });
+    if (activePage === "skills") {
+      if (!skillsLoadedRef.current) void loadSkills({ silent: true });
+    }
   }, [activePage, loadSkills]);
 
   useEffect(() => {

@@ -37,6 +37,26 @@ const fallbackSyncSnapshot: SkillSyncSnapshot = {
 };
 
 describe("skills panel loading", () => {
+  it("publishes local Skills without waiting for the remote sync request", async () => {
+    let resolveRemote!: (snapshot: SkillSyncSnapshot) => void;
+    const remote = new Promise<SkillSyncSnapshot>((resolve) => {
+      resolveRemote = resolve;
+    });
+    const published: InstalledSkillsSnapshot[] = [];
+    const loading = loadSkillsPanelData({
+      listSkills: async () => installedSkills,
+      getSkillSyncSnapshot: () => remote,
+      fallbackSyncSnapshot,
+      onInstalledSkillsLoaded: (snapshot) => published.push(snapshot),
+    });
+
+    await Promise.resolve();
+    expect(published).toEqual([installedSkills]);
+
+    resolveRemote(fallbackSyncSnapshot);
+    await expect(loading).resolves.toMatchObject({ installedSkills, skillSyncSnapshot: fallbackSyncSnapshot });
+  });
+
   it("keeps local skills when the remote sync snapshot fails", async () => {
     const result = await loadSkillsPanelData({
       listSkills: async () => installedSkills,

@@ -5,6 +5,7 @@ export interface SkillsPanelLoaders {
   listSkills: () => Promise<InstalledSkillsSnapshot>;
   getSkillSyncSnapshot: () => Promise<SkillSyncSnapshot>;
   fallbackSyncSnapshot: SkillSyncSnapshot;
+  onInstalledSkillsLoaded?: (snapshot: InstalledSkillsSnapshot) => void;
 }
 
 export interface SkillsPanelData {
@@ -17,13 +18,20 @@ export async function loadSkillsPanelData({
   listSkills,
   getSkillSyncSnapshot,
   fallbackSyncSnapshot,
+  onInstalledSkillsLoaded,
 }: SkillsPanelLoaders): Promise<SkillsPanelData> {
-  const [skillsResult, syncResult] = await Promise.allSettled([listSkills(), getSkillSyncSnapshot()]);
-  if (skillsResult.status === "rejected") throw normalizeError(skillsResult.reason);
+  const installedSkillsPromise = listSkills();
+  const syncResultPromise: Promise<PromiseSettledResult<SkillSyncSnapshot>> = getSkillSyncSnapshot().then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+  const installedSkills = await installedSkillsPromise;
+  onInstalledSkillsLoaded?.(installedSkills);
+  const syncResult = await syncResultPromise;
 
   if (syncResult.status === "fulfilled") {
     return {
-      installedSkills: skillsResult.value,
+      installedSkills,
       skillSyncSnapshot: syncResult.value,
       syncError: null,
     };
@@ -31,7 +39,7 @@ export async function loadSkillsPanelData({
 
   const syncError = normalizeError(syncResult.reason);
   return {
-    installedSkills: skillsResult.value,
+    installedSkills,
     skillSyncSnapshot: {
       status: {
         kind: "error",

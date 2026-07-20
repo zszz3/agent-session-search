@@ -66,7 +66,7 @@ export function LocalSkillsTab({
     requestedRequestKey.current = requestKey;
     setLoading(true);
     setError(null);
-    window.sessionSearch.listSkillImportCandidates()
+    window.sessionSearch.listSkillImportCandidates(refreshVersion > 0 || reloadVersion > 0)
       .then((snapshot) => {
         if (!mounted.current || requestedRequestKey.current !== requestKey) return;
         loadedRequestKey.current = requestKey;

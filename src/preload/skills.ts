@@ -13,7 +13,9 @@ export type SkillsIpcRenderer = Pick<IpcRenderer, "invoke">;
 export function createSkillsApi(ipc: SkillsIpcRenderer) {
   return {
     listSkills: (): Promise<InstalledSkillsSnapshot> => ipc.invoke(SKILLS_IPC.list.channel),
-    listSkillImportCandidates: (): Promise<InstalledSkillsSnapshot> => ipc.invoke(SKILLS_IPC.listImportCandidates.channel),
+    listSkillImportCandidates: (forceRefresh = false): Promise<InstalledSkillsSnapshot> => forceRefresh
+      ? ipc.invoke(SKILLS_IPC.listImportCandidates.channel, true)
+      : ipc.invoke(SKILLS_IPC.listImportCandidates.channel),
     importLocalSkills: (skillPaths: string[]): Promise<ManagedSkillImportResult[]> =>
       ipc.invoke(SKILLS_IPC.importLocal.channel, skillPaths),
     updateManagedSkillTargets: (managedId: string, targets: SkillInstallTarget[]): Promise<ManagedSkill> =>

@@ -181,6 +181,7 @@ export class SkillService {
   private readonly managedLibrary: ManagedSkillLibraryPort | null;
   private readonly skillsShClient: SkillsShClientPort | null;
   private readonly discoveredSkills = new Map<string, SkillsShEntry>();
+  private importCandidatesCache: InstalledSkillsSnapshot | null = null;
   private initialUsageTimer: ReturnType<typeof setTimeout> | null = null;
   private autoUsageTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -223,9 +224,12 @@ export class SkillService {
     };
   }
 
-  listImportCandidates(): InstalledSkillsSnapshot {
+  listImportCandidates(forceRefresh = false): InstalledSkillsSnapshot {
     if (!this.managedLibrary) throw new Error("The managed Skill library is unavailable.");
-    const snapshot = this.managedLibrary.listImportCandidates(this.projectDirs());
+    if (forceRefresh || !this.importCandidatesCache) {
+      this.importCandidatesCache = this.managedLibrary.listImportCandidates(this.projectDirs());
+    }
+    const snapshot = this.importCandidatesCache;
     const usage = this.dependencies.getStore().getSkillUsageSnapshot();
     return {
       ...snapshot,
@@ -600,11 +604,15 @@ export class SkillService {
   private findInstalledSkill(skillPath: string): InstalledSkill {
     const normalized = path.resolve(skillPath);
     const installed = this.listSkills().skills;
-    const localCandidates = this.managedLibrary ? this.listImportCandidates().skills : [];
-    const skill = [...installed, ...localCandidates].find((item) =>
+    const installedSkill = installed.find((item) =>
       path.resolve(item.path) === normalized || path.resolve(item.directoryPath) === normalized);
-    if (!skill) throw new Error("Skill is no longer installed or is outside managed roots.");
-    return skill;
+    if (installedSkill) return installedSkill;
+    const localSkill = this.managedLibrary
+      ? this.listImportCandidates().skills.find((item) =>
+        path.resolve(item.path) === normalized || path.resolve(item.directoryPath) === normalized)
+      : null;
+    if (!localSkill) throw new Error("Skill is no longer installed or is outside managed roots.");
+    return localSkill;
   }
 
   private async buildSyncRelations(

@@ -10,7 +10,7 @@ import { combineIpcDisposers, registerIpcHandler, type IpcMainRegistrar } from "
 
 export interface SkillsIpcService {
   listSkills(): InstalledSkillsSnapshot;
-  listImportCandidates(): InstalledSkillsSnapshot;
+  listImportCandidates(forceRefresh?: boolean): InstalledSkillsSnapshot;
   importLocalSkills(skillPaths: string[]): ManagedSkillImportResult[];
   updateManagedSkillTargets(managedId: string, targets: SkillInstallTarget[]): ManagedSkill;
   listDiscoveredSkills(input: { page: number; query: string }): Promise<SkillsShPage>;
@@ -37,7 +37,7 @@ export interface SkillsIpcService {
 export function registerSkillsIpc(ipc: IpcMainRegistrar, service: SkillsIpcService): () => void {
   return combineIpcDisposers([
     registerIpcHandler(ipc, SKILLS_IPC.list, () => service.listSkills()),
-    registerIpcHandler(ipc, SKILLS_IPC.listImportCandidates, () => service.listImportCandidates()),
+    registerIpcHandler(ipc, SKILLS_IPC.listImportCandidates, (_event, forceRefresh) => service.listImportCandidates(forceRefresh)),
     registerIpcHandler(ipc, SKILLS_IPC.importLocal, (_event, paths) => service.importLocalSkills(paths)),
     registerIpcHandler(ipc, SKILLS_IPC.updateTargets, (_event, id, targets) => service.updateManagedSkillTargets(id, targets)),
     registerIpcHandler(ipc, SKILLS_IPC.listDiscovered, (_event, input) => service.listDiscoveredSkills(input)),

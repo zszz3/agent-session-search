@@ -88,6 +88,7 @@ describe("Skills IPC", () => {
     await handlers.get(SKILLS_IPC.updateTargets.channel)?.(event, "review", ["codex", "trae"]);
     await handlers.get(SKILLS_IPC.listDiscovered.channel)?.(event, { page: 2, query: " review " });
     await handlers.get(SKILLS_IPC.aiSearchDiscovered.channel)?.(event, { query: " find a review skill ", language: "en" });
+    await handlers.get(SKILLS_IPC.listImportCandidates.channel)?.(event, true);
 
     expect(service.upload).toHaveBeenNthCalledWith(1, " /project/Skill /SKILL.md ", false);
     expect(service.upload).toHaveBeenNthCalledWith(2, "/project/skill/SKILL.md", true);
@@ -97,6 +98,7 @@ describe("Skills IPC", () => {
     expect(service.updateManagedSkillTargets).toHaveBeenCalledWith("review", ["codex", "trae"]);
     expect(service.listDiscoveredSkills).toHaveBeenCalledWith({ page: 2, query: "review" });
     expect(service.aiSearchDiscoveredSkills).toHaveBeenCalledWith({ query: "find a review skill", language: "en" });
+    expect(service.listImportCandidates).toHaveBeenCalledWith(true);
   });
 
   it("rejects malformed paths, identifiers, lists, and extra arguments", () => {
@@ -112,6 +114,8 @@ describe("Skills IPC", () => {
     expect(() => handlers.get(SKILLS_IPC.downloadMany.channel)?.(event, Array.from({ length: 501 }, () => "fp"))).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.getDiff.channel)?.(event, 123, null)).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.list.channel)?.(event, true)).toThrow(IpcInputError);
+    expect(() => handlers.get(SKILLS_IPC.listImportCandidates.channel)?.(event, "refresh")).toThrow(IpcInputError);
+    expect(() => handlers.get(SKILLS_IPC.listImportCandidates.channel)?.(event, true, false)).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.importLocal.channel)?.(event, ["/tmp/valid", 1])).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.updateTargets.channel)?.(event, "../review", ["codex"])).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.updateTargets.channel)?.(event, "review", ["cursor"])).toThrow(IpcInputError);
@@ -127,6 +131,7 @@ describe("Skills IPC", () => {
     expect(service.downloadMany).not.toHaveBeenCalled();
     expect(service.getDiff).not.toHaveBeenCalled();
     expect(service.listSkills).not.toHaveBeenCalled();
+    expect(service.listImportCandidates).not.toHaveBeenCalled();
     expect(service.importLocalSkills).not.toHaveBeenCalled();
     expect(service.updateManagedSkillTargets).not.toHaveBeenCalled();
     expect(service.listDiscoveredSkills).not.toHaveBeenCalled();
@@ -148,6 +153,7 @@ describe("Skills IPC", () => {
 
     await api.listSkills();
     await api.listSkillImportCandidates();
+    await api.listSkillImportCandidates(true);
     await api.importLocalSkills(["/tmp/review/SKILL.md"]);
     await api.updateManagedSkillTargets("review", ["codex", "trae"]);
     await api.listDiscoveredSkills({ page: 0, query: "review" });
@@ -173,6 +179,7 @@ describe("Skills IPC", () => {
     expect(invoke.mock.calls).toEqual([
       [SKILLS_IPC.list.channel],
       [SKILLS_IPC.listImportCandidates.channel],
+      [SKILLS_IPC.listImportCandidates.channel, true],
       [SKILLS_IPC.importLocal.channel, ["/tmp/review/SKILL.md"]],
       [SKILLS_IPC.updateTargets.channel, "review", ["codex", "trae"]],
       [SKILLS_IPC.listDiscovered.channel, { page: 0, query: "review" }],

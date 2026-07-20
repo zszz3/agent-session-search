@@ -251,6 +251,17 @@ describe("SkillService local skills and usage", () => {
     expect(harness.operations.usageForSkill).toHaveBeenCalledWith(expect.any(Object), "review", "codex");
   });
 
+  it("caches local Skill discovery until an explicit refresh", () => {
+    const harness = createHarness();
+
+    harness.service.listImportCandidates();
+    harness.service.listImportCandidates();
+    expect(harness.managedLibrary.listImportCandidates).toHaveBeenCalledOnce();
+
+    harness.service.listImportCandidates(true);
+    expect(harness.managedLibrary.listImportCandidates).toHaveBeenCalledTimes(2);
+  });
+
   it("lists, previews, and imports a selected skills.sh result", async () => {
     const harness = createHarness();
     await expect(harness.service.listDiscoveredSkills({ page: 0, query: "review" })).resolves.toBe(harness.discoveredPage);
@@ -412,5 +423,6 @@ describe("SkillService utilities and hooks", () => {
     expect(harness.copyText).toHaveBeenNthCalledWith(1, "setup sql");
     expect(harness.copyText).toHaveBeenNthCalledWith(2, installedSkill().path);
     expect(harness.revealPath).toHaveBeenCalledWith(installedSkill().directoryPath);
+    expect(harness.managedLibrary.listImportCandidates).not.toHaveBeenCalled();
   });
 });

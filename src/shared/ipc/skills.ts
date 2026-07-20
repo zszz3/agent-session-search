@@ -19,6 +19,9 @@ const aiDiscoveryInput = z.object({
   query: z.string().trim().min(1).max(1_000),
   language: z.enum(["en", "zh"]),
 }).strict();
+const optionalRefreshInput = z
+  .union([z.tuple([]), z.tuple([z.boolean().optional()])])
+  .transform((input): [boolean] => [input[0] ?? false]);
 const discoveredSkillIdInput = z.string().trim().min(1).max(512).refine((value) => {
   if (value.includes("\0") || value.includes("\\")) return false;
   const segments = value.split("/");
@@ -30,7 +33,7 @@ const optionalBooleanInput = z
 
 export const SKILLS_IPC = {
   list: defineIpcRequest("skills:list", noInput),
-  listImportCandidates: defineIpcRequest("skills:import-candidates", noInput),
+  listImportCandidates: defineIpcRequest("skills:import-candidates", optionalRefreshInput),
   importLocal: defineIpcRequest("skills:import-local", z.tuple([pathListInput])),
   updateTargets: defineIpcRequest("skills:update-targets", z.tuple([managedSkillIdInput, installTargetsInput])),
   listDiscovered: defineIpcRequest("skills:discover-list", z.tuple([discoveryQueryInput])),
