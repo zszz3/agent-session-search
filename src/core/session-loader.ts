@@ -24,7 +24,7 @@ import type {
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => import("node:sqlite").DatabaseSync };
 
-const CODEX_APP_ORIGINATOR = "Codex Desktop";
+const CODEX_APP_ORIGINATORS = new Set(["Codex Desktop", "codex_work_desktop"]);
 const CLAUDE_INTERNAL_DIR = ".claude-internal";
 const CODEX_INTERNAL_DIR = ".codex-internal";
 const TCLAUDE_DIR = ".tclaude";
@@ -807,7 +807,7 @@ export function loadCodexSessionRows(
   const traceEvents = extractTraceEvents(rows, "codex");
   const tokenUsage = tokenUsageFromEvents(tokenEvents);
   const question = firstQuestion(messages);
-  const source: SessionSource = options.sourceOverride || (meta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli");
+  const source: SessionSource = options.sourceOverride || (CODEX_APP_ORIGINATORS.has(meta.originator || "") ? "codex-app" : "codex-cli");
   const session = createIndexedSession({
     keyPrefix: source === "codex-internal" ? "codex-internal" : source === "tcodex-cli" ? "tcodex" : "codex",
     rawId: meta.id,
