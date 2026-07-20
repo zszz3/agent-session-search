@@ -5,8 +5,9 @@ import { randomUUID } from "node:crypto";
 import { skillSyncFilesFromMetadata, type RemoteSkill, type SkillSyncFile } from "./skill-sync";
 
 export type SkillAgent = "codex" | "claude";
-export type SkillPortableScope = "codex-user" | "claude-user" | "shared";
+export type SkillPortableScope = "agent-recall" | "codex-user" | "claude-user" | "shared";
 export type SkillSource =
+  | "agent-recall"
   | "codex-user"
   | "codex-system"
   | "codex-shared"
@@ -57,6 +58,8 @@ export interface InstalledSkillsSnapshot {
 export interface SkillManagerOptions {
   homeDir?: string;
   codexHome?: string;
+  managedRoot?: string;
+  managedOnly?: boolean;
   projectDirs?: string[];
   claudePluginsDir?: string;
 }
@@ -74,6 +77,7 @@ export interface DeleteInstalledSkillResult {
 export interface InstallRemoteSkillOptions {
   homeDir?: string;
   codexHome?: string;
+  managedRoot?: string;
 }
 
 export interface InstallRemoteSkillResult {
@@ -98,7 +102,7 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
   const homeDir = options.homeDir || os.homedir();
   const codexHome = options.codexHome || process.env.CODEX_HOME || path.join(homeDir, ".codex");
   const projectDirs = dedupePaths(options.projectDirs ?? [process.cwd()]);
-  const roots: SkillRootConfig[] = [
+  const defaultRoots: SkillRootConfig[] = [
     { agent: "codex", source: "codex-user", path: path.join(codexHome, "skills") },
     { agent: "codex", source: "codex-system", path: path.join(codexHome, "skills", ".system") },
     { agent: "codex", source: "codex-shared", path: path.join(homeDir, ".agents", "skills") },
@@ -113,6 +117,12 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
       source: "claude-project",
       path: path.join(projectDir, ".claude", "skills"),
     })),
+  ];
+  const roots: SkillRootConfig[] = [
+    ...(options.managedRoot
+      ? [{ agent: "codex" as const, source: "agent-recall" as const, path: options.managedRoot }]
+      : []),
+    ...(options.managedOnly ? [] : defaultRoots),
   ];
 
   const skills: InstalledSkill[] = [];
@@ -129,20 +139,22 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
     skills.push(...rootSkills);
   }
 
-  const pluginsDir = options.claudePluginsDir || path.join(homeDir, ".claude", "plugins");
-  const pluginRoots = collectClaudePluginRoots(pluginsDir);
-  const pluginSkills: InstalledSkill[] = [];
-  for (const root of pluginRoots) {
-    pluginSkills.push(...readSkillsFromRoot(root));
+  if (!options.managedOnly) {
+    const pluginsDir = options.claudePluginsDir || path.join(homeDir, ".claude", "plugins");
+    const pluginRoots = collectClaudePluginRoots(pluginsDir);
+    const pluginSkills: InstalledSkill[] = [];
+    for (const root of pluginRoots) {
+      pluginSkills.push(...readSkillsFromRoot(root));
+    }
+    rootStatuses.push({
+      agent: "claude",
+      source: "claude-plugin",
+      path: pluginsDir,
+      exists: fs.existsSync(pluginsDir),
+      skillCount: dedupeSkills(pluginSkills).length,
+    });
+    skills.push(...pluginSkills);
   }
-  rootStatuses.push({
-    agent: "claude",
-    source: "claude-plugin",
-    path: pluginsDir,
-    exists: fs.existsSync(pluginsDir),
-    skillCount: dedupeSkills(pluginSkills).length,
-  });
-  skills.push(...pluginSkills);
 
   return {
     skills: dedupeSkills(skills).sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source) || a.path.localeCompare(b.path)),
@@ -152,6 +164,7 @@ export function listInstalledSkills(options: SkillManagerOptions = {}): Installe
 }
 
 export function portableScopeForSkillSource(source: SkillSource): SkillPortableScope | null {
+  if (source === "agent-recall") return "agent-recall";
   if (source === "codex-user") return "codex-user";
   if (source === "claude-user") return "claude-user";
   if (source === "codex-shared") return "shared";
@@ -212,7 +225,7 @@ export function installRemoteSkillLocally(remoteSkill: RemoteSkill, options: Ins
   const codexHome = options.codexHome || process.env.CODEX_HOME || path.join(homeDir, ".codex");
   const scope = remoteSkill.portableScope ?? portableScopeForSkillSource(remoteSkill.source);
   if (!scope) throw new Error("This remote Skill is managed by a project or plugin and cannot be installed automatically.");
-  const rootPath = skillRootForPortableScope(scope, { homeDir, codexHome });
+  const rootPath = skillRootForPortableScope(scope, { homeDir, codexHome, managedRoot: options.managedRoot });
   const relativePath = normalizePortableRelativePath(remoteSkill.relativePath || legacyRemoteSkillRelativePath(remoteSkill));
   if (!relativePath) throw new Error("This legacy remote Skill has no safe portable install location.");
   const directoryPath = path.resolve(rootPath, ...relativePath.split("/"));
@@ -252,8 +265,12 @@ export function installRemoteSkillLocally(remoteSkill: RemoteSkill, options: Ins
 
 function skillRootForPortableScope(
   scope: SkillPortableScope,
-  options: { homeDir: string; codexHome: string },
+  options: { homeDir: string; codexHome: string; managedRoot?: string },
 ): string {
+  if (scope === "agent-recall") {
+    if (!options.managedRoot) throw new Error("AgentRecall managed Skill root is required.");
+    return options.managedRoot;
+  }
   if (scope === "codex-user") return path.join(options.codexHome, "skills");
   if (scope === "claude-user") return path.join(options.homeDir, ".claude", "skills");
   return path.join(options.homeDir, ".agents", "skills");
