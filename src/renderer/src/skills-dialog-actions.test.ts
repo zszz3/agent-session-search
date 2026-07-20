@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { summarizeSkillRoots } from "./features/skills/skills-page";
 import type { SkillRootStatus } from "../../core/skill-manager";
@@ -7,6 +7,7 @@ import { rendererStyleSource } from "./style-test-source";
 const pageSource = readFileSync(new URL("./features/skills/skills-page.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("./features/skills/skill-library-list.tsx", import.meta.url), "utf8");
 const detailSource = readFileSync(new URL("./features/skills/skill-library-detail.tsx", import.meta.url), "utf8");
+const targetDialogUrl = new URL("./features/skills/skill-target-dialog.tsx", import.meta.url);
 const syncSource = readFileSync(new URL("./features/skills/skill-sync-panel.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("./features/settings/settings-dialog.tsx", import.meta.url), "utf8");
 const stylesheet = rendererStyleSource;
@@ -74,15 +75,25 @@ describe("managed Skills page actions", () => {
     expect(detail).toMatch(/overflow:\s*auto/);
   });
 
-  it("uses independent list/detail scrolling and a horizontal three-agent target rail", () => {
+  it("uses independent list/detail scrolling", () => {
     const grid = stylesheet.match(/\.managed-skills-grid\s*\{[^}]*\}/)?.[0] ?? "";
     const listScroll = stylesheet.match(/\.skill-library-scroll\s*\{[^}]*\}/)?.[0] ?? "";
     const detail = stylesheet.match(/\.skill-library-detail\s*\{[^}]*\}/)?.[0] ?? "";
-    const targets = stylesheet.match(/\.managed-skill-targets\s*\{[^}]*\}/)?.[0] ?? "";
     expect(grid).toContain("grid-template-columns: minmax(260px, 340px) minmax(0, 1fr)");
     expect(listScroll).toMatch(/overflow:\s*auto/);
     expect(detail).toMatch(/overflow:\s*auto/);
-    expect(targets).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
+  });
+
+  it("moves install targets into a scalable multi-select dialog", () => {
+    expect(detailSource).toContain("<SkillTargetDialog");
+    expect(detailSource).not.toContain('className="managed-skill-targets"');
+    expect(existsSync(targetDialogUrl)).toBe(true);
+    if (!existsSync(targetDialogUrl)) return;
+    const targetDialogSource = readFileSync(targetDialogUrl, "utf8");
+    expect(targetDialogSource).toContain("skill.installations.map");
+    expect(targetDialogSource).toContain("onSave([...selected])");
+    expect(targetDialogSource).toContain('role="dialog"');
+    expect(stylesheet).toMatch(/\.managed-skill-target-options\s*\{[^}]*repeat\(auto-fit,\s*minmax\(180px,\s*1fr\)\)/s);
   });
 
   it("renders both local and cloud Skill documents as Markdown", () => {

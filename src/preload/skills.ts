@@ -1,5 +1,6 @@
 import type { IpcRenderer } from "electron";
 import type { DeleteInstalledSkillResult, InstalledSkillsSnapshot } from "../core/skill-manager";
+import type { SkillAiSearchResult } from "../core/skill-ai-search";
 import type { ManagedSkill, ManagedSkillImportResult, SkillInstallTarget } from "../core/managed-skill-library";
 import type { SkillsShDetail, SkillsShPage } from "../core/skills-sh";
 import type { SkillDiffSnapshot } from "../core/skill-diff";
@@ -19,6 +20,8 @@ export function createSkillsApi(ipc: SkillsIpcRenderer) {
       ipc.invoke(SKILLS_IPC.updateTargets.channel, managedId, targets),
     listDiscoveredSkills: (input: { page: number; query: string }): Promise<SkillsShPage> =>
       ipc.invoke(SKILLS_IPC.listDiscovered.channel, input),
+    aiSearchDiscoveredSkills: (input: { query: string; language: "en" | "zh" }): Promise<SkillAiSearchResult> =>
+      ipc.invoke(SKILLS_IPC.aiSearchDiscovered.channel, input),
     getDiscoveredSkill: (id: string): Promise<SkillsShDetail> => ipc.invoke(SKILLS_IPC.getDiscovered.channel, id),
     importDiscoveredSkill: (id: string): Promise<ManagedSkillImportResult> =>
       ipc.invoke(SKILLS_IPC.importDiscovered.channel, id),

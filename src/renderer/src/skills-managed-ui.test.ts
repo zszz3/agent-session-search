@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ManagedSkill } from "../../core/managed-skill-library";
@@ -8,7 +8,8 @@ import { SkillsPage } from "./features/skills/skills-page";
 
 const pageStyles = readFileSync(new URL("./styles/skills-page.css", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("./features/skills/skills-page.tsx", import.meta.url), "utf8");
-const importDialogSource = readFileSync(new URL("./features/skills/skill-import-dialog.tsx", import.meta.url), "utf8");
+const discoveryDialogSource = readFileSync(new URL("./features/skills/skill-discovery-dialog.tsx", import.meta.url), "utf8");
+const localSkillsTabUrl = new URL("./features/skills/local-skills-tab.tsx", import.meta.url);
 
 function managedSkill(overrides: Partial<ManagedSkill> = {}): ManagedSkill {
   return {
@@ -52,7 +53,7 @@ const syncSnapshot: SkillSyncSnapshot = {
 };
 
 describe("managed Skills page", () => {
-  it("centers the installed AgentRecall library and keeps discovery secondary", () => {
+  it("separates app-managed and local Skills into first-level tabs", () => {
     const html = renderToStaticMarkup(createElement(SkillsPage, {
       snapshot: { skills: [managedSkill()], roots: [], scannedAt: 100 },
       syncSnapshot,
@@ -73,13 +74,14 @@ describe("managed Skills page", () => {
       onDelete: async () => undefined,
     }));
 
-    expect(html).toContain("Skill 库");
-    expect(html).toContain("导入本机 Skill");
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain("本 App Skill");
+    expect(html).toContain("本地 Skill");
     expect(html).toContain("发现 Skill");
     expect(html).toContain("使用 12 次");
     expect(html).toContain("Codex");
     expect(html).toContain("Claude Code");
-    expect(html).toContain("Trae");
+    expect(html).not.toContain("导入本机 Skill");
     expect(html).not.toContain("Codex 1 · Claude Code 0");
   });
 
@@ -87,17 +89,50 @@ describe("managed Skills page", () => {
     expect(pageStyles).toMatch(/\.managed-skills-grid\s*\{[^}]*grid-template-columns:\s*minmax\(260px,\s*340px\)\s+minmax\(0,\s*1fr\)/s);
     expect(pageStyles).toMatch(/\.skill-library-scroll\s*\{[^}]*overflow:\s*auto/s);
     expect(pageStyles).toMatch(/\.skill-library-detail\s*\{[^}]*overflow:\s*auto/s);
-    expect(pageStyles).toContain(".managed-skill-targets");
+    expect(pageStyles).toContain(".managed-skill-target-options");
     expect(pageStyles).toContain("@media (max-width: 820px)");
     expect(pageStyles).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("keeps local import compact and softly emphasized beside the other toolbar actions", () => {
-    expect(pageSource).toContain('className="managed-skills-import-action"');
-    expect(pageSource).toContain("<FolderInput size={14} />");
-    expect(importDialogSource).toContain('className="managed-skills-import-action"');
-    expect(importDialogSource).toContain("<FolderInput size={13} />");
+  it("keeps discovery independent while local Skills live inside their own tab", () => {
+    expect(pageSource).toContain('role="tablist"');
+    expect(pageSource).toContain('role="tab"');
+    expect(pageSource).toContain("<LocalSkillsTab");
+    expect(pageSource).not.toContain("SkillImportDialog");
     expect(pageStyles).toMatch(/\.managed-skills-toolbar-actions button\s*\{[^}]*white-space:\s*nowrap/s);
-    expect(pageStyles).toMatch(/\.managed-skills-import-action\s*\{[^}]*border-color:\s*var\(--accent-line\)[^}]*background:\s*var\(--accent-soft\)[^}]*color:\s*var\(--accent-bright\)/s);
+    expect(pageStyles).toMatch(/\.skill-library-tabs\s*\{[^}]*display:\s*flex/s);
+    expect(pageStyles).toMatch(/\.skill-library-tab\.active\s*\{[^}]*color:\s*var\(--text\)/s);
+  });
+
+  it("lets the local tab search, preview, and explicitly add selected Skills to the app", () => {
+    expect(existsSync(localSkillsTabUrl)).toBe(true);
+    if (!existsSync(localSkillsTabUrl)) return;
+    const localTabSource = readFileSync(localSkillsTabUrl, "utf8");
+    expect(localTabSource).toContain("listSkillImportCandidates");
+    expect(localTabSource).toContain("filterInstalledSkills");
+    expect(localTabSource).toContain("importLocalSkills");
+    expect(localTabSource).toContain('useState<SkillSortKey>("usage")');
+    expect(localTabSource).toContain('l("Add to this app", "加入本 App")');
+    expect(localTabSource).toContain("managedSourcePaths.has(skill.directoryPath)");
+  });
+
+  it("keeps local Skill tab switches responsive after the first scan", () => {
+    expect(existsSync(localSkillsTabUrl)).toBe(true);
+    if (!existsSync(localSkillsTabUrl)) return;
+    const localTabSource = readFileSync(localSkillsTabUrl, "utf8");
+    expect(localTabSource).toContain("loadedRequestKey.current === requestKey");
+    expect(localTabSource).toContain("LOCAL_SKILL_RENDER_BATCH");
+    expect(localTabSource).toContain("filteredSkills.slice(0, visibleCount)");
+    expect(localTabSource).toContain("onScroll={showMoreSkillsNearBottom}");
+  });
+
+  it("adds one-shot AI search to discovery without hiding keyword search", () => {
+    expect(discoveryDialogSource).toContain("aiSearchDiscoveredSkills");
+    expect(discoveryDialogSource).toContain('className="skill-discovery-ai-action"');
+    expect(discoveryDialogSource).toContain('className="skill-discovery-ai-insight"');
+    expect(discoveryDialogSource).toContain('l("AI search", "AI 搜索")');
+    expect(discoveryDialogSource).toContain("aiResult.queries.map");
+    expect(pageStyles).toMatch(/\.skill-discovery-search\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
+    expect(pageStyles).toMatch(/\.skill-discovery-ai-action\s*\{[^}]*background:\s*var\(--accent-soft\)[^}]*color:\s*var\(--accent-bright\)/s);
   });
 });

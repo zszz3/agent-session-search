@@ -146,6 +146,16 @@ function createHarness(options: { settings?: AppSettings; groups?: RemoteSkillGr
     list: vi.fn(async () => discoveredPage),
     getDetail: vi.fn(async () => discoveredDetail),
   };
+  const resolveAiEndpoint = vi.fn(async () => ({
+    baseUrl: "https://provider.example/v1",
+    model: "test-model",
+    apiKey: "test-key",
+    apiFormat: "openai_chat" as const,
+  }));
+  const completeAi = vi.fn(async () => JSON.stringify({
+    queries: ["code review"],
+    interpretation: "寻找代码审查 Skill。",
+  }));
   const operations: SkillServiceOperations = {
     listInstalledSkills: vi.fn(() => ({ skills: [installedSkill()], roots: [], scannedAt: 1 })),
     skillProjectDirsFromIndexedProjects: vi.fn(() => []),
@@ -187,8 +197,10 @@ function createHarness(options: { settings?: AppSettings; groups?: RemoteSkillGr
     operations,
     managedLibrary,
     skillsShClient,
+    resolveAiEndpoint,
+    completeAi,
   });
-  return { service, settings, store, bindings, usageSources, client, operations, hookSetup, copyText, revealPath, diffResult, managedLibrary, skillsShClient, discoveredEntry, discoveredPage, discoveredDetail };
+  return { service, settings, store, bindings, usageSources, client, operations, hookSetup, copyText, revealPath, diffResult, managedLibrary, skillsShClient, discoveredEntry, discoveredPage, discoveredDetail, resolveAiEndpoint, completeAi };
 }
 
 describe("SkillService local skills and usage", () => {
@@ -215,6 +227,30 @@ describe("SkillService local skills and usage", () => {
     expect(harness.managedLibrary.updateTargets).toHaveBeenCalledWith("review", ["codex", "trae"]);
   });
 
+  it("adds usage statistics to local Skills so the UI can rank them by use", () => {
+    const harness = createHarness();
+    const localSkill: InstalledSkill = {
+      ...installedSkill(),
+      id: "codex-user:review",
+      source: "codex-user",
+      path: "/tmp/.codex/skills/review/SKILL.md",
+      directoryPath: "/tmp/.codex/skills/review",
+      rootPath: "/tmp/.codex/skills",
+    };
+    vi.mocked(harness.managedLibrary.listImportCandidates).mockReturnValue({
+      skills: [localSkill],
+      roots: [],
+      scannedAt: 1,
+    });
+
+    expect(harness.service.listImportCandidates().skills[0]).toMatchObject({
+      name: "review",
+      usageCount: 3,
+      lastUsedAt: 100,
+    });
+    expect(harness.operations.usageForSkill).toHaveBeenCalledWith(expect.any(Object), "review", "codex");
+  });
+
   it("lists, previews, and imports a selected skills.sh result", async () => {
     const harness = createHarness();
     await expect(harness.service.listDiscoveredSkills({ page: 0, query: "review" })).resolves.toBe(harness.discoveredPage);
@@ -225,6 +261,19 @@ describe("SkillService local skills and usage", () => {
       origin: expect.objectContaining({ kind: "skills-sh", source: "acme/tools" }),
       files: harness.discoveredDetail.files,
     }));
+  });
+
+  it("uses the configured AI provider to plan discovery searches and caches the returned candidates", async () => {
+    const harness = createHarness();
+    await expect(harness.service.aiSearchDiscoveredSkills({ query: "帮我找代码审查 Skill", language: "zh" })).resolves.toMatchObject({
+      queries: ["code review"],
+      interpretation: "寻找代码审查 Skill。",
+      skills: [harness.discoveredEntry],
+    });
+    expect(harness.resolveAiEndpoint).toHaveBeenCalledOnce();
+    expect(harness.completeAi).toHaveBeenCalledOnce();
+    expect(harness.skillsShClient.list).toHaveBeenCalledWith({ page: 0, query: "code review" });
+    await expect(harness.service.getDiscoveredSkill(harness.discoveredEntry.id)).resolves.toBe(harness.discoveredDetail);
   });
 
   it("refreshes only stale usage sources and prunes removed files", () => {
@@ -324,6 +373,30 @@ describe("SkillService sync orchestration", () => {
 });
 
 describe("SkillService utilities and hooks", () => {
+  it("copies and reveals verified local Skill candidates", async () => {
+    const harness = createHarness();
+    const localSkill: InstalledSkill = {
+      ...installedSkill(),
+      id: "codex-user:review",
+      source: "codex-user",
+      path: "/tmp/.codex/skills/review/SKILL.md",
+      directoryPath: "/tmp/.codex/skills/review",
+      rootPath: "/tmp/.codex/skills",
+    };
+    vi.mocked(harness.managedLibrary.listImportCandidates).mockReturnValue({
+      skills: [localSkill],
+      roots: [],
+      scannedAt: 1,
+    });
+
+    harness.service.copyPath(localSkill.path);
+    await harness.service.reveal(localSkill.directoryPath);
+
+    expect(harness.copyText).toHaveBeenCalledWith(localSkill.path);
+    expect(harness.revealPath).toHaveBeenCalledWith(localSkill.directoryPath);
+    expect(() => harness.service.copyPath("/tmp/not-a-skill/SKILL.md")).toThrow(/outside managed roots/i);
+  });
+
   it("owns copy, reveal, delete, and hook operations", async () => {
     const harness = createHarness();
     harness.service.copySetupSql();

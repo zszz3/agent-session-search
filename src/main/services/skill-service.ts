@@ -2,6 +2,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AppSettings } from "../../core/platform";
 import type { SkillSyncBinding } from "../../core/session-store";
+import { runSkillAiSearch, type SkillAiSearchResult } from "../../core/skill-ai-search";
+import type { ChatCompletionFn, SummaryEndpoint } from "../../core/session-summarizer";
 import {
   ManagedSkillLibrary,
   type ManagedSkill,
@@ -132,6 +134,8 @@ export interface SkillServiceDependencies {
   logError(message: string): void;
   managedLibrary?: ManagedSkillLibraryPort;
   skillsShClient?: SkillsShClientPort;
+  resolveAiEndpoint?(): Promise<SummaryEndpoint | null>;
+  completeAi?: ChatCompletionFn;
   libraryRoot?: string;
   skillsShCachePath?: string;
   homeDir?: string;
@@ -221,7 +225,15 @@ export class SkillService {
 
   listImportCandidates(): InstalledSkillsSnapshot {
     if (!this.managedLibrary) throw new Error("The managed Skill library is unavailable.");
-    return this.managedLibrary.listImportCandidates(this.projectDirs());
+    const snapshot = this.managedLibrary.listImportCandidates(this.projectDirs());
+    const usage = this.dependencies.getStore().getSkillUsageSnapshot();
+    return {
+      ...snapshot,
+      skills: snapshot.skills.map((skill) => {
+        const stat = this.operations.usageForSkill(usage, skill.name, skill.agent);
+        return { ...skill, usageCount: stat?.count ?? 0, lastUsedAt: stat?.lastUsedAt ?? null };
+      }),
+    };
   }
 
   importLocalSkills(skillPaths: string[]): ManagedSkillImportResult[] {
@@ -238,6 +250,21 @@ export class SkillService {
   async listDiscoveredSkills(input: { page: number; query: string }): Promise<SkillsShPage> {
     const client = this.requireSkillsShClient();
     const result = await client.list(input);
+    for (const entry of result.skills) this.discoveredSkills.set(entry.id, entry);
+    return result;
+  }
+
+  async aiSearchDiscoveredSkills(input: { query: string; language: "en" | "zh" }): Promise<SkillAiSearchResult> {
+    if (!this.dependencies.resolveAiEndpoint) throw new Error("AI Skill search is unavailable.");
+    const endpoint = await this.dependencies.resolveAiEndpoint();
+    if (!endpoint) throw new Error("AI Skill search has no usable provider. Configure one on the Provider page.");
+    const client = this.requireSkillsShClient();
+    const result = await runSkillAiSearch(
+      input,
+      endpoint,
+      (query) => client.list({ page: 0, query }),
+      this.dependencies.completeAi,
+    );
     for (const entry of result.skills) this.discoveredSkills.set(entry.id, entry);
     return result;
   }
@@ -572,7 +599,9 @@ export class SkillService {
 
   private findInstalledSkill(skillPath: string): InstalledSkill {
     const normalized = path.resolve(skillPath);
-    const skill = this.listSkills().skills.find((item) =>
+    const installed = this.listSkills().skills;
+    const localCandidates = this.managedLibrary ? this.listImportCandidates().skills : [];
+    const skill = [...installed, ...localCandidates].find((item) =>
       path.resolve(item.path) === normalized || path.resolve(item.directoryPath) === normalized);
     if (!skill) throw new Error("Skill is no longer installed or is outside managed roots.");
     return skill;

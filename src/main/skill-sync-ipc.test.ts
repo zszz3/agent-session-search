@@ -31,6 +31,15 @@ function createService(): SkillsIpcService {
     importLocalSkills: vi.fn(() => []),
     updateManagedSkillTargets: vi.fn(() => ({} as never)),
     listDiscoveredSkills: vi.fn(async () => ({ skills: [], total: 0, hasMore: false, page: 0, stale: false })),
+    aiSearchDiscoveredSkills: vi.fn(async () => ({
+      originalQuery: "find a review skill",
+      queries: ["code review"],
+      interpretation: "Find a code review Skill.",
+      skills: [],
+      total: 0,
+      stale: false,
+      partial: false,
+    })),
     getDiscoveredSkill: vi.fn(async () => { throw new Error("not used"); }),
     importDiscoveredSkill: vi.fn(async () => { throw new Error("not used"); }),
     refreshUsage: vi.fn(() => ({ refreshed: 0, skipped: 0, total: 0, totalEvents: 0, lastRefreshedAt: 1 })),
@@ -78,6 +87,7 @@ describe("Skills IPC", () => {
     await handlers.get(SKILLS_IPC.importLocal.channel)?.(event, [" /tmp/a/SKILL.md ", "/tmp/b/SKILL.md"]);
     await handlers.get(SKILLS_IPC.updateTargets.channel)?.(event, "review", ["codex", "trae"]);
     await handlers.get(SKILLS_IPC.listDiscovered.channel)?.(event, { page: 2, query: " review " });
+    await handlers.get(SKILLS_IPC.aiSearchDiscovered.channel)?.(event, { query: " find a review skill ", language: "en" });
 
     expect(service.upload).toHaveBeenNthCalledWith(1, " /project/Skill /SKILL.md ", false);
     expect(service.upload).toHaveBeenNthCalledWith(2, "/project/skill/SKILL.md", true);
@@ -86,6 +96,7 @@ describe("Skills IPC", () => {
     expect(service.importLocalSkills).toHaveBeenCalledWith([" /tmp/a/SKILL.md ", "/tmp/b/SKILL.md"]);
     expect(service.updateManagedSkillTargets).toHaveBeenCalledWith("review", ["codex", "trae"]);
     expect(service.listDiscoveredSkills).toHaveBeenCalledWith({ page: 2, query: "review" });
+    expect(service.aiSearchDiscoveredSkills).toHaveBeenCalledWith({ query: "find a review skill", language: "en" });
   });
 
   it("rejects malformed paths, identifiers, lists, and extra arguments", () => {
@@ -106,6 +117,9 @@ describe("Skills IPC", () => {
     expect(() => handlers.get(SKILLS_IPC.updateTargets.channel)?.(event, "review", ["cursor"])).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.listDiscovered.channel)?.(event, { page: -1, query: "" })).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.listDiscovered.channel)?.(event, { page: 0, query: "", extra: true })).toThrow(IpcInputError);
+    expect(() => handlers.get(SKILLS_IPC.aiSearchDiscovered.channel)?.(event, { query: " ", language: "zh" })).toThrow(IpcInputError);
+    expect(() => handlers.get(SKILLS_IPC.aiSearchDiscovered.channel)?.(event, { query: "review", language: "fr" })).toThrow(IpcInputError);
+    expect(() => handlers.get(SKILLS_IPC.aiSearchDiscovered.channel)?.(event, { query: "review", language: "en", extra: true })).toThrow(IpcInputError);
     expect(() => handlers.get(SKILLS_IPC.getDiscovered.channel)?.(event, "owner/repo")).toThrow(IpcInputError);
 
     expect(service.upload).not.toHaveBeenCalled();
@@ -116,6 +130,7 @@ describe("Skills IPC", () => {
     expect(service.importLocalSkills).not.toHaveBeenCalled();
     expect(service.updateManagedSkillTargets).not.toHaveBeenCalled();
     expect(service.listDiscoveredSkills).not.toHaveBeenCalled();
+    expect(service.aiSearchDiscoveredSkills).not.toHaveBeenCalled();
     expect(service.getDiscoveredSkill).not.toHaveBeenCalled();
   });
 
@@ -136,6 +151,7 @@ describe("Skills IPC", () => {
     await api.importLocalSkills(["/tmp/review/SKILL.md"]);
     await api.updateManagedSkillTargets("review", ["codex", "trae"]);
     await api.listDiscoveredSkills({ page: 0, query: "review" });
+    await api.aiSearchDiscoveredSkills({ query: "find a review skill", language: "en" });
     await api.getDiscoveredSkill("owner/repo/review");
     await api.importDiscoveredSkill("owner/repo/review");
     await api.refreshSkillUsage();
@@ -160,6 +176,7 @@ describe("Skills IPC", () => {
       [SKILLS_IPC.importLocal.channel, ["/tmp/review/SKILL.md"]],
       [SKILLS_IPC.updateTargets.channel, "review", ["codex", "trae"]],
       [SKILLS_IPC.listDiscovered.channel, { page: 0, query: "review" }],
+      [SKILLS_IPC.aiSearchDiscovered.channel, { query: "find a review skill", language: "en" }],
       [SKILLS_IPC.getDiscovered.channel, "owner/repo/review"],
       [SKILLS_IPC.importDiscovered.channel, "owner/repo/review"],
       [SKILLS_IPC.refreshUsage.channel],

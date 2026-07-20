@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import { Compass, FolderInput, RefreshCw, Upload, X } from "lucide-react";
+import { Compass, RefreshCw, Upload, X } from "lucide-react";
 import type { InstalledSkill, InstalledSkillsSnapshot, SkillRootStatus, SkillSource } from "../../../../core/skill-manager";
 import type { ManagedSkill, SkillInstallTarget } from "../../../../core/managed-skill-library";
 import type { RemoteSkill, SkillSyncSnapshot, SkillSyncUploadOutcome } from "../../../../core/skill-sync";
@@ -8,8 +8,8 @@ import { formatCompactNumber } from "../../format-count";
 import { localize, type LanguageMode } from "../../language";
 import { buildUnifiedSkillEntries } from "../../skill-sync-view-model";
 import type { SkillsFeedback } from "../../app-types";
+import { LocalSkillsTab } from "./local-skills-tab";
 import { SkillDiscoveryDialog } from "./skill-discovery-dialog";
-import { SkillImportDialog } from "./skill-import-dialog";
 import { SkillLibraryDetail } from "./skill-library-detail";
 import {
   filterManagedSkills,
@@ -61,14 +61,16 @@ export function SkillsPage({
   const [query, setQuery] = useState("");
   const [originFilter, setOriginFilter] = useState<ManagedSkillOriginFilter>("all");
   const [sort, setSort] = useState<ManagedSkillSort>("usage");
+  const [activeTab, setActiveTab] = useState<"app" | "local">("app");
+  const [localSkillCount, setLocalSkillCount] = useState(0);
+  const [localRefreshVersion, setLocalRefreshVersion] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
-  const [importOpen, setImportOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<ManagedSkill | null>(null);
   const [targetBusy, setTargetBusy] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [localFeedback, setLocalFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [appFeedback, setAppFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const filteredSkills = useMemo(
     () => filterManagedSkills(managedSkills, query, originFilter, sort),
@@ -81,6 +83,12 @@ export function SkillsPage({
   const remoteOnlyGroups = useMemo(
     () => unifiedEntries.flatMap((entry) => !entry.local && entry.remote ? [entry.remote] : []),
     [unifiedEntries],
+  );
+  const managedSourcePaths = useMemo(
+    () => new Set(managedSkills.flatMap((skill) => skill.origin.kind === "local" && skill.origin.sourcePath
+      ? [skill.origin.sourcePath]
+      : [])),
+    [managedSkills],
   );
 
   useEffect(() => {
@@ -104,27 +112,26 @@ export function SkillsPage({
 
   const libraryChanged = (managedId: string | null) => {
     if (managedId) setPendingSelection(managedId);
+    setActiveTab("app");
     onRefresh();
   };
 
-  const toggleTarget = async (skill: ManagedSkill, target: SkillInstallTarget) => {
-    const installed = new Set(skill.installations.filter((item) => item.state === "installed").map((item) => item.target));
-    if (installed.has(target)) installed.delete(target);
-    else installed.add(target);
+  const updateTargets = async (skill: ManagedSkill, targets: SkillInstallTarget[]) => {
     setTargetBusy(true);
-    setLocalFeedback(null);
+    setAppFeedback(null);
     try {
-      await window.sessionSearch.updateManagedSkillTargets(skill.managedId, [...installed]);
+      await window.sessionSearch.updateManagedSkillTargets(skill.managedId, targets);
       setPendingSelection(skill.managedId);
-      setLocalFeedback({
+      setAppFeedback({
         kind: "success",
-        message: installed.has(target)
-          ? l(`${skill.name} is now available in ${targetLabel(target)}.`, `${skill.name} 已安装到 ${targetLabel(target)}。`)
-          : l(`${skill.name} was removed from ${targetLabel(target)}.`, `${skill.name} 已从 ${targetLabel(target)} 移除。`),
+        message: targets.length > 0
+          ? l(`${skill.name} installation was updated.`, `${skill.name} 的安装位置已更新。`)
+          : l(`${skill.name} was removed from every agent.`, `${skill.name} 已从所有 Agent 移除。`),
       });
       onRefresh();
     } catch (error) {
-      setLocalFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      setAppFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      throw error;
     } finally {
       setTargetBusy(false);
     }
@@ -134,16 +141,21 @@ export function SkillsPage({
     const selected = managedSkills.filter((skill) => checkedIds.has(skill.managedId));
     if (selected.length === 0) return;
     setBatchBusy(true);
-    setLocalFeedback(null);
+    setAppFeedback(null);
     try {
       const result = await onUploadSelected(selected);
       const remaining = new Set(result.remainingSkillIds);
       setCheckedIds(new Set(selected.filter((skill) => remaining.has(skill.id)).map((skill) => skill.managedId)));
     } catch (error) {
-      setLocalFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      setAppFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
       setBatchBusy(false);
     }
+  };
+
+  const refreshActiveTab = () => {
+    if (activeTab === "local") setLocalRefreshVersion((version) => version + 1);
+    else onRefresh();
   };
 
   const confirmDelete = async () => {
@@ -170,72 +182,117 @@ export function SkillsPage({
 
       <section className="managed-skills-surface">
         <header className="managed-skills-toolbar">
-          <div className="managed-skills-heading">
-            <strong>{l("Skill library", "Skill 库")}</strong>
-            <span>{formatCompactNumber(managedSkills.length)} {l("managed", "个托管 Skill")}</span>
-          </div>
+          <nav className="skill-library-tabs" role="tablist" aria-label={l("Skill collections", "Skill 分类")}>
+            <button
+              id="app-skills-tab"
+              type="button"
+              className={`skill-library-tab ${activeTab === "app" ? "active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === "app"}
+              aria-controls="app-skills-panel"
+              onClick={() => setActiveTab("app")}
+            >
+              <span>{l("App Skills", "本 App Skill")}</span><small>{formatCompactNumber(managedSkills.length)}</small>
+            </button>
+            <button
+              id="local-skills-tab"
+              type="button"
+              className={`skill-library-tab ${activeTab === "local" ? "active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === "local"}
+              aria-controls="local-skills-panel"
+              onClick={() => setActiveTab("local")}
+            >
+              <span>{l("Local Skills", "本地 Skill")}</span><small>{formatCompactNumber(localSkillCount)}</small>
+            </button>
+          </nav>
           <div className="managed-skills-toolbar-actions">
             <button type="button" onClick={() => setDiscoveryOpen(true)}><Compass size={14} />{l("Discover Skill", "发现 Skill")}</button>
-            <button type="button" className="managed-skills-import-action" onClick={() => setImportOpen(true)}><FolderInput size={14} />{l("Import local Skill", "导入本机 Skill")}</button>
-            <button type="button" className="icon-button" onClick={onRefresh} disabled={loading} aria-label={l("Refresh Skill library", "刷新 Skill 库")} title={l("Refresh Skill library", "刷新 Skill 库")}><RefreshCw size={14} /></button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={refreshActiveTab}
+              disabled={activeTab === "app" && loading}
+              aria-label={activeTab === "app" ? l("Refresh app Skills", "刷新本 App Skill") : l("Refresh local Skills", "刷新本地 Skill")}
+              title={activeTab === "app" ? l("Refresh app Skills", "刷新本 App Skill") : l("Refresh local Skills", "刷新本地 Skill")}
+            ><RefreshCw size={14} /></button>
           </div>
         </header>
 
-        {feedback ? <div className={`managed-skills-feedback ${feedback.kind}`}>{feedback.message}</div> : null}
-        {localFeedback ? <div className={`managed-skills-feedback ${localFeedback.kind}`}>{localFeedback.message}</div> : null}
-        {checkedIds.size > 0 ? (
-          <div className="managed-skills-batch-bar">
-            <span>{l(`${checkedIds.size} selected`, `已选择 ${checkedIds.size} 个`)}</span>
-            <button type="button" onClick={() => void uploadChecked()} disabled={loading || batchBusy || syncSnapshot.status.kind !== "ready"}><Upload size={13} />{l("Upload selected", "上传所选")}</button>
-            <button type="button" onClick={() => setCheckedIds(new Set())}>{l("Clear", "清空")}</button>
-          </div>
-        ) : null}
+        <section
+          id="app-skills-panel"
+          className="skill-tab-panel"
+          role="tabpanel"
+          aria-labelledby="app-skills-tab"
+          hidden={activeTab !== "app"}
+        >
+          {feedback ? <div className={`managed-skills-feedback ${feedback.kind}`}>{feedback.message}</div> : null}
+          {appFeedback ? <div className={`managed-skills-feedback ${appFeedback.kind}`}>{appFeedback.message}</div> : null}
+          {checkedIds.size > 0 ? (
+            <div className="managed-skills-batch-bar">
+              <span>{l(`${checkedIds.size} selected`, `已选择 ${checkedIds.size} 个`)}</span>
+              <button type="button" onClick={() => void uploadChecked()} disabled={loading || batchBusy || syncSnapshot.status.kind !== "ready"}><Upload size={13} />{l("Upload selected", "上传所选")}</button>
+              <button type="button" onClick={() => setCheckedIds(new Set())}>{l("Clear", "清空")}</button>
+            </div>
+          ) : null}
 
-        <div className="managed-skills-grid">
-          <SkillLibraryList
-            skills={filteredSkills}
-            selectedId={selectedSkill?.managedId ?? null}
-            selectedIds={checkedIds}
-            query={query}
-            originFilter={originFilter}
-            sort={sort}
-            loading={loading}
-            language={language}
-            onQueryChange={setQuery}
-            onOriginFilterChange={setOriginFilter}
-            onSortChange={setSort}
-            onSelect={setSelectedId}
-            onToggleChecked={(managedId) => setCheckedIds((current) => {
-              const next = new Set(current);
-              if (next.has(managedId)) next.delete(managedId);
-              else next.add(managedId);
-              return next;
-            })}
-          />
-          <SkillLibraryDetail
-            skill={selectedSkill}
-            entry={selectedEntry}
-            remoteOnlyGroups={remoteOnlyGroups}
-            syncSnapshot={syncSnapshot}
-            busy={loading || batchBusy}
-            targetBusy={targetBusy}
-            language={language}
-            revealLabel={revealLabel}
-            onToggleTarget={(skill, target) => void toggleTarget(skill, target)}
-            onUpload={(skill, force) => onUpload(skill, force)}
-            onInstallRemote={onInstallRemote}
-            onFetchVersion={onFetchVersion}
-            onRefreshRemote={onRefreshRemote}
-            onCopySetupSql={onCopySetupSql}
-            onOpenSqlEditor={onOpenSqlEditor}
-            onCopyPath={onCopyPath}
-            onReveal={onReveal}
-            onRequestDelete={setDeleteCandidate}
-          />
-        </div>
+          <div className="managed-skills-grid">
+            <SkillLibraryList
+              skills={filteredSkills}
+              selectedId={selectedSkill?.managedId ?? null}
+              selectedIds={checkedIds}
+              query={query}
+              originFilter={originFilter}
+              sort={sort}
+              loading={loading}
+              language={language}
+              onQueryChange={setQuery}
+              onOriginFilterChange={setOriginFilter}
+              onSortChange={setSort}
+              onSelect={setSelectedId}
+              onToggleChecked={(managedId) => setCheckedIds((current) => {
+                const next = new Set(current);
+                if (next.has(managedId)) next.delete(managedId);
+                else next.add(managedId);
+                return next;
+              })}
+            />
+            <SkillLibraryDetail
+              skill={selectedSkill}
+              entry={selectedEntry}
+              remoteOnlyGroups={remoteOnlyGroups}
+              syncSnapshot={syncSnapshot}
+              busy={loading || batchBusy}
+              targetBusy={targetBusy}
+              language={language}
+              revealLabel={revealLabel}
+              onUpdateTargets={updateTargets}
+              onUpload={(skill, force) => onUpload(skill, force)}
+              onInstallRemote={onInstallRemote}
+              onFetchVersion={onFetchVersion}
+              onRefreshRemote={onRefreshRemote}
+              onCopySetupSql={onCopySetupSql}
+              onOpenSqlEditor={onOpenSqlEditor}
+              onCopyPath={onCopyPath}
+              onReveal={onReveal}
+              onRequestDelete={setDeleteCandidate}
+            />
+          </div>
+        </section>
+
+        <LocalSkillsTab
+          active={activeTab === "local"}
+          managedSourcePaths={managedSourcePaths}
+          refreshVersion={localRefreshVersion}
+          language={language}
+          revealLabel={revealLabel}
+          onCountChange={setLocalSkillCount}
+          onImported={libraryChanged}
+          onCopyPath={onCopyPath}
+          onReveal={onReveal}
+        />
       </section>
 
-      <SkillImportDialog open={importOpen} language={language} onClose={() => setImportOpen(false)} onImported={libraryChanged} />
       <SkillDiscoveryDialog open={discoveryOpen} language={language} onClose={() => setDiscoveryOpen(false)} onImported={libraryChanged} />
       {deleteCandidate ? (
         <div className="dialog-backdrop managed-skill-dialog-backdrop" onMouseDown={() => setDeleteCandidate(null)}>
@@ -284,10 +341,4 @@ export function summarizeSkillRoots(roots: SkillRootStatus[]): SkillRootStatus[]
     });
   }
   return visible;
-}
-
-function targetLabel(target: SkillInstallTarget): string {
-  if (target === "claude") return "Claude Code";
-  if (target === "trae") return "Trae";
-  return "Codex";
 }

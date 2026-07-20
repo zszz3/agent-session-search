@@ -15,6 +15,10 @@ const discoveryQueryInput = z.object({
   page: z.number().int().min(0).max(10_000),
   query: z.string().max(500).transform((value) => value.trim()),
 }).strict();
+const aiDiscoveryInput = z.object({
+  query: z.string().trim().min(1).max(1_000),
+  language: z.enum(["en", "zh"]),
+}).strict();
 const discoveredSkillIdInput = z.string().trim().min(1).max(512).refine((value) => {
   if (value.includes("\0") || value.includes("\\")) return false;
   const segments = value.split("/");
@@ -30,6 +34,7 @@ export const SKILLS_IPC = {
   importLocal: defineIpcRequest("skills:import-local", z.tuple([pathListInput])),
   updateTargets: defineIpcRequest("skills:update-targets", z.tuple([managedSkillIdInput, installTargetsInput])),
   listDiscovered: defineIpcRequest("skills:discover-list", z.tuple([discoveryQueryInput])),
+  aiSearchDiscovered: defineIpcRequest("skills:discover-ai-search", z.tuple([aiDiscoveryInput])),
   getDiscovered: defineIpcRequest("skills:discover-detail", z.tuple([discoveredSkillIdInput])),
   importDiscovered: defineIpcRequest("skills:discover-import", z.tuple([discoveredSkillIdInput])),
   refreshUsage: defineIpcRequest("skills:refresh-usage", noInput),

@@ -1,4 +1,5 @@
 import type { DeleteInstalledSkillResult, InstalledSkillsSnapshot } from "../../core/skill-manager";
+import type { SkillAiSearchResult } from "../../core/skill-ai-search";
 import type { ManagedSkill, ManagedSkillImportResult, SkillInstallTarget } from "../../core/managed-skill-library";
 import type { SkillsShDetail, SkillsShPage } from "../../core/skills-sh";
 import type { SkillDiffSnapshot } from "../../core/skill-diff";
@@ -13,6 +14,7 @@ export interface SkillsIpcService {
   importLocalSkills(skillPaths: string[]): ManagedSkillImportResult[];
   updateManagedSkillTargets(managedId: string, targets: SkillInstallTarget[]): ManagedSkill;
   listDiscoveredSkills(input: { page: number; query: string }): Promise<SkillsShPage>;
+  aiSearchDiscoveredSkills(input: { query: string; language: "en" | "zh" }): Promise<SkillAiSearchResult>;
   getDiscoveredSkill(id: string): Promise<SkillsShDetail>;
   importDiscoveredSkill(id: string): Promise<ManagedSkillImportResult>;
   refreshUsage(): SkillUsageRefreshStatus;
@@ -39,6 +41,7 @@ export function registerSkillsIpc(ipc: IpcMainRegistrar, service: SkillsIpcServi
     registerIpcHandler(ipc, SKILLS_IPC.importLocal, (_event, paths) => service.importLocalSkills(paths)),
     registerIpcHandler(ipc, SKILLS_IPC.updateTargets, (_event, id, targets) => service.updateManagedSkillTargets(id, targets)),
     registerIpcHandler(ipc, SKILLS_IPC.listDiscovered, (_event, input) => service.listDiscoveredSkills(input)),
+    registerIpcHandler(ipc, SKILLS_IPC.aiSearchDiscovered, (_event, input) => service.aiSearchDiscoveredSkills(input)),
     registerIpcHandler(ipc, SKILLS_IPC.getDiscovered, (_event, id) => service.getDiscoveredSkill(id)),
     registerIpcHandler(ipc, SKILLS_IPC.importDiscovered, (_event, id) => service.importDiscoveredSkill(id)),
     registerIpcHandler(ipc, SKILLS_IPC.refreshUsage, () => service.refreshUsage()),
