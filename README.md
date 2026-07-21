@@ -359,21 +359,28 @@ npm run package:smoke
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/G-Pegasus">
-                    <img src="https://avatars.githubusercontent.com/u/87853009?v=4" width="80;" alt="G-Pegasus"/>
-                    <br />
-                    <sub><b>G-Pegasus</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/LANSGANBS">
                     <img src="https://avatars.githubusercontent.com/u/144577410?v=4" width="80;" alt="LANSGANBS"/>
                     <br />
                     <sub><b>LANSGANBS</b></sub>
                 </a>
             </td>
+            <td align="center">
+                <a href="https://github.com/G-Pegasus">
+                    <img src="https://avatars.githubusercontent.com/u/87853009?v=4" width="80;" alt="G-Pegasus"/>
+                    <br />
+                    <sub><b>G-Pegasus</b></sub>
+                </a>
+            </td>
 		</tr>
 		<tr>
+            <td align="center">
+                <a href="https://github.com/wlh26">
+                    <img src="https://avatars.githubusercontent.com/u/145627315?v=4" width="80;" alt="wlh26"/>
+                    <br />
+                    <sub><b>wlh26</b></sub>
+                </a>
+            </td>
             <td align="center">
                 <a href="https://github.com/vinkiYu">
                     <img src="https://avatars.githubusercontent.com/u/239156258?v=4" width="80;" alt="vinkiYu"/>
@@ -400,13 +407,6 @@ npm run package:smoke
                     <img src="https://avatars.githubusercontent.com/u/79244504?v=4" width="80;" alt="275145"/>
                     <br />
                     <sub><b>275145</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/wlh26">
-                    <img src="https://avatars.githubusercontent.com/u/145627315?v=4" width="80;" alt="wlh26"/>
-                    <br />
-                    <sub><b>wlh26</b></sub>
                 </a>
             </td>
             <td align="center">
