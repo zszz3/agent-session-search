@@ -287,6 +287,49 @@ export class SupabaseRulesSyncClient {
 }
 
 // ---------------------------------------------------------------------------
+// Restore (download remote rules to local filesystem)
+// ---------------------------------------------------------------------------
+
+export interface RestoreResult {
+  restored: string[];
+  skipped: string[];
+  backedUp: string[];
+}
+
+/**
+ * Restores global-scope remote rules to their local filesystem paths.
+ * Conflict policy: identical content is skipped; differing local files are
+ * backed up to `<path>.bak` before being overwritten.
+ */
+export function restoreGlobalRules(remoteRules: RemoteRule[], options: { homeDir?: string } = {}): RestoreResult {
+  const homeDir = options.homeDir ?? os.homedir();
+  const result: RestoreResult = { restored: [], skipped: [], backedUp: [] };
+  for (const rule of remoteRules) {
+    if (rule.scope !== "global") continue;
+    const targetPath = resolveGlobalRulePath(rule, homeDir);
+    if (!targetPath) continue;
+    if (fs.existsSync(targetPath)) {
+      const localContent = fs.readFileSync(targetPath, "utf8");
+      if (sha256(localContent) === rule.content_hash) {
+        result.skipped.push(rule.name);
+        continue;
+      }
+      fs.copyFileSync(targetPath, `${targetPath}.bak`);
+      result.backedUp.push(rule.name);
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, rule.content, "utf8");
+    result.restored.push(rule.name);
+  }
+  return result;
+}
+
+function resolveGlobalRulePath(rule: RemoteRule, homeDir: string): string | null {
+  if (rule.agent === "claude" && rule.name === "CLAUDE.md") return path.join(homeDir, ".claude", "CLAUDE.md");
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

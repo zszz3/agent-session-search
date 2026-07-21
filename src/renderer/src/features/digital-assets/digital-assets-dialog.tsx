@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import { PackageSearch, X } from "lucide-react";
-import type { RulesSyncSnapshot, AgentRule, RemoteRule } from "../../../../core/rules-sync";
+import type { RulesSyncSnapshot, AgentRule, RemoteRule, RestoreResult } from "../../../../core/rules-sync";
 import type { MemoriesSyncSnapshot, AgentMemory, RemoteMemory } from "../../../../core/memories-sync";
 import { assetIdentity } from "../../../../core/asset-identity";
 import { localize, type LanguageMode } from "../../language";
@@ -19,6 +19,7 @@ export function DigitalAssetsDialog({
   onRulesUpload,
   onRulesDelete,
   onRulesCopySql,
+  onRulesRestore,
   onMemoriesUploadAll,
   onMemoriesUpload,
   onMemoriesDelete,
@@ -34,6 +35,7 @@ export function DigitalAssetsDialog({
   onRulesUpload: (identity: string) => Promise<unknown>;
   onRulesDelete: (remoteId: string) => Promise<boolean>;
   onRulesCopySql: () => void;
+  onRulesRestore: () => Promise<RestoreResult>;
   onMemoriesUploadAll: () => Promise<{ uploaded: number; skipped: number }>;
   onMemoriesUpload: (identity: string) => Promise<unknown>;
   onMemoriesDelete: (remoteId: string) => Promise<boolean>;
@@ -89,6 +91,22 @@ export function DigitalAssetsDialog({
       setUploading(false);
     }
   }, [onRulesDelete, onRefresh, showFeedback, l]);
+
+  const handleRulesRestore = useCallback(async () => {
+    setUploading(true);
+    try {
+      const result = await onRulesRestore();
+      showFeedback(l(
+        `Restored ${result.restored.length}, skipped ${result.skipped.length}, backed up ${result.backedUp.length}`,
+        `已还原 ${result.restored.length} 条，跳过 ${result.skipped.length} 条，备份 ${result.backedUp.length} 条`,
+      ));
+      onRefresh();
+    } catch (error) {
+      showFeedback(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploading(false);
+    }
+  }, [onRulesRestore, onRefresh, showFeedback, l]);
 
   const handleMemoriesUploadAll = useCallback(async () => {
     setUploading(true);
@@ -231,6 +249,7 @@ export function DigitalAssetsDialog({
               onUploadItem={handleRulesUpload}
               onDeleteRemote={handleRulesDelete}
               onCopySql={onRulesCopySql}
+              onRestore={handleRulesRestore}
             />
           ) : (
             <AssetSyncTab

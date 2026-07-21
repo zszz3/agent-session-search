@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Copy, Trash2, Upload } from "lucide-react";
+import { Copy, Download, Trash2, Upload } from "lucide-react";
 import { localize, type LanguageMode } from "../../language";
 import { AssetSyncIcon, SyncStatusBadge, type AssetSyncState, type SyncStatusKind } from "./sync-status-badge";
 
@@ -42,6 +42,7 @@ export function AssetSyncTab({
   onUploadItem,
   onDeleteRemote,
   onCopySql,
+  onRestore,
 }: {
   title: string;
   description: string;
@@ -54,6 +55,7 @@ export function AssetSyncTab({
   onUploadItem: (identity: string) => void;
   onDeleteRemote: (remoteId: string) => void;
   onCopySql: () => void;
+  onRestore?: () => void;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   const syncedCount = localItems.filter((item) => computeSyncState(item, remoteItems) === "synced").length;
@@ -72,6 +74,11 @@ export function AssetSyncTab({
           <button className="asset-action-button" onClick={onUploadAll} disabled={uploading || status !== "ready"}>
             <Upload size={13} /> {l("Upload All", "全部上传")}
           </button>
+          {onRestore ? (
+            <button className="asset-action-button" onClick={onRestore} disabled={uploading || status !== "ready" || remoteItems.length === 0}>
+              <Download size={13} /> {l("Restore", "还原")}
+            </button>
+          ) : null}
           <button className="asset-action-button" onClick={onCopySql} title={l("Copy Supabase setup SQL", "复制 Supabase 建表 SQL")}>
             <Copy size={13} /> SQL
           </button>

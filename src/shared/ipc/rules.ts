@@ -10,4 +10,5 @@ export const RULES_IPC = {
   uploadAll: defineIpcRequest("rules:sync-upload-all", noInput),
   deleteRemote: defineIpcRequest("rules:sync-delete", z.tuple([ruleIdentityInput])),
   copySetupSql: defineIpcRequest("rules:sync-copy-setup-sql", noInput),
+  restoreGlobal: defineIpcRequest("rules:sync-restore-global", noInput),
 } as const;
