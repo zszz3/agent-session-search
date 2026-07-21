@@ -655,7 +655,18 @@ function extractCodeBuddyTokenEvents(rows: unknown[]): TokenUsageEvent[] {
   const entries = new Map<string, TokenUsageEvent>();
 
   rows.forEach((row, index) => {
-    if (!isRecord(row) || row.type !== "message" || row.role !== "assistant") return;
+    if (!isRecord(row)) return;
+    // CodeBuddy attaches per-request usage to the record that carried the API
+    // call. Assistant text turns keep it on the message; tool turns keep it on
+    // each `function_call` record, and a single assistant turn can fan out into
+    // several parallel tool calls that were each a separately billed request.
+    // Scan both so the summed total reflects real consumption, and key each
+    // function_call by its unique `callId` so parallel requests are not
+    // collapsed into one.
+    const isAssistantMessage = row.type === "message" && row.role === "assistant";
+    const isFunctionCall = row.type === "function_call";
+    if (!isAssistantMessage && !isFunctionCall) return;
+
     const providerData = objectField(row, "providerData");
     if (!providerData) return;
 
@@ -663,7 +674,9 @@ function extractCodeBuddyTokenEvents(rows: unknown[]): TokenUsageEvent[] {
     if (!usage) return;
 
     const entry = createTokenUsage(usage.inputTokens, usage.outputTokens, usage.cachedInputTokens, usage.reasoningOutputTokens);
-    const key = stringField(providerData, "messageId") || stringField(row, "id") || `${index}:${usage.inputTokens}:${usage.outputTokens}`;
+    const key = isFunctionCall
+      ? stringField(row, "callId") || stringField(row, "id") || `${index}:${usage.inputTokens}:${usage.outputTokens}`
+      : stringField(providerData, "messageId") || stringField(row, "id") || `${index}:${usage.inputTokens}:${usage.outputTokens}`;
     putTokenEvent(entries, {
       ...entry,
       timestamp: parseTimestampMs(row.timestamp),

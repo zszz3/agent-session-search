@@ -1060,6 +1060,99 @@ describe("CodeBuddy session loading", () => {
     fs.rmSync(codeBuddyDir, { recursive: true, force: true });
   });
 
+  it("sums token usage from function_call records, counting parallel tool calls separately", () => {
+    const codeBuddyDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codebuddy-fc-"));
+    const projectDir = path.join(codeBuddyDir, "projects", "Users-xjx");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, "codebuddy-fc.jsonl"),
+      [
+        JSON.stringify({
+          id: "msg-user",
+          timestamp: 1_780_000_000_000,
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "edit some files" }],
+          sessionId: "codebuddy-fc",
+          cwd: "/repo",
+        }),
+        // A tool-ending assistant turn keeps no usage on the message; the usage
+        // lives on each function_call. Two parallel tool calls in one turn share
+        // a messageId but are separately billed requests keyed by callId.
+        JSON.stringify({
+          id: "asst-1",
+          timestamp: 1_780_000_001_000,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "" }],
+          providerData: { messageId: "m-1", model: "gpt" },
+          sessionId: "codebuddy-fc",
+          cwd: "/repo",
+        }),
+        JSON.stringify({
+          id: "fc-1",
+          callId: "call-a",
+          timestamp: 1_780_000_001_100,
+          type: "function_call",
+          name: "Read",
+          providerData: {
+            messageId: "m-1",
+            usage: { requests: 1, inputTokens: 1000, outputTokens: 10, totalTokens: 1010 },
+          },
+          sessionId: "codebuddy-fc",
+          cwd: "/repo",
+        }),
+        JSON.stringify({
+          id: "fc-2",
+          callId: "call-b",
+          timestamp: 1_780_000_001_200,
+          type: "function_call",
+          name: "Edit",
+          providerData: {
+            messageId: "m-1",
+            usage: { requests: 1, inputTokens: 2000, outputTokens: 20, totalTokens: 2020 },
+          },
+          sessionId: "codebuddy-fc",
+          cwd: "/repo",
+        }),
+        // A later text-ending turn keeps usage on the assistant message itself.
+        JSON.stringify({
+          id: "asst-2",
+          timestamp: 1_780_000_002_000,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "done" }],
+          providerData: {
+            messageId: "m-2",
+            usage: { requests: 1, inputTokens: 3000, outputTokens: 30, totalTokens: 3030 },
+          },
+          sessionId: "codebuddy-fc",
+          cwd: "/repo",
+        }),
+      ].join("\n"),
+    );
+
+    const loaded = loadCodeBuddyCliSessions(codeBuddyDir);
+
+    expect(loaded).toHaveLength(1);
+    const session = loaded[0]!;
+    // 1010 + 2020 (two parallel tool calls) + 3030 (text turn) = 6060.
+    expect(session.session.tokenUsage).toEqual({
+      inputTokens: 6000,
+      outputTokens: 60,
+      cachedInputTokens: 0,
+      reasoningOutputTokens: 0,
+      totalTokens: 6060,
+    });
+    expect(session.tokenEvents?.map((event) => event.dedupeKey).sort()).toEqual([
+      "codebuddy:call-a",
+      "codebuddy:call-b",
+      "codebuddy:m-2",
+    ]);
+
+    fs.rmSync(codeBuddyDir, { recursive: true, force: true });
+  });
+
   it("reads token usage from the OpenAI-style rawUsage fallback", () => {
     const codeBuddyDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codebuddy-raw-"));
     const projectDir = path.join(codeBuddyDir, "projects", "Users-xjx");

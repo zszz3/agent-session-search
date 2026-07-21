@@ -5472,7 +5472,7 @@ select:focus-visible {
 
 .codex-config-visualizer span,
 .codex-config-visualizer em,
-.codex-model-detect-field .api-config-status {
+.codex-model-field .api-config-status {
   color: var(--text-muted);
   font-size: 11px;
   font-style: normal;
@@ -5486,10 +5486,11 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.codex-model-detect {
+.codex-model-input {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 8px;
+  align-items: center;
 }
 
 .codex-model-detect-button {
@@ -5518,64 +5519,6 @@ select:focus-visible {
 .codex-model-detect-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.codex-model-conflict {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(120px, 0.8fr)) max-content;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--accent-line);
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-}
-
-.codex-model-conflict > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.codex-model-conflict strong,
-.codex-model-conflict span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codex-model-conflict strong {
-  color: var(--accent-bright);
-  font-size: 12px;
-}
-
-.codex-model-conflict span {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.codex-model-conflict button {
-  min-width: 0;
-  padding: 7px 9px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codex-model-conflict button:hover:not(:disabled) {
-  border-color: var(--accent-line);
-  background: var(--panel-hover);
-}
-
-.codex-model-conflict .ghost-action {
-  color: var(--text-muted);
-  font-weight: 500;
 }
 
 .api-settings-form .settings-field {

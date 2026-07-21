@@ -105,7 +105,7 @@ describe("stylesheet theme contract", () => {
     const codexProviderSwitch = stylesheet.match(/\.codex-provider-switch\s*\{[^}]*\}/)?.[0] ?? "";
     const summaryProviderSwitch = stylesheet.match(/\.summary-provider-switch\s*\{[^}]*\}/)?.[0] ?? "";
     const detectButton = stylesheet.match(/\.codex-model-detect-button\s*\{[^}]*\}/)?.[0] ?? "";
-    const modelConflict = stylesheet.match(/\.codex-model-conflict\s*\{[^}]*\}/)?.[0] ?? "";
+    const modelInput = stylesheet.match(/\.codex-model-input\s*\{[^}]*\}/)?.[0] ?? "";
     const apiField = stylesheet.match(/\.api-settings-form\s+\.settings-field\s*\{[^}]*\}/)?.[0] ?? "";
     const apiInput = stylesheet.match(/\.api-settings-form\s+\.settings-field\s+(?:input|select)[^{]*\{[^}]*\}/)?.[0] ?? "";
 
@@ -118,8 +118,8 @@ describe("stylesheet theme contract", () => {
     expect(detectButton).toMatch(/border:\s*1px\s+solid\s+var\(--accent-line\)/);
     expect(detectButton).toMatch(/background:\s*var\(--accent-soft\)/);
     expect(detectButton).toMatch(/font-weight:\s*650/);
-    expect(modelConflict).toMatch(/grid-template-columns:/);
-    expect(modelConflict).toMatch(/border:\s*1px\s+solid\s+var\(--accent-line\)/);
+    expect(modelInput).toMatch(/display:\s*grid/);
+    expect(modelInput).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+max-content/);
     expect(apiField).toMatch(/display:\s*grid/);
     expect(apiField).toMatch(/grid-template-columns:\s*minmax\(140px,\s*180px\)\s+minmax\(0,\s*1fr\)/);
     expect(apiInput).toMatch(/width:\s*100%/);

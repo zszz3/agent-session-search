@@ -109,6 +109,38 @@ describe("remote sync", () => {
             },
           },
         },
+        {
+          id: "codebuddy-fc-a",
+          type: "function_call",
+          callId: "call-a",
+          messageId: "m-tool",
+          timestamp: 1_752_573_603_000,
+          providerData: {
+            usage: {
+              inputTokens: 200,
+              outputTokens: 50,
+              inputTokensDetails: [{ cached_tokens: 0 }],
+              outputTokensDetails: [{ reasoning_tokens: 0 }],
+              totalTokens: 250,
+            },
+          },
+        },
+        {
+          id: "codebuddy-fc-b",
+          type: "function_call",
+          callId: "call-b",
+          messageId: "m-tool",
+          timestamp: 1_752_573_604_000,
+          providerData: {
+            usage: {
+              inputTokens: 300,
+              outputTokens: 60,
+              inputTokensDetails: [{ cached_tokens: 0 }],
+              outputTokensDetails: [{ reasoning_tokens: 0 }],
+              totalTokens: 360,
+            },
+          },
+        },
       ]);
       writeJsonl(path.join(tempHome, ".claude", "projects", "repo", "same-id.jsonl"), claudeRows("same-id"));
       writeJsonl(path.join(tempHome, ".tclaude", "projects", "repo", "same-id.jsonl"), claudeRows("same-id"));
@@ -164,11 +196,11 @@ describe("remote sync", () => {
       expect(store.getSession("ssh:ssh-devbox:claude-cli:same-id")).not.toBeNull();
       expect(store.getSession("ssh:ssh-devbox:tclaude-cli:same-id")).not.toBeNull();
       expect(store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-1")?.tokenUsage).toEqual({
-        inputTokens: 80,
-        outputTokens: 30,
+        inputTokens: 580,
+        outputTokens: 140,
         cachedInputTokens: 20,
         reasoningOutputTokens: 10,
-        totalTokens: 140,
+        totalTokens: 750,
       });
     } finally {
       store.close();

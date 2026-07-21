@@ -101,6 +101,9 @@ describe("theme controls", () => {
     expect(apiDialog).toContain("onSettingsChange({ apiConfig: next })");
     expect(apiDialog).toContain("onSettingsChange({ claudeApiConfig: draftClaudeApiConfig })");
     expect(apiDialog).toContain("onSettingsChange({ summarySource: draftSummarySource, summaryApiConfig: draftSummaryApiConfig })");
+    // Saving a configured Custom Codex/Claude provider must also drive summary/search.
+    expect(apiDialog).toContain("summaryFromCustomCodex(next, draftSummaryApiConfig)");
+    expect(apiDialog).toContain("summaryFromCustomClaude(draftClaudeApiConfig, draftSummaryApiConfig)");
     expect(apiDialog).toContain("onApplyToCodex(next)");
     expect(apiDialog).toContain("onApplyToClaude(draftClaudeApiConfig)");
     expect(apiDialog).toMatch(/Write to Codex config/);
@@ -109,7 +112,7 @@ describe("theme controls", () => {
     expect(apiDialog).toMatch(/Save summary settings/);
   });
 
-  it("visualizes Codex config.toml and supports detected model selection", () => {
+  it("visualizes Codex config.toml and merges model detection into the model field", () => {
     const apiDialog = apiConfigDialogSource;
 
     expect(apiDialog).toContain("codex-config-visualizer");
@@ -122,12 +125,14 @@ describe("theme controls", () => {
     expect(apiDialog).toContain("Config provider");
     expect(apiDialog).toContain('customProviderId: "custom"');
     expect(apiDialog).toContain('data-provider-labels="Codex Official CodexZH DeepSeek GLM LongCat Kimi MiMo Custom"');
+    // The model input and detected options share a single control via a datalist.
+    expect(apiDialog).toContain('list="codex-model-options"');
+    expect(apiDialog).toContain('<datalist id="codex-model-options">');
     expect(apiDialog).toContain("codexModelOptions.map");
-    expect(apiDialog).toContain("selectedDetectedCodexModel");
-    expect(apiDialog).toContain("codexModelConflictAction");
-    expect(apiDialog).toContain("codex-model-conflict");
-    expect(apiDialog).toContain("runCodexAction(codexModelConflictAction, codexModelConflict.selected)");
-    expect(apiDialog).toContain("runCodexAction(codexModelConflictAction, codexModelConflict.typed)");
+    // The separate detected-model select and its conflict resolver were removed in the merge.
+    expect(apiDialog).not.toContain("selectedDetectedCodexModel");
+    expect(apiDialog).not.toContain("codexModelConflict");
+    expect(apiDialog).not.toContain("codex-model-conflict");
   });
 
   it("omits CodexZH from direct AI summary API providers", () => {
@@ -173,8 +178,8 @@ describe("theme controls", () => {
 
     expect(apiDialog).toContain("function buildSummaryDraftFromSettings");
     expect(apiDialog).toContain("function buildSummarySourceFromSettings");
-    expect(apiDialog).toContain('if (codex?.activeProvider === "custom"');
-    expect(apiDialog).toContain('if (claude?.activeProvider === "custom"');
+    expect(apiDialog).toContain('summaryFromCustomCodex(settings?.apiConfig, base)');
+    expect(apiDialog).toContain('summaryFromCustomClaude(settings?.claudeApiConfig, base)');
     expect(apiDialog).toContain('...codex');
     expect(apiDialog).toContain('customProviderId: "custom"');
     expect(apiDialog).toContain('setDraftSummaryApiConfig(buildSummaryDraftFromSettings(settings))');

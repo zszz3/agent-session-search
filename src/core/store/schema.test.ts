@@ -106,4 +106,36 @@ describe("session store schema", () => {
       db.close();
     }
   });
+
+  it("invalidates CodeBuddy sessions once so corrected token counts are reparsed", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      migrateSessionStore(db);
+      const hasMigrationTable = db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'data_migrations'")
+        .get();
+      if (hasMigrationTable) {
+        db.prepare("DELETE FROM data_migrations WHERE id = 'codebuddy-token-events-function-calls-v1'").run();
+      }
+      const insert = db.prepare(`
+        INSERT INTO sessions (
+          session_key, raw_id, source, project_path, file_path,
+          original_title, first_question, timestamp, file_mtime_ms, file_size
+        ) VALUES (?, ?, ?, '/repo', ?, 'Title', 'Question', 1, ?, 10)
+      `);
+      insert.run("codebuddy:legacy", "legacy", "codebuddy-cli", "/tmp/codebuddy.jsonl", 123);
+      insert.run("claude:unchanged", "unchanged", "claude-cli", "/tmp/claude.jsonl", 456);
+
+      migrateSessionStore(db);
+
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'codebuddy:legacy'").get()).toEqual({ file_mtime_ms: 0 });
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'claude:unchanged'").get()).toEqual({ file_mtime_ms: 456 });
+
+      db.prepare("UPDATE sessions SET file_mtime_ms = 789 WHERE session_key = 'codebuddy:legacy'").run();
+      migrateSessionStore(db);
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'codebuddy:legacy'").get()).toEqual({ file_mtime_ms: 789 });
+    } finally {
+      db.close();
+    }
+  });
 });

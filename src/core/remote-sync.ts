@@ -1228,6 +1228,15 @@ def emit_codebuddy_summary(path, stat):
             if not key.startswith("codebuddy:"):
               key = "codebuddy:" + key
             _tok_put(token_entries, key, _tok_event(row_timestamp, key, usage))
+        elif row.get("type") == "function_call":
+          provider_data = row.get("providerData")
+          usage = _codebuddy_usage(provider_data) if isinstance(provider_data, dict) else None
+          if usage:
+            key_value = row.get("callId") or row.get("id") or "%s:%s:%s" % (index, usage["inputTokens"], usage["outputTokens"])
+            key = str(key_value)
+            if not key.startswith("codebuddy:"):
+              key = "codebuddy:" + key
+            _tok_put(token_entries, key, _tok_event(row_timestamp, key, usage))
         parsed = parse_message(row, "codebuddy")
         if parsed:
           message_events.append({"index": message_count, "timestamp": _tok_timestamp(parsed["timestamp"])})
