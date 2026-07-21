@@ -106,6 +106,8 @@ describe("stylesheet theme contract", () => {
     const summaryProviderSwitch = stylesheet.match(/\.summary-provider-switch\s*\{[^}]*\}/)?.[0] ?? "";
     const detectButton = stylesheet.match(/\.codex-model-detect-button\s*\{[^}]*\}/)?.[0] ?? "";
     const modelInput = stylesheet.match(/\.codex-model-input\s*\{[^}]*\}/)?.[0] ?? "";
+    const modelCombo = stylesheet.match(/\.codex-model-combo\s*\{[^}]*\}/)?.[0] ?? "";
+    const modelMenu = stylesheet.match(/\.codex-model-menu\s*\{[^}]*\}/)?.[0] ?? "";
     const apiField = stylesheet.match(/\.api-settings-form\s+\.settings-field\s*\{[^}]*\}/)?.[0] ?? "";
     const apiInput = stylesheet.match(/\.api-settings-form\s+\.settings-field\s+(?:input|select)[^{]*\{[^}]*\}/)?.[0] ?? "";
 
@@ -120,6 +122,9 @@ describe("stylesheet theme contract", () => {
     expect(detectButton).toMatch(/font-weight:\s*650/);
     expect(modelInput).toMatch(/display:\s*grid/);
     expect(modelInput).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+max-content/);
+    expect(modelCombo).toMatch(/position:\s*relative/);
+    expect(modelMenu).toMatch(/position:\s*absolute/);
+    expect(modelMenu).toMatch(/overflow-y:\s*auto/);
     expect(apiField).toMatch(/display:\s*grid/);
     expect(apiField).toMatch(/grid-template-columns:\s*minmax\(140px,\s*180px\)\s+minmax\(0,\s*1fr\)/);
     expect(apiInput).toMatch(/width:\s*100%/);

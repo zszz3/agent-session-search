@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { Eye, EyeOff, X } from "lucide-react";
+import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
 import {
   API_PROVIDER_PRESETS,
   CLAUDE_API_PROVIDER_PRESETS,
@@ -107,6 +107,7 @@ export function ApiConfigDialog({
   const [codexConfigError, setCodexConfigError] = useState("");
   const [selectedCodexConfigProviderId, setSelectedCodexConfigProviderId] = useState("");
   const [codexModelOptions, setCodexModelOptions] = useState<string[]>([]);
+  const [codexModelMenuOpen, setCodexModelMenuOpen] = useState(false);
   const [codexModelProbeStatus, setCodexModelProbeStatus] = useState<SettingsFeedback>(null);
   const apiPresetSelectionRef = useRef(0);
   const claudeApiPresetSelectionRef = useRef(0);
@@ -181,6 +182,7 @@ export function ApiConfigDialog({
     }
     setShowCodexApiKey(false);
     setCodexModelOptions([]);
+    setCodexModelMenuOpen(false);
   };
 
   const refreshCodexConfig = async () => {
@@ -210,6 +212,7 @@ export function ApiConfigDialog({
       customApiFormat: provider.wireApi === "chat" ? "openai_chat" : "openai_responses",
     });
     setCodexModelOptions([]);
+    setCodexModelMenuOpen(false);
   };
 
   const detectCodexModels = async () => {
@@ -224,6 +227,7 @@ export function ApiConfigDialog({
       if (!draftApiConfig.customModel.trim() && result.models.length === 1) {
         updateDraftApiConfig({ customModel: result.models[0] });
       }
+      setCodexModelMenuOpen(result.models.length > 0);
       setCodexModelProbeStatus({ kind: "success", message: l(`Found ${result.models.length} models from ${result.endpoint}.`, `已从 ${result.endpoint} 找到 ${result.models.length} 个模型。`) });
     } catch (error) {
       setCodexModelProbeStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
@@ -533,18 +537,53 @@ export function ApiConfigDialog({
                       <span className="settings-field-title">{l("Model", "模型")}</span>
                       <span className="settings-field-sub">{l("Type a model name, or detect /v1/models and pick from the suggestions.", "输入模型名称，或探测 /v1/models 后从建议中选择。")}</span>
                     </div>
-                    <div className="codex-model-input">
-                      <input
-                        type="text"
-                        list="codex-model-options"
-                        value={draftApiConfig.customModel}
-                        disabled={!settings || saving}
-                        placeholder="gpt-5.5"
-                        onChange={(event) => updateDraftApiConfig({ customModel: event.currentTarget.value })}
-                      />
-                      <datalist id="codex-model-options">
-                        {codexModelOptions.map((model) => <option key={model} value={model} />)}
-                      </datalist>
+                    <div
+                      className="codex-model-input"
+                      onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setCodexModelMenuOpen(false);
+                      }}
+                    >
+                      <div className="codex-model-combo">
+                        <input
+                          type="text"
+                          value={draftApiConfig.customModel}
+                          disabled={!settings || saving}
+                          placeholder="gpt-5.5"
+                          onChange={(event) => updateDraftApiConfig({ customModel: event.currentTarget.value })}
+                          onFocus={() => {
+                            if (codexModelOptions.length > 0) setCodexModelMenuOpen(true);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="codex-model-toggle"
+                          disabled={!settings || saving || codexModelOptions.length === 0}
+                          aria-label={l("Show detected models", "显示探测到的模型")}
+                          aria-expanded={codexModelMenuOpen}
+                          onClick={() => setCodexModelMenuOpen((open) => !open)}
+                        >
+                          <ChevronDown size={15} />
+                        </button>
+                        {codexModelMenuOpen && codexModelOptions.length > 0 ? (
+                          <div className="codex-model-menu" onMouseDown={(event) => event.preventDefault()}>
+                            {codexModelOptions.map((model) => (
+                              <button
+                                type="button"
+                                key={model}
+                                className={`codex-model-option${model === draftApiConfig.customModel ? " selected" : ""}`}
+                                onClick={() => {
+                                  updateDraftApiConfig({ customModel: model });
+                                  setCodexModelMenuOpen(false);
+                                }}
+                                title={model}
+                              >
+                                <span className="codex-model-option-label">{model}</span>
+                                {model === draftApiConfig.customModel ? <Check size={14} /> : null}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                       <button
                         type="button"
                         className="codex-model-detect-button"
