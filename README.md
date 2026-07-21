@@ -249,6 +249,18 @@ npm run package:smoke
 
 本项目基于 [MIT License](./LICENSE) 开源。你可以自由使用、修改和分发本项目，但需要保留原始版权声明和许可声明。
 
+## 贡献者
+
+### Collaborators
+
+<!-- readme: collaborators -start -->
+<!-- readme: collaborators -end -->
+
+### Contributors
+
+<!-- readme: contributors -start -->
+<!-- readme: contributors -end -->
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=zszz3%2FAgentRecall&type=date&legend=top-left">
