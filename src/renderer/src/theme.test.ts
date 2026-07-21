@@ -125,10 +125,15 @@ describe("theme controls", () => {
     expect(apiDialog).toContain("Config provider");
     expect(apiDialog).toContain('customProviderId: "custom"');
     expect(apiDialog).toContain('data-provider-labels="Codex Official CodexZH DeepSeek GLM LongCat Kimi MiMo Custom"');
-    // The model input and detected options share a single control via a datalist.
-    expect(apiDialog).toContain('list="codex-model-options"');
-    expect(apiDialog).toContain('<datalist id="codex-model-options">');
+    // The model input pairs a free-text field with a custom dropdown of detected models
+    // that always shows every option regardless of the current input value.
+    expect(apiDialog).toContain("codex-model-combo");
+    expect(apiDialog).toContain("codex-model-menu");
+    expect(apiDialog).toContain("codex-model-option");
     expect(apiDialog).toContain("codexModelOptions.map");
+    expect(apiDialog).toContain("codexModelMenuOpen");
+    expect(apiDialog).not.toContain('list="codex-model-options"');
+    expect(apiDialog).not.toContain("<datalist");
     // The separate detected-model select and its conflict resolver were removed in the merge.
     expect(apiDialog).not.toContain("selectedDetectedCodexModel");
     expect(apiDialog).not.toContain("codexModelConflict");
