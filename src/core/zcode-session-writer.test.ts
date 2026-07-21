@@ -25,6 +25,7 @@ function createFixture(dbPath: string): void {
       CREATE TABLE model_usage (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
       CREATE TABLE turn_usage (session_id TEXT NOT NULL, turn_id TEXT NOT NULL);
       CREATE TABLE tool_usage (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+      CREATE TABLE input_history (id TEXT PRIMARY KEY, session_id TEXT, text TEXT NOT NULL);
     `);
     db.prepare("INSERT INTO session (id, parent_id, title) VALUES (?, ?, ?)").run("sess-delete", null, "Delete me");
     db.prepare("INSERT INTO session (id, parent_id, title) VALUES (?, ?, ?)").run("sess-keep", null, "Keep me");
@@ -35,6 +36,8 @@ function createFixture(dbPath: string): void {
     db.prepare("INSERT INTO model_usage (id, session_id) VALUES (?, ?)").run("usage-delete", "sess-delete");
     db.prepare("INSERT INTO turn_usage (session_id, turn_id) VALUES (?, ?)").run("sess-delete", "turn-delete");
     db.prepare("INSERT INTO tool_usage (id, session_id) VALUES (?, ?)").run("tool-delete", "sess-delete");
+    db.prepare("INSERT INTO input_history (id, session_id, text) VALUES (?, ?, ?)").run("history-delete", "sess-delete", "Delete prompt");
+    db.prepare("INSERT INTO input_history (id, session_id, text) VALUES (?, ?, ?)").run("history-keep", "sess-keep", "Keep prompt");
   } finally {
     db.close();
   }
@@ -56,7 +59,9 @@ describe("ZCode session writer", () => {
       expect(db.prepare("SELECT COUNT(*) AS count FROM model_usage WHERE session_id = ?").get("sess-delete")).toEqual({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM turn_usage WHERE session_id = ?").get("sess-delete")).toEqual({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM tool_usage WHERE session_id = ?").get("sess-delete")).toEqual({ count: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM input_history WHERE session_id = ?").get("sess-delete")).toEqual({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM message WHERE session_id = ?").get("sess-keep")).toEqual({ count: 1 });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM input_history WHERE session_id = ?").get("sess-keep")).toEqual({ count: 1 });
     } finally {
       db.close();
       fs.rmSync(root, { recursive: true, force: true });

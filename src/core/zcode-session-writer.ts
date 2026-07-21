@@ -13,6 +13,7 @@ const SESSION_RELATED_TABLES = [
   "model_usage",
   "turn_usage",
   "tool_usage",
+  "input_history",
 ] as const;
 
 function tableExists(db: DatabaseSyncType, tableName: string): boolean {
