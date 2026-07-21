@@ -258,54 +258,10 @@ npm run package:smoke
 	<tbody>
 		<tr>
             <td align="center">
-                <a href="https://github.com/Blue-Berrys">
-                    <img src="https://avatars.githubusercontent.com/u/75206464?v=4" width="80;" alt="Blue-Berrys"/>
+                <a href="https://github.com/wlh26">
+                    <img src="https://avatars.githubusercontent.com/u/145627315?v=4" width="80;" alt="wlh26"/>
                     <br />
-                    <sub><b>Blue-Berrys</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/G-Pegasus">
-                    <img src="https://avatars.githubusercontent.com/u/87853009?v=4" width="80;" alt="G-Pegasus"/>
-                    <br />
-                    <sub><b>G-Pegasus</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/zszz3">
-                    <img src="https://avatars.githubusercontent.com/u/91608029?v=4" width="80;" alt="zszz3"/>
-                    <br />
-                    <sub><b>zszz3</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/mesakurax">
-                    <img src="https://avatars.githubusercontent.com/u/140772694?v=4" width="80;" alt="mesakurax"/>
-                    <br />
-                    <sub><b>mesakurax</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/LANSGANBS">
-                    <img src="https://avatars.githubusercontent.com/u/144577410?v=4" width="80;" alt="LANSGANBS"/>
-                    <br />
-                    <sub><b>LANSGANBS</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/forbbiden1">
-                    <img src="https://avatars.githubusercontent.com/u/153357541?v=4" width="80;" alt="forbbiden1"/>
-                    <br />
-                    <sub><b>forbbiden1</b></sub>
-                </a>
-            </td>
-		</tr>
-		<tr>
-            <td align="center">
-                <a href="https://github.com/MeloMei">
-                    <img src="https://avatars.githubusercontent.com/u/225048942?v=4" width="80;" alt="MeloMei"/>
-                    <br />
-                    <sub><b>MeloMei</b></sub>
+                    <sub><b>wlh26</b></sub>
                 </a>
             </td>
 		</tr>
