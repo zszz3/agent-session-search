@@ -36,7 +36,9 @@
 - **Unified agent usage and quota view**:
   Track token usage by agent for today, 7 days, 30 days, and all time; also view current Claude Code / Codex quota status.
 - **Unified Skills and API Provider management**:
-  View and manage Claude Code / Codex skills, track skill usage, sync personal skills across machines through your own Supabase project, and switch Codex / Claude Code between official accounts and third-party API providers.
+  View and manage Claude Code / Codex / Qoder skills, track skill usage, sync personal skills across machines through your own Supabase project, and switch Codex / Claude Code between official accounts and third-party API providers.
+- **Digital assets cross-device sync**:
+  A unified Digital Assets panel manages Rules (CLAUDE.md / .qoder/rules) and Memories (Qoder long-term memories / Codex memories) sync across devices — view sync status, upload all or per-item, reusing the same Supabase configuration as Skills sync.
 
 ## Supported Sources
 
@@ -132,6 +134,15 @@ Sync uploads the full skill directory's regular files, including `SKILL.md`, `re
 If you created the `agent_recall_skills` table with an earlier version, re-run the Copy setup SQL script once after upgrading to enable version history. The script is idempotent: it adds the `content_hash` column and changes the unique constraint from `local_fingerprint` to `(local_fingerprint, version)`.
 
 Supabase sync is designed for personal projects. It does not create tables automatically and does not require a service role key. The app stores only the Project URL and anon key locally, then uses the Supabase REST API to access the `agent_recall_skills` table. The copied setup SQL grants anon read/write access through RLS for personal sync convenience; adjust the RLS policy first if you plan to share the project with other users or expose it more broadly.
+
+## Digital Assets Panel
+
+Click the database icon in the toolbar to open the Digital Assets panel, which manages Rules and Memories sync across devices:
+
+- **Rules sync**: Scans local Claude `CLAUDE.md` (global) and Qoder `.qoder/rules/*.md` (project-level), uploads/downloads via Supabase.
+- **Memories sync**: Scans local Qoder long-term memories (`~/.qoder/memories/`) and Codex memories (`~/.codex/memories_1.sqlite`), uploads/downloads via Supabase.
+
+Each tab shows local assets (with sync status: synced / modified / not synced) and remote assets, supporting upload all, per-item upload, and remote deletion. Reuses the Supabase URL and anon key from Skills sync settings. Enable the "Rules sync" and "Memories sync" toggles in Settings to get started.
 
 ## Installation
 

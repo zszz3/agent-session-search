@@ -85,7 +85,9 @@ npm install -g https://github.com/zszz3/AgentRecall/releases/download/v0.2.0/age
 - **统一查看 Agent 用量和额度**：
   统计今日、近 7 天、近 30 天和全部时间的各 Agent token 使用量；同时查看 Claude Code / Codex 的当前额度状态。
 - **统一管理 Skills 和 API Provider**：
-  查看和管理 Claude Code / Codex skills，统计 skill 使用情况；支持使用自己的 Supabase 项目同步 Skills，在不同机器之间上传、更新和安装；也可以在界面里切换 Codex / Claude Code 的官方账号或第三方 API Provider。
+  查看和管理 Claude Code / Codex / Qoder skills，统计 skill 使用情况；支持使用自己的 Supabase 项目同步 Skills，在不同机器之间上传、更新和安装；也可以在界面里切换 Codex / Claude Code 的官方账号或第三方 API Provider。
+- **数字资产跨设备同步**：
+  通过数字资产面板统一管理 Rules（CLAUDE.md / .qoder/rules）和 Memories（Qoder 长期记忆 / Codex 记忆）的跨设备同步，查看同步状态、一键上传或按条管理，复用 Skills 同步的 Supabase 配置。
 
 ## 支持的数据源
 
@@ -205,6 +207,15 @@ CodeBuddy CLI、CodeWiz、TClaude、TCodex、Claude Code Internal、Codex Intern
 如果你在更早版本里已经创建过 `agent_recall_skills` 表，升级后请重新执行一次 Copy setup SQL 的脚本来启用版本历史；脚本是幂等的，会补上 `content_hash` 列，并把唯一约束从 `local_fingerprint` 改为 `(local_fingerprint, version)`。
 
 当前 Supabase 同步按个人项目设计，不会自动创建表，也不会使用 service role key。应用只保存 Project URL 和 anon key 到本地设置，并通过 Supabase REST API 访问 `agent_recall_skills` 表。初始化 SQL 会为 anon role 创建可读写策略，适合个人私有项目或仅自己掌握 URL/key 的项目；如果要多人共享或公开分发，请先按自己的 Supabase 安全模型调整 RLS policy。
+
+## 数字资产管理面板
+
+工具栏点击数据库图标打开数字资产面板，统一管理 Rules 和 Memories 的跨设备同步：
+
+- **Rules 同步**：扫描本地 Claude `CLAUDE.md`（全局）和 Qoder `.qoder/rules/*.md`（项目级），通过 Supabase 上传/下载实现跨设备同步。
+- **Memories 同步**：扫描本地 Qoder 长期记忆（`~/.qoder/memories/`）和 Codex 记忆（`~/.codex/memories_1.sqlite`），通过 Supabase 上传/下载实现跨设备同步。
+
+每个 tab 显示本地资产列表（含同步状态标记：已同步 / 已修改 / 未同步）和远端资产列表，支持一键上传全部、按条上传、删除远端。复用 Settings 中 Skills 同步的 Supabase URL 和 anon key 配置，无需额外配置。在 Settings 中分别启用「Rules 同步」和「Memories 同步」开关后即可使用。
 
 ## 开发者本地运行
 

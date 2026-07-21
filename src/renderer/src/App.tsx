@@ -22,6 +22,7 @@ import {
   Laptop,
   PackageSearch,
   Pin,
+  Database,
   PinOff,
   Play,
   RefreshCw,
@@ -107,6 +108,9 @@ import { DetailPanel } from "./features/session-detail/detail-panel";
 import { SessionMigrationDialog, SessionMigrationLaunchFailedDialog } from "./components/session-migration-dialog";
 import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./components/session-dialogs";
 import { SkillsDialog } from "./features/skills/skills-dialog";
+import { DigitalAssetsDialog } from "./features/digital-assets/digital-assets-dialog";
+import type { RulesSyncSnapshot } from "../../core/rules-sync";
+import type { MemoriesSyncSnapshot } from "../../core/memories-sync";
 import { AiAssistantDialog } from "./components/ai-assistant-dialog";
 import { RemoteSessionsDialog } from "./features/remote-sessions/remote-sessions-dialog";
 import { SupabaseSetupGuide } from "./components/supabase-setup-guide";
@@ -341,6 +345,9 @@ export function App(): ReactElement {
   const shouldSignalAppUpdate = Boolean(appUpdateStatus?.updateAvailable && !appUpdateStatus.updateSkipped && !appUpdateStatus.promptSnoozed);
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
+  const [rulesSnapshot, setRulesSnapshot] = useState<RulesSyncSnapshot | null>(null);
+  const [memoriesSnapshot, setMemoriesSnapshot] = useState<MemoriesSyncSnapshot | null>(null);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [remoteSessionsOpen, setRemoteSessionsOpen] = useState(false);
@@ -767,6 +774,15 @@ export function App(): ReactElement {
     if (skillsOpen) void loadSkills({ refreshUsage: true, silent: true });
   }, [skillsOpen, loadSkills]);
 
+  const loadDigitalAssets = useCallback(() => {
+    void window.sessionSearch.getRulesSyncSnapshot().then(setRulesSnapshot).catch(() => setRulesSnapshot(null));
+    void window.sessionSearch.getMemoriesSyncSnapshot().then(setMemoriesSnapshot).catch(() => setMemoriesSnapshot(null));
+  }, []);
+
+  useEffect(() => {
+    if (assetsOpen) loadDigitalAssets();
+  }, [assetsOpen, loadDigitalAssets]);
+
   useEffect(() => {
     if (!settingsOpen) return;
     void window.sessionSearch.getSkillUsageHookStatus().then(setSkillHookInstalled).catch(() => setSkillHookInstalled(false));
@@ -985,6 +1001,7 @@ export function App(): ReactElement {
         else if (deleteTagName) setDeleteTagName(null);
         else if (contextMenu) setContextMenu(null);
         else if (skillsOpen) setSkillsOpen(false);
+        else if (assetsOpen) setAssetsOpen(false);
         else if (apiConfigOpen) setApiConfigOpen(false);
         else if (aiAssistantOpen) setAiAssistantOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
@@ -1045,7 +1062,7 @@ export function App(): ReactElement {
   }, [selectedKey]);
 
   useEffect(() => {
-    document.body.classList.toggle("overlay-open", Boolean(detail || remoteDetail || skillsOpen || apiConfigOpen || aiAssistantOpen || settingsOpen || sshDialogOpen || remoteSessionsOpen));
+    document.body.classList.toggle("overlay-open", Boolean(detail || remoteDetail || skillsOpen || assetsOpen || apiConfigOpen || aiAssistantOpen || settingsOpen || sshDialogOpen || remoteSessionsOpen));
     return () => document.body.classList.remove("overlay-open");
   }, [detail, remoteDetail, skillsOpen, apiConfigOpen, aiAssistantOpen, settingsOpen, sshDialogOpen, remoteSessionsOpen]);
 
@@ -2067,6 +2084,20 @@ export function App(): ReactElement {
               <PackageSearch size={15} />
             </button>
             <button
+              className={`icon-button toolbar-icon-button ${assetsOpen ? "active" : ""}`}
+              onClick={() => {
+                setSettingsOpen(false);
+                setApiConfigOpen(false);
+                setRemoteSessionsOpen(false);
+                setSkillsOpen(false);
+                setAssetsOpen(true);
+              }}
+              title={t("Digital Assets", "数字资产")}
+              aria-label={t("Digital Assets", "数字资产")}
+            >
+              <Database size={15} />
+            </button>
+            <button
               className={`icon-button toolbar-icon-button ${remoteSessionsOpen ? "active" : ""}`}
               onClick={() => {
                 setSettingsOpen(false);
@@ -2450,6 +2481,25 @@ export function App(): ReactElement {
           }
           onDelete={(skill) => deleteSkill(skill)}
           onClose={() => setSkillsOpen(false)}
+        />
+      ) : null}
+
+      {assetsOpen ? (
+        <DigitalAssetsDialog
+          rulesSnapshot={rulesSnapshot}
+          memoriesSnapshot={memoriesSnapshot}
+          language={language}
+          onClose={() => setAssetsOpen(false)}
+          onRulesUploadAll={() => window.sessionSearch.uploadAllRulesToSync()}
+          onRulesUpload={(identity) => window.sessionSearch.uploadRuleToSync(identity)}
+          onRulesDelete={(remoteId) => window.sessionSearch.deleteRemoteRule(remoteId)}
+          onRulesCopySql={() => void window.sessionSearch.copyRulesSyncSetupSql()}
+          onMemoriesUploadAll={() => window.sessionSearch.uploadAllMemoriesToSync()}
+          onMemoriesUpload={(identity) => window.sessionSearch.uploadMemoryToSync(identity)}
+          onMemoriesDelete={(remoteId) => window.sessionSearch.deleteRemoteMemory(remoteId)}
+          onMemoriesCopySql={() => void window.sessionSearch.copyMemoriesSyncSetupSql()}
+          onOpenSkills={() => { setAssetsOpen(false); setSkillsOpen(true); }}
+          onRefresh={loadDigitalAssets}
         />
       ) : null}
 
