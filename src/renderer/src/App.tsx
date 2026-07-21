@@ -2436,6 +2436,7 @@ export function App(): ReactElement {
           onRulesUpload={(identity) => window.sessionSearch.uploadRuleToSync(identity)}
           onRulesDelete={(remoteId) => window.sessionSearch.deleteRemoteRule(remoteId)}
           onRulesCopySql={() => void window.sessionSearch.copyRulesSyncSetupSql()}
+          onRulesRestore={() => window.sessionSearch.restoreGlobalRules()}
           onMemoriesUploadAll={() => window.sessionSearch.uploadAllMemoriesToSync()}
           onMemoriesUpload={(identity) => window.sessionSearch.uploadMemoryToSync(identity)}
           onMemoriesDelete={(remoteId) => window.sessionSearch.deleteRemoteMemory(remoteId)}

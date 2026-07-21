@@ -4,10 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   buildRulesSyncSetupSql,
+  restoreGlobalRules,
   ruleIdentity,
   scanLocalRules,
   SupabaseRulesSyncClient,
   type AgentRule,
+  type RemoteRule,
 } from "./rules-sync";
 
 describe("rules sync", () => {
@@ -128,5 +130,61 @@ describe("rules sync", () => {
     const status = await client.checkStatus();
     expect(status.kind).toBe("missing-table");
     expect(status.remediation).toBe("sql");
+  });
+
+  function makeRemoteRule(overrides: Partial<RemoteRule> = {}): RemoteRule {
+    return {
+      id: "r1", agent: "claude", scope: "global", name: "CLAUDE.md",
+      content: "# Restored Rules", content_hash: "", project_path: "",
+      version: 1, created_at: "t", updated_at: "t", ...overrides,
+    };
+  }
+
+  it("restores a global rule when the local file does not exist", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "rules-restore-new-"));
+    const result = restoreGlobalRules([makeRemoteRule()], { homeDir });
+    expect(result.restored).toEqual(["CLAUDE.md"]);
+    expect(result.skipped).toEqual([]);
+    expect(result.backedUp).toEqual([]);
+    expect(fs.readFileSync(path.join(homeDir, ".claude", "CLAUDE.md"), "utf8")).toBe("# Restored Rules");
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("skips a global rule when local content is identical", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "rules-restore-skip-"));
+    const claudeDir = path.join(homeDir, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, "CLAUDE.md"), "# Restored Rules", "utf8");
+    const hash = require("node:crypto").createHash("sha256").update("# Restored Rules").digest("hex");
+    const result = restoreGlobalRules([makeRemoteRule({ content_hash: hash })], { homeDir });
+    expect(result.skipped).toEqual(["CLAUDE.md"]);
+    expect(result.restored).toEqual([]);
+    expect(fs.existsSync(path.join(claudeDir, "CLAUDE.md.bak"))).toBe(false);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("backs up and overwrites when local content differs", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "rules-restore-backup-"));
+    const claudeDir = path.join(homeDir, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, "CLAUDE.md"), "# Old local content", "utf8");
+    const result = restoreGlobalRules([makeRemoteRule()], { homeDir });
+    expect(result.restored).toEqual(["CLAUDE.md"]);
+    expect(result.backedUp).toEqual(["CLAUDE.md"]);
+    expect(fs.readFileSync(path.join(claudeDir, "CLAUDE.md"), "utf8")).toBe("# Restored Rules");
+    expect(fs.readFileSync(path.join(claudeDir, "CLAUDE.md.bak"), "utf8")).toBe("# Old local content");
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("skips project-scope rules and unknown agents", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "rules-restore-skip2-"));
+    const result = restoreGlobalRules([
+      makeRemoteRule({ scope: "project", project_path: "my-app" }),
+      makeRemoteRule({ agent: "qoder", name: "some-rule.md" }),
+    ], { homeDir });
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(result.backedUp).toEqual([]);
+    fs.rmSync(homeDir, { recursive: true, force: true });
   });
 });
