@@ -157,9 +157,9 @@ agent-recall
 
 The first installation downloads the Electron runtime for the current operating system. See the Development Setup section and [Install.md](../Install.md) for source-based installation.
 
-Once installed, run `agent-recall` from any terminal to launch it. The app stays in the background (with a menu bar icon); press **⌥ Option + Space** by default to open the search window. If it conflicts with Raycast or another launcher, change or disable the global shortcut in Settings. The app uses a single-instance lock, so launching it again focuses the existing window instead of opening another instance.
+Once installed, run `agent-recall` from any terminal to launch it. The app stays in the background with a menu bar icon on macOS or a system tray icon on Windows. Press **⌥ Option + Space** on macOS or **Ctrl + Alt + Space** on Windows to open the search window. If the shortcut conflicts with another launcher, change or disable the global shortcut in Settings. The app uses a single-instance lock, so launching it again focuses the existing window instead of opening another instance.
 
-Settings can also be opened with `Cmd+,`. Use Appearance to switch the color theme and English / Chinese UI.
+On macOS, Settings can also be opened with `Cmd+,`. Use Appearance to switch the color theme and English / Chinese UI.
 
 For daily use, you do not need to reinstall dependencies or rebuild. Just run:
 
@@ -184,8 +184,6 @@ If you do not use nvm and have Node.js 22.13+ installed system-wide, daily start
 
 The terminal checks the latest GitHub Release automatically. When an update is available, it shows the release's new features and bug fixes and asks whether to install it. The same version, release notes, and **Update now** action are available under **Settings → About**. Use `agent-recall --check-update` to check without launching the App or `agent-recall --update` to install immediately. If an automatic update fails, the external updater attempts to reopen the installed version and uses an operating-system dialog to offer actions for copying the manual installation command or opening the latest Release page.
 
-On macOS, press **⌥ Option + Space** by default to open the search window. On Windows, use **Ctrl + Alt + Space**. Both shortcuts can be changed in Settings.
-
 See [Install.md](../Install.md) for updating, uninstalling, installing from a fresh clone, and network mirror tips.
 
 ## Development Setup
@@ -193,6 +191,7 @@ See [Install.md](../Install.md) for updating, uninstalling, installing from a fr
 Requirements:
 
 - macOS or Windows
+- Git
 - Node.js 22.13 or newer
 - npm
 
