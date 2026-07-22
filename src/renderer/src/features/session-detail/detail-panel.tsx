@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Search, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Activity, ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Copy, Download, Edit3, FolderOpen, Laptop, Play, Search, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../../core/format-session";
+import type { SessionAgentStatus } from "../../../../core/session-agent-status";
 import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../../core/types";
 import { formatTokenCount } from "../../format-count";
 import { hasTokenUsage } from "../../session-ui";
@@ -22,6 +23,7 @@ import {
   sourceUiFamily,
 } from "../../session-ui";
 import { readInitialToolEventsVisibility, storeToolEventsVisibility } from "../../tool-events-visibility";
+import { AgentStatusCard } from "./agent-status-card";
 
 export type ConversationTimelineItem =
   | { kind: "message"; key: string; timestampMs: number | null; order: number; message: SessionMessage }
@@ -125,6 +127,7 @@ export function DetailPanel({
   onRemoveTag,
   onFavorite,
   onSummarize,
+  onAnalyzeAgentStatus,
   summarizing,
   canResume,
   canMigrate,
@@ -163,6 +166,7 @@ export function DetailPanel({
   onRemoveTag: (tagName: string) => void;
   onFavorite: () => void;
   onSummarize: () => void;
+  onAnalyzeAgentStatus: () => Promise<SessionAgentStatus>;
   summarizing: boolean;
   canResume: boolean;
   canMigrate: boolean;
@@ -194,6 +198,10 @@ export function DetailPanel({
   const pendingInitialScrollRef = useRef<string | null>(session.sessionKey);
   const [roleFilter, setRoleFilter] = useState<ConversationRoleFilter>("all");
   const [showTools, setShowTools] = useState(readInitialToolEventsVisibility);
+  const [agentStatus, setAgentStatus] = useState<SessionAgentStatus | null>(null);
+  const [agentStatusLoading, setAgentStatusLoading] = useState(false);
+  const [agentStatusError, setAgentStatusError] = useState<string | null>(null);
+  const agentStatusRequestRef = useRef(0);
   const timelineItems = useMemo(() => conversationTimeline(messages, traceEvents), [messages, traceEvents]);
   const visibleTimelineItems = useMemo(
     () => filterConversationTimeline(timelineItems, roleFilter, showTools),
@@ -212,6 +220,22 @@ export function DetailPanel({
       storeToolEventsVisibility(next);
       return next;
     });
+  };
+
+  const analyzeAgentStatus = async () => {
+    const requestId = ++agentStatusRequestRef.current;
+    setAgentStatusLoading(true);
+    setAgentStatusError(null);
+    try {
+      const nextStatus = await onAnalyzeAgentStatus();
+      if (requestId !== agentStatusRequestRef.current) return;
+      setAgentStatus(nextStatus);
+    } catch (error) {
+      if (requestId !== agentStatusRequestRef.current) return;
+      setAgentStatusError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (requestId === agentStatusRequestRef.current) setAgentStatusLoading(false);
+    }
   };
 
   const [panelSearchOpen, setPanelSearchOpen] = useState(false);
@@ -296,6 +320,13 @@ export function DetailPanel({
   useEffect(() => {
     pendingInitialScrollRef.current = session.sessionKey;
     setRoleFilter("all");
+    agentStatusRequestRef.current += 1;
+    setAgentStatus(null);
+    setAgentStatusLoading(false);
+    setAgentStatusError(null);
+    return () => {
+      agentStatusRequestRef.current += 1;
+    };
   }, [session.sessionKey]);
 
   useEffect(() => {
@@ -411,8 +442,8 @@ export function DetailPanel({
             </button>
           </div>
         </div>
-        {!readOnly ? <div className="detail-actions">
-          <div className="detail-action-group">
+        <div className="detail-actions">
+          {!readOnly ? <div className="detail-action-group">
             {canResume ? (
               <button onClick={onResume} disabled={actionRunning}>
                 <Play size={15} /> {session.source === "codex-app" ? l("Open in Codex", "在 Codex 中打开") : "Resume"}
@@ -426,29 +457,37 @@ export function DetailPanel({
             <button onClick={onReveal} disabled={actionRunning || localOnlyDisabled} title={revealTitle}>
               <FolderOpen size={15} /> {revealLabel}
             </button>
-          </div>
-          <div className="detail-action-group">
-            <button onClick={onAddTag} disabled={actionRunning}>
+          </div> : null}
+          <div className="detail-action-group agent-status-action-group">
+            {!readOnly ? <button onClick={onAddTag} disabled={actionRunning}>
               <Tag size={15} /> {l("Add Tag", "添加标签")}
-            </button>
-            <button onClick={onSummarize} disabled={actionRunning || summarizing}>
+            </button> : null}
+            {!readOnly ? <button onClick={onSummarize} disabled={actionRunning || summarizing}>
               <Sparkles size={15} />{" "}
               {summarizing
                 ? l("Summarizing...", "摘要中...")
                 : session.aiSummary
                   ? l("Re-summarize", "重新摘要")
                   : l("AI Summary", "AI 摘要")}
+            </button> : null}
+            <button onClick={() => void analyzeAgentStatus()} disabled={actionRunning || agentStatusLoading} aria-expanded={Boolean(agentStatus)}>
+              <Activity size={15} />{" "}
+              {agentStatusLoading
+                ? l("Analyzing...", "分析中...")
+                : agentStatus
+                  ? l("Re-analyze", "重新分析")
+                  : l("Analyze status", "分析状态")}
             </button>
-            <button onClick={onMigrate} disabled={actionRunning || !canMigrate} title={migrationTitle}>
+            {!readOnly ? <button onClick={onMigrate} disabled={actionRunning || !canMigrate} title={migrationTitle}>
               <ArrowRightLeft size={15} /> {l("Migrate to…", "迁移到…")}
-            </button>
-            {onUploadRemote ? (
+            </button> : null}
+            {!readOnly && onUploadRemote ? (
               <button onClick={onUploadRemote} disabled={actionRunning}>
                 <CloudUpload size={15} /> {l("Save to Remote", "保存到远程")}
               </button>
             ) : null}
           </div>
-          <div className="detail-action-group">
+          {!readOnly ? <div className="detail-action-group">
             {canResume ? (
               <button onClick={onCopyResume} disabled={actionRunning}>
                 <Copy size={15} /> {l("Copy Cmd", "复制命令")}
@@ -459,13 +498,13 @@ export function DetailPanel({
               <Download size={15} /> {l("Export MD", "导出 MD")}
             </button>
             <button onClick={onCopyPlain} disabled={actionRunning}>{l("Plain Text", "纯文本")}</button>
-          </div>
-          <div className="detail-action-group">
+          </div> : null}
+          {!readOnly ? <div className="detail-action-group">
             <button className="danger" onClick={onDelete} disabled={actionRunning}>
               <Trash2 size={15} /> {l("Delete", "删除")}
             </button>
-          </div>
-        </div> : null}
+          </div> : null}
+        </div>
         {session.aiSummary ? (
           <div className="detail-summary">
             <span className="detail-summary-label">
@@ -475,6 +514,15 @@ export function DetailPanel({
             <p>{session.aiSummary}</p>
           </div>
         ) : null}
+        {agentStatusError ? (
+          <div className="agent-status-error" role="alert">
+            <span>{agentStatusError}</span>
+            <button onClick={() => void analyzeAgentStatus()} disabled={agentStatusLoading}>
+              {l("Retry", "重试")}
+            </button>
+          </div>
+        ) : null}
+        {agentStatus ? <AgentStatusCard status={agentStatus} language={language} /> : null}
         <div className="detail-tags">
           {session.tags.map((tagName) => (
             <button key={tagName} className={`chip ${isBranchTag(tagName) ? "branch-tag" : ""}`} onClick={() => onRemoveTag(tagName)} disabled={readOnly}>

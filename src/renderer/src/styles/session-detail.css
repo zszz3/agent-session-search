@@ -576,6 +576,19 @@
   color: var(--accent-contrast);
 }
 
+.detail-actions .agent-status-action-group:first-child button:first-child {
+  border-color: var(--border);
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.detail-actions .agent-status-action-group:first-child button:first-child:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
 .action-status {
   padding: 9px 18px;
   border-bottom: 1px solid var(--border-subtle);

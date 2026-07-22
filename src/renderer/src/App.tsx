@@ -44,6 +44,7 @@ import type { ApiConfig, ClaudeApiConfig } from "../../core/api-config";
 import type { IndexStatus } from "../../core/indexer";
 import type { AppUpdateStatus } from "../../core/app-update-types";
 import { formatRelativeTime } from "../../core/format-session";
+import { analyzeSessionAgentStatus } from "../../core/session-agent-status";
 import { LIVE_SESSION_REFRESH_INTERVAL_MS, QUOTA_REFRESH_INTERVAL_MS } from "../../core/refresh-policy";
 import type { AppSettings, AppSettingsUpdate } from "../../core/platform";
 import type { MigrationTargetSettings } from "../../core/migration-targets";
@@ -2314,6 +2315,10 @@ export function App(): ReactElement {
           onRemoveTag={(tagName) => void removeTag(detail, tagName)}
           onFavorite={() => void toggleFavorite(detail)}
           onSummarize={() => void summarizeDetail(detail)}
+          onAnalyzeAgentStatus={() => window.sessionSearch.analyzeSessionAgentStatus(
+            detail.sessionKey,
+            getLiveSessionState(detail, liveSessionKeys, liveDetectionFailed) === "open",
+          )}
           summarizing={summarizing}
           canResume={supportsResumeSource(detail.source)}
           canMigrate={!isRemoteSession(detail) && supportsMigrationSource(detail.source)}
@@ -2377,6 +2382,12 @@ export function App(): ReactElement {
           onRemoveTag={() => undefined}
           onFavorite={() => undefined}
           onSummarize={() => undefined}
+          onAnalyzeAgentStatus={() => Promise.resolve(analyzeSessionAgentStatus({
+            session: remoteDetail.snapshot.session,
+            messages: remoteDetail.snapshot.messages,
+            traceEvents: remoteDetail.snapshot.traceEvents,
+            live: false,
+          }))}
           summarizing={false}
           canResume={false}
           canMigrate={false}
