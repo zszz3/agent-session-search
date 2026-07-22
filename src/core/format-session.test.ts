@@ -108,4 +108,70 @@ describe("formatSessionJson", () => {
       stream: false,
     });
   });
+
+  it("preserves a captured Codex Responses request without normalizing it", () => {
+    const request = {
+      model: "gpt-5.4",
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] }],
+      tools: [{ type: "function", name: "lookup", parameters: { type: "object" } }],
+      stream: true,
+      metadata: { trace: "kept" },
+    };
+
+    expect(JSON.parse(formatSessionJson(messages, "openai_responses", request))).toEqual(request);
+  });
+
+  it("converts Responses tools and tool calls to Chat Completions", () => {
+    const request = {
+      model: "gpt-5.4",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Find it" }] },
+        { type: "function_call", call_id: "call-1", name: "lookup", arguments: "{\"id\":\"42\"}" },
+        { type: "function_call_output", call_id: "call-1", output: "found" },
+      ],
+      tools: [{ type: "function", name: "lookup", description: "Look it up", parameters: { type: "object" } }],
+      tool_choice: "auto",
+      parallel_tool_calls: false,
+      stream: true,
+    };
+
+    expect(JSON.parse(formatSessionJson(messages, "openai_chat", request))).toEqual({
+      model: "gpt-5.4",
+      messages: [
+        { role: "user", content: "Find it" },
+        { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{\"id\":\"42\"}" } }] },
+        { role: "tool", tool_call_id: "call-1", content: "found" },
+      ],
+      stream: true,
+      tools: [{ type: "function", function: { name: "lookup", description: "Look it up", parameters: { type: "object" } } }],
+      tool_choice: "auto",
+      parallel_tool_calls: false,
+    });
+  });
+
+  it("converts Responses instructions and tool calls to Anthropic Messages", () => {
+    const request = {
+      model: "claude-sonnet-4-5",
+      instructions: "Be concise.",
+      input: [
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "Use tools." }] },
+        { type: "function_call", call_id: "call-1", name: "lookup", arguments: "{\"id\":\"42\"}" },
+        { type: "function_call_output", call_id: "call-1", output: "found" },
+      ],
+      tools: [{ type: "function", name: "lookup", parameters: { type: "object" } }],
+      stream: true,
+    };
+
+    expect(JSON.parse(formatSessionJson(messages, "anthropic", request))).toEqual({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4096,
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "call-1", name: "lookup", input: { id: "42" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "found" }] },
+      ],
+      stream: true,
+      system: "Be concise.\n\nUse tools.",
+      tools: [{ name: "lookup", input_schema: { type: "object" } }],
+    });
+  });
 });

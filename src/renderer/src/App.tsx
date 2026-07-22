@@ -1508,12 +1508,16 @@ export function App(): ReactElement {
     setContextMenu(null);
     setActionStatus({ kind: "running", message: t("Exporting JSON...", "正在导出 JSON...") });
     try {
-      const exported = await window.sessionSearch.exportJson(sessionKey);
-      if (!exported) {
+      const result = await window.sessionSearch.exportJson(sessionKey);
+      if (!result.exported) {
         setActionStatus(null);
         return;
       }
-      const successMessage = t("JSON exported.", "JSON 已导出。");
+      const successMessage = result.fidelity === "exact-trace"
+        ? t("Exact Codex request JSON exported.", "已导出 Codex 真实请求体 JSON。")
+        : result.fidelity === "reconstructed"
+          ? t("Reconstructed request JSON exported.", "已导出重建的请求体 JSON。")
+          : t("Normalized request JSON exported.", "已导出标准化请求体 JSON。");
       setActionStatus({ kind: "success", message: successMessage });
       window.setTimeout(() => {
         setActionStatus((current) => (current?.kind === "success" && current.message === successMessage ? null : current));

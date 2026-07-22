@@ -85,6 +85,10 @@ describe("detail panel actions", () => {
     expect(handler).toContain("chooseJsonExportFormat");
     expect(handler).toContain("chooseJsonExportPath");
     expect(handler).toContain("formatSessionJson");
+    expect(handler).toContain("resolveCodexResponsesRequest");
+    expect(handler).toContain("CODEX_ROLLOUT_TRACE_ROOT");
+    expect(handler).toContain("JSON Export Complete");
+    expect(handler).toContain("Exact Codex request body");
     expect(mainSource).toContain("OpenAI Chat Completions");
     expect(mainSource).toContain("OpenAI Responses");
     expect(mainSource).toContain("Anthropic Messages");

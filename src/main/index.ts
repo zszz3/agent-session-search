@@ -22,6 +22,12 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { loadActiveCodexSummaryEndpointDefaults } from "../core/codex-profile";
+import {
+  reconstructCodexResponsesRequest,
+  resolveCodexResponsesRequest,
+  type CodexRequestExport,
+  type CodexRequestFidelity,
+} from "../core/codex-request-export";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
 import {
   formatSessionJson,
@@ -521,7 +527,7 @@ async function chooseJsonExportFormat(): Promise<SessionJsonExportFormat | null>
     type: "question",
     title: "Export JSON",
     message: "Choose an API request format",
-    detail: "The exported model is a placeholder. Replace YOUR_MODEL before sending the request.",
+    detail: "Codex exports use an exact captured request when available, otherwise a reconstructed request. Other sessions use normalized messages.",
     buttons: ["OpenAI Chat Completions", "OpenAI Responses", "Anthropic Messages", "Cancel"],
     defaultId: 0,
     cancelId: 3,
@@ -1590,13 +1596,53 @@ function registerIpc(): void {
   ipcMain.handle("command:export-json", async (_event, sessionKey: string) => {
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     const session = store.getSession(sessionKey);
-    if (!session) return false;
+    if (!session) return { exported: false };
     const format = await chooseJsonExportFormat();
-    if (!format) return false;
+    if (!format) return { exported: false };
     const exportPath = await chooseJsonExportPath(exportFileName(session.displayTitle || session.originalTitle || session.rawId, "json"));
-    if (!exportPath) return false;
-    await fs.writeFile(exportPath, formatSessionJson(store.getAllMessages(sessionKey), format), "utf-8");
-    return true;
+    if (!exportPath) return { exported: false };
+
+    let codexRequest: CodexRequestExport | null = null;
+    const isCodexSession = ["codex-cli", "codex-app", "codex-internal", "tcodex-cli"].includes(session.source);
+    if (isCodexSession && isLocalSessionEnvironment(session)) {
+      if (format === "openai_responses") {
+        codexRequest = resolveCodexResponsesRequest({
+          filePath: session.filePath,
+          rawId: session.rawId,
+          traceRoot: process.env.CODEX_ROLLOUT_TRACE_ROOT?.trim() || undefined,
+        });
+      } else {
+        const reconstructed = reconstructCodexResponsesRequest(session.filePath);
+        if (reconstructed) codexRequest = { body: reconstructed, fidelity: "reconstructed" };
+      }
+    }
+    const fidelity: CodexRequestFidelity = codexRequest?.fidelity ?? "normalized";
+    await fs.writeFile(
+      exportPath,
+      formatSessionJson(store.getAllMessages(sessionKey), format, codexRequest?.body),
+      "utf-8",
+    );
+    const fidelityMessage = fidelity === "exact-trace"
+      ? "Exact Codex request body captured from CODEX_ROLLOUT_TRACE_ROOT."
+      : fidelity === "reconstructed"
+        ? "Request body reconstructed from the Codex rollout history."
+        : "Request body exported in normalized message format.";
+    const fidelityMessageZh = fidelity === "exact-trace"
+      ? "已从 CODEX_ROLLOUT_TRACE_ROOT 导出 Codex 原始请求体。"
+      : fidelity === "reconstructed"
+        ? "已根据 Codex rollout 历史重建请求体。"
+        : "已按标准消息格式导出请求体。";
+    const notice: Electron.MessageBoxOptions = {
+      type: "info",
+      title: "JSON Export Complete",
+      message: fidelityMessage,
+      detail: `${fidelityMessageZh}\n\n${exportPath}`,
+      buttons: ["OK"],
+      noLink: true,
+    };
+    if (mainWindow) await dialog.showMessageBox(mainWindow, notice);
+    else await dialog.showMessageBox(notice);
+    return { exported: true, fidelity };
   });
   ipcMain.handle("command:copy-plain", async (_event, sessionKey: string) => {
     await ensureRemoteSessionDetailsLoaded(sessionKey);

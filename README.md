@@ -75,7 +75,7 @@ npm install -g https://github.com/zszz3/AgentRecall/releases/download/v0.2.0/age
 - **统一搜索和管理多种 AI Coding Agent 会话**：
   搜索、过滤、查看、整理和快速启动 Claude Code、Codex，以及可选的 TClaude、TCodex、CodeBuddy、CodeWiz、OpenClaw、Hermes、OpenCode、ZCode、Cursor Agent、Trae、Qoder 等会话；支持自定义标题、标签、收藏、置顶、隐藏和一键快速启动；也支持本地环境和 SSH 远程环境，远程机器无需安装本应用。侧边栏项目按环境分组展示，每组可折叠，组内按最近活跃时间排序。会话可按全部时间或最近 7 天、30 天或 90 天过滤；搜索结果默认按智能排序（相关性与时间衰减混合），也可切换为按最新或最早活跃时间排序。
 - **完整查看会话上下文**：
-  详情页展示完整消息、tool call 与 Markdown / code block，并支持查看 AI 摘要、导出 Markdown，以及导出 OpenAI Chat、OpenAI Responses 或 Anthropic 请求体 JSON。
+  详情页展示完整消息、tool call 与 Markdown / code block，并支持查看 AI 摘要、导出 Markdown，以及导出 OpenAI Chat、OpenAI Responses 或 Anthropic 请求体 JSON。Codex 会话会从 rollout 重建模型、指令、工具调用、推理参数、流式开关和请求 metadata；如果启动 Codex 与 AgentRecall 时均设置了 `CODEX_ROLLOUT_TRACE_ROOT`，OpenAI Responses 导出还会优先使用 Codex trace 中捕获的原始请求体。trace 可能包含完整提示词、工具参数与响应，请只保存到受信任的本地目录并妥善清理。
 - **AI / Agent 辅助检索历史会话**：
   可以使用 AI 摘要增强历史会话检索，也支持自然语言找会话；同时开放 MCP 能力,让 Claude Code / Codex / CodeBuddy 可以在对话里直接搜索、读取历史会话,并对会话打标签、收藏、设置可见性。
 - **跨 Agent 迁移会话**：
