@@ -179,6 +179,352 @@
   line-height: 1.5;
 }
 
+.agent-status-card {
+  flex: 0 0 auto;
+  margin: 10px 18px 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-subtle);
+}
+
+.agent-status-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-status-heading,
+.agent-status-meta,
+.agent-status-chips,
+.agent-status-project {
+  display: flex;
+  align-items: center;
+}
+
+.agent-status-heading {
+  min-width: 0;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.agent-status-heading > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.agent-status-heading strong {
+  white-space: nowrap;
+}
+
+.agent-status-state {
+  padding: 2px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.agent-status-state.running {
+  border-color: var(--running-text);
+  background: var(--running-bg);
+  color: var(--running-text);
+}
+
+.agent-status-state.waiting_agent,
+.agent-status-state.waiting_user {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.agent-status-state.failed,
+.agent-status-state.interrupted {
+  border-color: var(--danger-soft);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.agent-status-meta {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px 9px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-align: right;
+}
+
+.agent-status-focus {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 9px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+}
+
+.agent-status-focus > span,
+.agent-status-section-label,
+.agent-status-project > span {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.agent-status-focus p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-status-grid > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 5px;
+  padding: 6px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+}
+
+.agent-status-grid span {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-grid strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.agent-status-grid .has-failure strong {
+  color: var(--danger);
+}
+
+.agent-status-section {
+  margin-top: 9px;
+}
+
+.agent-status-chips {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.agent-status-tool {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 5px;
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  font-size: 9.5px;
+}
+
+.agent-status-tool code {
+  max-width: 160px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-tool b {
+  color: var(--text);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.agent-status-tool em {
+  color: var(--danger);
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.agent-status-tool.has-failure {
+  border-color: var(--danger-soft);
+}
+
+.agent-status-todo-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.agent-status-todo {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.agent-status-todo svg {
+  color: var(--text-faint);
+}
+
+.agent-status-todo.in_progress svg {
+  color: var(--accent);
+}
+
+.agent-status-todo.completed {
+  color: var(--text-muted);
+}
+
+.agent-status-todo.completed svg {
+  color: var(--success-text);
+}
+
+.agent-status-todo.cancelled {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.agent-status-todo small,
+.agent-status-more {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.agent-status-more {
+  padding-left: 7px;
+}
+
+.agent-status-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.agent-status-failure svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.agent-status-failure span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-project {
+  min-width: 0;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.agent-status-project code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-empty {
+  margin: 9px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.agent-status-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 18px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-soft);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.agent-status-error span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-error button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 10.5px;
+}
+
+@media (max-width: 760px) {
+  .agent-status-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .agent-status-meta {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .agent-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .detail-actions button {
   display: inline-flex;
   align-items: center;

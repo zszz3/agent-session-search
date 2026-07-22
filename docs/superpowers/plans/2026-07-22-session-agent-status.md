@@ -17,7 +17,7 @@
 - Modify `src/main/index.ts`: expose the complete indexed analysis through `session:agent-status` after existing remote hydration.
 - Modify `src/preload/index.ts`: expose the typed `analyzeSessionAgentStatus` renderer API.
 - Create `src/renderer/src/features/session-detail/agent-status-card.tsx`: compact localized status rendering.
-- Create `src/renderer/src/features/session-detail/agent-status-card.test.tsx`: server-rendered card coverage.
+- Create `src/renderer/src/features/session-detail/agent-status-card.test.ts`: server-rendered card coverage.
 - Modify `src/renderer/src/features/session-detail/detail-panel.tsx`: manual analysis button, transient loading/error/result state, and read-only remote support.
 - Modify `src/renderer/src/App.tsx`: wire indexed IPC analysis and remote snapshot analysis into both detail variants.
 - Modify `src/renderer/src/styles/session-detail.css`: compact status card, state badges, metrics, plans, and responsive behavior.
@@ -277,7 +277,7 @@ git commit -m "feat: expose session status analysis"
 ### Task 3: Compact Agent status card
 
 **Files:**
-- Create: `src/renderer/src/features/session-detail/agent-status-card.test.tsx`
+- Create: `src/renderer/src/features/session-detail/agent-status-card.test.ts`
 - Create: `src/renderer/src/features/session-detail/agent-status-card.tsx`
 - Modify: `src/renderer/src/styles/session-detail.css`
 
@@ -330,7 +330,7 @@ Add a second test with no request, no plan, no tools, and `state: unknown`; asse
 - [ ] **Step 2: Run the card test and verify RED**
 
 ```bash
-npx vitest run src/renderer/src/features/session-detail/agent-status-card.test.tsx
+npx vitest run src/renderer/src/features/session-detail/agent-status-card.test.ts
 ```
 
 Expected: FAIL because `AgentStatusCard` does not exist.
@@ -410,7 +410,7 @@ At narrow widths, stack header metadata and use two metric columns. Respect exis
 - [ ] **Step 5: Run the card test and verify GREEN**
 
 ```bash
-npx vitest run src/renderer/src/features/session-detail/agent-status-card.test.tsx
+npx vitest run src/renderer/src/features/session-detail/agent-status-card.test.ts
 ```
 
 Expected: both card scenarios pass.
@@ -418,7 +418,7 @@ Expected: both card scenarios pass.
 - [ ] **Step 6: Commit the card**
 
 ```bash
-git add src/renderer/src/features/session-detail/agent-status-card.tsx src/renderer/src/features/session-detail/agent-status-card.test.tsx src/renderer/src/styles/session-detail.css
+git add src/renderer/src/features/session-detail/agent-status-card.tsx src/renderer/src/features/session-detail/agent-status-card.test.ts src/renderer/src/styles/session-detail.css
 git commit -m "feat: add compact session agent status card"
 ```
 
@@ -506,7 +506,7 @@ Do not add automatic effects or background calls. Both paths run only from the d
 - [ ] **Step 5: Run focused tests and type checking**
 
 ```bash
-npx vitest run src/core/session-agent-status.test.ts src/renderer/src/features/session-detail/agent-status-card.test.tsx src/renderer/src/detail-panel-actions.test.ts
+npx vitest run src/core/session-agent-status.test.ts src/renderer/src/features/session-detail/agent-status-card.test.ts src/renderer/src/detail-panel-actions.test.ts
 npm run typecheck
 ```
 
@@ -541,7 +541,7 @@ Terminate the existing `npm run dev` process and its Electron children. Confirm 
 - [ ] **Step 3: Run focused verification**
 
 ```bash
-npx vitest run src/core/session-agent-status.test.ts src/renderer/src/features/session-detail/agent-status-card.test.tsx src/renderer/src/detail-panel-actions.test.ts
+npx vitest run src/core/session-agent-status.test.ts src/renderer/src/features/session-detail/agent-status-card.test.ts src/renderer/src/detail-panel-actions.test.ts
 npm run typecheck
 ```
 
