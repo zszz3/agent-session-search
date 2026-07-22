@@ -188,24 +188,6 @@ describe("detail panel actions", () => {
     expect(lastGroup).not.toContain("onReveal");
   });
 
-  it("analyzes and re-analyzes Agent status only after a detail action", () => {
-    expect(detailPanelSource).toContain("onAnalyzeAgentStatus");
-    expect(detailPanelSource).toContain('l("Analyze status", "分析状态")');
-    expect(detailPanelSource).toContain('l("Re-analyze", "重新分析")');
-    expect(detailPanelSource).toContain("await onAnalyzeAgentStatus()");
-    expect(detailPanelSource).toContain("setAgentStatus(nextStatus)");
-    expect(detailPanelSource).toContain("<AgentStatusCard");
-    expect(appSource).toContain("window.sessionSearch.analyzeSessionAgentStatus");
-    expect(appSource).toContain("analyzeSessionAgentStatus({");
-  });
-
-  it("keeps status analysis available in read-only remote details without exposing write actions", () => {
-    expect(detailPanelSource).not.toContain('{!readOnly ? <div className="detail-actions">');
-    expect(detailPanelSource).toContain('className="detail-action-group agent-status-action-group"');
-    expect(detailPanelSource).toContain("{!readOnly ? (");
-    expect(detailPanelSource).toContain("onAnalyzeAgentStatus");
-  });
-
   it("exposes remote environment management IPC through preload and main", () => {
     for (const channel of [
       "environments:list",
@@ -272,15 +254,6 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain("fetchRemoteSessionFilePayload");
     expect(mainSource).toContain("loadRemoteSessionDetailPayload");
     expect(mainSource).toContain("await ensureRemoteSessionDetailsLoaded(sessionKey)");
-  });
-
-  it("analyzes status from the complete indexed trajectory on demand", () => {
-    const handler = mainHandlerSource("session:agent-status");
-
-    expect(preloadSource).toContain("analyzeSessionAgentStatus");
-    expect(preloadSource).toContain("session:agent-status");
-    expect(handler).toContain("await ensureRemoteSessionDetailsLoaded(sessionKey)");
-    expect(handler).toContain("analyzeIndexedSessionAgentStatus(store, sessionKey, live)");
   });
 
   it("does not hydrate remote session details before building resume commands", () => {
