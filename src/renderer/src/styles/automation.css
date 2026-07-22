@@ -848,38 +848,37 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .2rem;
-  padding: .2rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel-subtle) 82%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  gap: .4rem;
 }
 
 .automation-workflow-detail .workflow-command-cluster > button {
+  width: auto;
   flex: 0 0 auto;
+  margin-top: 0;
   padding: .48rem .72rem;
-  border-color: transparent;
+  border-color: var(--border-subtle);
   border-radius: .45rem;
-  background: transparent;
+  background: var(--panel-bg);
   font-size: clamp(.68rem, .64rem + .12vw, .76rem);
   line-height: 1;
   white-space: nowrap;
 }
 
 .automation-workflow-detail .workflow-command-cluster > button:hover:not(:disabled) {
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
   background: var(--panel-hover);
 }
 
 .automation-workflow-detail .workflow-command-cluster .workflow-review-trigger.is-approved {
-  background: transparent;
+  border-color: var(--border-subtle);
+  background: var(--panel-bg);
   color: var(--success-text);
 }
 
 .automation-workflow-detail .workflow-command-cluster .workflow-review-trigger.is-changes_requested,
 .automation-workflow-detail .workflow-command-cluster .workflow-review-trigger.is-failed {
-  background: transparent;
+  border-color: var(--border-subtle);
+  background: var(--panel-bg);
   color: var(--danger);
 }
 

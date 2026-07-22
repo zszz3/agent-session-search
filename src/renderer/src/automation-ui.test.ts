@@ -98,6 +98,9 @@ describe("native automation UI", () => {
     const bottomActionsRule = automationStyleSource.match(
       /\.automation-workflow-detail \.workflow-bottom-actions\s*\{([^}]*)\}/,
     )?.[1];
+    const commandButtonRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-command-cluster > button\s*\{([^}]*)\}/,
+    )?.[1];
     const runsFabRule = automationStyleSource.match(
       /\.workflow-runs-fab\s*\{([^}]*)\}/,
     )?.[1];
@@ -116,11 +119,13 @@ describe("native automation UI", () => {
     expect(bottomBarRule).toContain("justify-content: flex-end");
     expect(bottomActionsRule).toContain("justify-content: flex-end");
     expect(bottomActionsRule).toContain("flex-wrap: wrap");
+    expect(commandButtonRule).toContain("width: auto");
+    expect(commandButtonRule).toContain("margin-top: 0");
     expect(runsFabRule).toContain("position:absolute");
     expect(runsFabRule).toContain("right:clamp(");
     expect(runDrawerRule).toContain("width:clamp(");
     expect(runDrawerRule).toContain("height:100dvh");
-    expect(approvedReviewRule).toContain("background: transparent");
+    expect(approvedReviewRule).toContain("background: var(--panel-bg)");
   });
 
   it("lets the Runtime editor fill the page after removing the global config toolbar", () => {
