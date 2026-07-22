@@ -4,6 +4,7 @@ import {
   AppWindow,
   Archive,
   ArrowRightLeft,
+  Bookmark,
   CalendarDays,
   ChevronDown,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
   GitBranch,
   KeyRound,
   Laptop,
+  Layers,
   PackageSearch,
   Pin,
   Database,
@@ -29,6 +31,7 @@ import {
   Search,
   Server,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Tag,
@@ -109,6 +112,14 @@ import { SessionMigrationDialog, SessionMigrationLaunchFailedDialog } from "./co
 import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./components/session-dialogs";
 import { SkillsDialog } from "./features/skills/skills-dialog";
 import { DigitalAssetsDialog } from "./features/digital-assets/digital-assets-dialog";
+import { QueryBuilder } from "./features/search/query-builder";
+import { SavedSearchesPanel } from "./features/search/saved-searches-panel";
+import { GroupedResults } from "./features/search/grouped-results";
+import { RelatedSessions } from "./features/session-detail/related-sessions";
+import { DEFAULT_QUERY_BUILDER_STATE, countActiveFilters, toSearchOptionsPatch, type QueryBuilderState } from "./features/search/query-builder-types";
+import type { GroupMode } from "./features/search/group-logic";
+import type { SavedSearch } from "../../core/store/saved-searches";
+import type { RelatedSession } from "../../core/related-sessions";
 import type { RulesSyncSnapshot } from "../../core/rules-sync";
 import type { MemoriesSyncSnapshot } from "../../core/memories-sync";
 import { AiAssistantDialog } from "./components/ai-assistant-dialog";
@@ -349,6 +360,11 @@ export function App(): ReactElement {
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const [queryBuilderOpen, setQueryBuilderOpen] = useState(false);
+  const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [groupMode, setGroupMode] = useState<GroupMode>("flat");
+  const [relatedSessions, setRelatedSessions] = useState<RelatedSession[]>([]);
   const [rulesSnapshot, setRulesSnapshot] = useState<RulesSyncSnapshot | null>(null);
   const [memoriesSnapshot, setMemoriesSnapshot] = useState<MemoriesSyncSnapshot | null>(null);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
@@ -785,6 +801,60 @@ export function App(): ReactElement {
   useEffect(() => {
     if (assetsOpen) loadDigitalAssets();
   }, [assetsOpen, loadDigitalAssets]);
+
+  const loadSavedSearches = useCallback(() => {
+    void window.sessionSearch.listSavedSearches().then(setSavedSearches).catch(() => setSavedSearches([]));
+  }, []);
+
+  useEffect(() => {
+    if (savedSearchesOpen) loadSavedSearches();
+  }, [savedSearchesOpen, loadSavedSearches]);
+
+  useEffect(() => {
+    if (!detail) {
+      setRelatedSessions([]);
+      return;
+    }
+    let cancelled = false;
+    void window.sessionSearch
+      .getRelatedSessions(detail.sessionKey)
+      .then((related) => {
+        if (!cancelled) setRelatedSessions(related);
+      })
+      .catch(() => {
+        if (!cancelled) setRelatedSessions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.sessionKey]);
+
+  const applyQueryBuilder = useCallback((state: QueryBuilderState) => {
+    setSource(state.source ?? "all");
+    setTag(state.tag);
+    setVisibility(state.visibility);
+    setDateRange(state.dateRange);
+    setQueryBuilderOpen(false);
+  }, []);
+
+  const applySavedSearch = useCallback((saved: SavedSearch) => {
+    const options = saved.options;
+    if (options.query !== undefined) setQuery(options.query);
+    setSource(options.source ?? "all");
+    setTag(options.tag);
+    setVisibility(options.visibility ?? "default");
+    void window.sessionSearch.touchSavedSearch(saved.id).then(loadSavedSearches).catch(() => undefined);
+    setSavedSearchesOpen(false);
+  }, [loadSavedSearches]);
+
+  const deleteSavedSearchById = useCallback((id: number) => {
+    void window.sessionSearch.deleteSavedSearch(id).then(loadSavedSearches).catch(() => undefined);
+  }, [loadSavedSearches]);
+
+  const saveCurrentSearch = useCallback((name: string, state: QueryBuilderState) => {
+    const options: SearchOptions = { query, ...toSearchOptionsPatch(state) };
+    void window.sessionSearch.createSavedSearch(name, options).then(loadSavedSearches).catch(() => undefined);
+  }, [query, loadSavedSearches]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -1693,6 +1763,11 @@ export function App(): ReactElement {
   );
   const handleRowRename = useCallback((session: SessionSearchResult) => rowHandlersRef.current.beginRename(session), []);
   const handleRowFavorite = useCallback((session: SessionSearchResult) => void rowHandlersRef.current.toggleFavorite(session), []);
+  const openRelatedSession = useCallback((sessionKey: string) => {
+    void window.sessionSearch.getSession(sessionKey).then((session) => {
+      if (session) void rowHandlersRef.current.openDetail(session);
+    });
+  }, []);
   const handleRowContextMenu = useCallback((event: ReactMouseEvent, session: SessionSearchResult) => {
     event.preventDefault();
     setSelectedKey(session.sessionKey);
@@ -1948,6 +2023,43 @@ export function App(): ReactElement {
             deleteRecentLabel={t("Delete recent search", "删除最近搜索")}
             onSearch={setQuery}
           />
+          <div className="toolbar-discovery" role="group" aria-label={t("Search tools", "搜索工具")}>
+            <button
+              className={`icon-button toolbar-icon-button ${queryBuilderOpen ? "active" : ""}`}
+              onClick={() => {
+                setSavedSearchesOpen(false);
+                setQueryBuilderOpen((value) => !value);
+              }}
+              title={t("Advanced search", "高级搜索")}
+              aria-label={t("Advanced search", "高级搜索")}
+            >
+              <SlidersHorizontal size={15} />
+              {countActiveFilters({ source: source === "all" ? undefined : source, tag, visibility, dateRange }) > 0 ? (
+                <span className="toolbar-badge">
+                  {countActiveFilters({ source: source === "all" ? undefined : source, tag, visibility, dateRange })}
+                </span>
+              ) : null}
+            </button>
+            <button
+              className={`icon-button toolbar-icon-button ${savedSearchesOpen ? "active" : ""}`}
+              onClick={() => {
+                setQueryBuilderOpen(false);
+                setSavedSearchesOpen((value) => !value);
+              }}
+              title={t("Saved searches", "保存的搜索")}
+              aria-label={t("Saved searches", "保存的搜索")}
+            >
+              <Bookmark size={15} />
+            </button>
+            <button
+              className={`icon-button toolbar-icon-button ${groupMode !== "flat" ? "active" : ""}`}
+              onClick={() => setGroupMode((current) => (current === "flat" ? "project" : current === "project" ? "source" : current === "source" ? "time" : "flat"))}
+              title={t("Group results", "分组展示")}
+              aria-label={t("Group results", "分组展示")}
+            >
+              <Layers size={15} />
+            </button>
+          </div>
           <div className="toolbar-filters">
             <div className="live-filter" role="group" aria-label="Live session status">
               {LIVE_STATUS_FILTERS.map((option) => (
@@ -2085,6 +2197,28 @@ export function App(): ReactElement {
           </div>
         </header>
 
+        {queryBuilderOpen ? (
+          <QueryBuilder
+            initial={{ source: source === "all" ? undefined : source, tag, visibility, dateRange }}
+            sourceOptions={visibleSourceFilters}
+            tagOptions={tags}
+            language={language}
+            onApply={applyQueryBuilder}
+            onClose={() => setQueryBuilderOpen(false)}
+            onSaveSearch={saveCurrentSearch}
+          />
+        ) : null}
+
+        {savedSearchesOpen ? (
+          <SavedSearchesPanel
+            savedSearches={savedSearches}
+            language={language}
+            onApply={applySavedSearch}
+            onDelete={deleteSavedSearchById}
+            onClose={() => setSavedSearchesOpen(false)}
+          />
+        ) : null}
+
         <div className="result-count">
           <span>
             {t(`${sessionTotalCount} sessions`, `${sessionTotalCount} 个会话`)}
@@ -2093,21 +2227,19 @@ export function App(): ReactElement {
         </div>
 
         <div className="results">
-          {displayedResults.map((session) => (
-            <SessionRow
-              key={session.sessionKey}
-              session={session}
-              selected={selected?.sessionKey === session.sessionKey}
-              liveState={getLiveSessionState(session, liveSessionKeys, liveDetectionFailed)}
-              language={language}
-              onOpenMatch={handleRowOpenMatch}
-              onSelect={handleRowSelect}
-              onOpen={handleRowOpen}
-              onRename={handleRowRename}
-              onFavorite={handleRowFavorite}
-              onContextMenu={handleRowContextMenu}
-            />
-          ))}
+          <GroupedResults
+            sessions={displayedResults}
+            groupMode={groupMode}
+            selectedKey={selected?.sessionKey ?? null}
+            liveStateFor={(session) => getLiveSessionState(session, liveSessionKeys, liveDetectionFailed)}
+            language={language}
+            onOpenMatch={handleRowOpenMatch}
+            onSelect={handleRowSelect}
+            onOpen={handleRowOpen}
+            onRename={handleRowRename}
+            onFavorite={handleRowFavorite}
+            onContextMenu={handleRowContextMenu}
+          />
           {displayedResults.length === 0 && !hasMoreSessions ? <div className="empty">{t("No sessions found.", "没有找到会话。")}</div> : null}
           {hasMoreSessions ? (
             <button className="load-more-sessions" onClick={() => setSessionLimit((current) => current + SESSION_PAGE_SIZE)}>
@@ -2135,6 +2267,8 @@ export function App(): ReactElement {
           revealLabel={FILE_MANAGER_LABEL}
           showItermAction={IS_MAC && detail.source !== "codex-app"}
           onClose={closeDetail}
+          relatedSessions={relatedSessions}
+          onOpenRelatedSession={openRelatedSession}
           onShowMore={() => void loadMoreMessages()}
           onRename={() => beginRename(detail)}
           onAddTag={() => beginAddTag(detail)}

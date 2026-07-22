@@ -12,6 +12,8 @@ import {
   type ApiProviderKeyTarget,
   type SessionSyncBinding,
 } from "./store/metadata";
+import { SavedSearchStore, type SavedSearch } from "./store/saved-searches";
+import { SearchHistoryStore, type SearchHistoryEntry } from "./store/search-history-store";
 import { migrateSessionStore } from "./store/schema";
 import {
   SessionsStore,
@@ -21,6 +23,7 @@ import {
   SkillStore,
   type SkillSyncBinding,
 } from "./store/skills";
+import { findRelatedSessions, type RelatedSession } from "./related-sessions";
 import type {
   EnvironmentSyncState,
   EnvironmentUpsertInput,
@@ -48,6 +51,9 @@ export type {
   SessionSyncBinding,
   SessionSyncDirection,
 } from "./store/metadata";
+export type { SavedSearch } from "./store/saved-searches";
+export type { SearchHistoryEntry } from "./store/search-history-store";
+export type { RelatedSession } from "./related-sessions";
 export type { TraceEventQueryOptions } from "./store/sessions";
 export type { SkillSyncBinding, SkillSyncDirection } from "./store/skills";
 
@@ -60,6 +66,8 @@ export class SessionStore {
   private readonly metadata: MetadataStore;
   private readonly sessions: SessionsStore;
   private readonly skills: SkillStore;
+  private readonly savedSearches: SavedSearchStore;
+  private readonly historyStore: SearchHistoryStore;
 
   constructor(dbPathOrInstance: string | SessionStoreDatabase) {
     this.db = typeof dbPathOrInstance === "string" ? new DatabaseSync(dbPathOrInstance) : dbPathOrInstance;
@@ -68,6 +76,8 @@ export class SessionStore {
     this.metadata = new MetadataStore(this.db);
     this.sessions = new SessionsStore(this.db, this.environments);
     this.skills = new SkillStore(this.db);
+    this.savedSearches = new SavedSearchStore(this.db);
+    this.historyStore = new SearchHistoryStore(this.db);
   }
 
   close(): void {
@@ -324,6 +334,42 @@ export class SessionStore {
 
   deleteEnvironmentSessions(environmentId: string): void {
     this.environments.deleteEnvironmentSessions(environmentId);
+  }
+
+  listSavedSearches(): SavedSearch[] {
+    return this.savedSearches.listSavedSearches();
+  }
+
+  createSavedSearch(name: string, options: SearchOptions): SavedSearch {
+    return this.savedSearches.createSavedSearch(name, options);
+  }
+
+  deleteSavedSearch(id: number): boolean {
+    return this.savedSearches.deleteSavedSearch(id);
+  }
+
+  touchSavedSearch(id: number): void {
+    this.savedSearches.touchSavedSearch(id);
+  }
+
+  recordSearch(query: string, resultCount: number, options?: SearchOptions): void {
+    this.historyStore.recordSearch(query, resultCount, options);
+  }
+
+  listRecentSearches(limit = 20): SearchHistoryEntry[] {
+    return this.historyStore.listRecentSearches(limit);
+  }
+
+  searchHistory(query: string, limit = 20): SearchHistoryEntry[] {
+    return this.historyStore.searchHistory(query, limit);
+  }
+
+  clearSearchHistory(): void {
+    this.historyStore.clearHistory();
+  }
+
+  getRelatedSessions(sessionKey: string, limit = 8): RelatedSession[] {
+    return findRelatedSessions(this.db, sessionKey, limit);
   }
 }
 

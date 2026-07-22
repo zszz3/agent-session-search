@@ -22,6 +22,8 @@ import {
   sourceUiFamily,
 } from "../../session-ui";
 import { readInitialToolEventsVisibility, storeToolEventsVisibility } from "../../tool-events-visibility";
+import type { RelatedSession } from "../../../../core/related-sessions";
+import { RelatedSessions } from "./related-sessions";
 
 export type ConversationTimelineItem =
   | { kind: "message"; key: string; timestampMs: number | null; order: number; message: SessionMessage }
@@ -142,6 +144,8 @@ export function DetailPanel({
   onReveal,
   readOnly = false,
   backdropClassName = "",
+  relatedSessions = [],
+  onOpenRelatedSession,
 }: {
   session: SessionSearchResult;
   messages: SessionMessage[];
@@ -181,6 +185,8 @@ export function DetailPanel({
   onReveal: () => void;
   readOnly?: boolean;
   backdropClassName?: string;
+  relatedSessions?: RelatedSession[];
+  onOpenRelatedSession?: (sessionKey: string) => void;
 }): ReactElement {
   const context = matchedContextMessages;
   const actionRunning = actionStatus?.kind === "running";
@@ -611,6 +617,9 @@ export function DetailPanel({
               )
             ))}
           </section>
+          {onOpenRelatedSession ? (
+            <RelatedSessions related={relatedSessions} language={language} onOpen={onOpenRelatedSession} />
+          ) : null}
         </div>
       </aside>
     </div>

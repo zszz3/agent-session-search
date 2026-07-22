@@ -30,6 +30,7 @@ import { createAppUpdateApi } from "./app-update";
 import { createProvidersApi } from "./providers";
 import { createRemoteSessionsApi } from "./remote-sessions";
 import { createMemoriesApi } from "./memories";
+import { createDiscoveryApi } from "./discovery";
 import { createRulesApi } from "./rules";
 import { createSkillsApi } from "./skills";
 
@@ -89,6 +90,7 @@ const api = {
   ...createSkillsApi(ipcRenderer),
   ...createRulesApi(ipcRenderer),
   ...createMemoriesApi(ipcRenderer),
+  ...createDiscoveryApi(ipcRenderer),
   ...createRemoteSessionsApi(ipcRenderer),
   copyCombinedSyncSetupSql: (): Promise<void> => ipcRenderer.invoke("supabase:copy-combined-setup-sql"),
   openSupabaseSqlEditor: (target: "sessions" | "skills"): Promise<void> => ipcRenderer.invoke("supabase:open-sql-editor", target),

@@ -81,6 +81,7 @@ import { registerAppUpdateIpc } from "./ipc/app-update";
 import { registerProvidersIpc } from "./ipc/providers";
 import { registerRemoteSessionsIpc } from "./ipc/remote-sessions";
 import { registerMemoriesIpc, type MemoriesIpcService } from "./ipc/memories";
+import { registerDiscoveryIpc, type DiscoveryIpcService } from "./ipc/discovery";
 import { registerRulesIpc, type RulesIpcService } from "./ipc/rules";
 import { registerSkillsIpc } from "./ipc/skills";
 import {
@@ -382,6 +383,20 @@ function createMemoriesSyncService(): MemoriesIpcService {
     copySetupSql() {
       clipboard.writeText(buildMemoriesSyncSetupSql());
     },
+  };
+}
+
+function createDiscoveryService(): DiscoveryIpcService {
+  return {
+    listSavedSearches: () => store.listSavedSearches(),
+    createSavedSearch: (name, options) => store.createSavedSearch(name, options),
+    deleteSavedSearch: (id) => store.deleteSavedSearch(id),
+    touchSavedSearch: (id) => store.touchSavedSearch(id),
+    listRecentSearches: (limit) => store.listRecentSearches(limit),
+    searchHistory: (query, limit) => store.searchHistory(query, limit),
+    clearSearchHistory: () => store.clearSearchHistory(),
+    recordSearch: (query, resultCount, options) => store.recordSearch(query, resultCount, options),
+    getRelatedSessions: (sessionKey, limit) => store.getRelatedSessions(sessionKey, limit),
   };
 }
 
@@ -1449,6 +1464,7 @@ function registerIpc(): void {
   registerSkillsIpc(ipcMain, skillService);
   registerRulesIpc(ipcMain, createRulesSyncService());
   registerMemoriesIpc(ipcMain, createMemoriesSyncService());
+  registerDiscoveryIpc(ipcMain, createDiscoveryService());
   ipcMain.handle("supabase:copy-combined-setup-sql", () => {
     clipboard.writeText(buildCombinedSupabaseSetupSql());
   });

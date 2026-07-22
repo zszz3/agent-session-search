@@ -181,6 +181,26 @@ export function migrateSessionStore(db: SessionStoreDatabase): void {
       applied_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      options_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      use_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS search_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      result_count INTEGER NOT NULL DEFAULT 0,
+      searched_at INTEGER NOT NULL,
+      options_json TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_search_history_searched_at
+      ON search_history(searched_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
       session_key UNINDEXED,
       title,
