@@ -185,7 +185,6 @@
 }
 
 .automation-runtime-content .runtime-layout,
-.automation-runtime-content .runtime-config-toolbar,
 .automation-runtime-content .config-form,
 .automation-runtime-content .configured-agent-panel,
 .automation-runtime-content .configured-agent-browser,
@@ -195,12 +194,8 @@
 }
 
 .automation-runtime-content .runtime-layout {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
-}
-
-.automation-runtime-content .runtime-config-toolbar {
-  box-shadow: none;
 }
 
 .automation-runtime-content .runtime-selector {
@@ -228,6 +223,27 @@
 
 .automation-runtime-content .runtime-editor-actions {
   padding: 7px 9px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.automation-runtime-content .runtime-editor-config {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.automation-runtime-content .runtime-editor-config select {
+  width: clamp(140px, 24vw, 260px);
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 12px;
 }
 
 .automation-runtime-content .config-form {
@@ -265,13 +281,24 @@
 }
 
 .automation-workflow-detail .workflow-chat-header {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px 12px;
   padding: 10px 14px;
 }
 
+.automation-workflow-detail .workflow-chat-header .chat-title-block {
+  flex: 1 1 280px;
+}
+
 .automation-workflow-detail .workflow-page-actions {
-  flex-wrap: nowrap;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-self: center;
+  flex-wrap: wrap;
   gap: 6px;
+  margin-left: auto;
 }
 
 .automation-workflow-detail .workflow-page-actions > button {

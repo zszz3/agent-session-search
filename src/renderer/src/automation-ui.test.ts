@@ -5,6 +5,7 @@ import { selectWorkbenchWorkflows } from "./features/automation/workbench-workfl
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+const automationStyleSource = readFileSync(new URL("./styles/automation.css", import.meta.url), "utf8");
 
 function workflow(workflowId: string, updatedAt: number): WorkflowDraftState {
   return {
@@ -68,5 +69,29 @@ describe("native automation UI", () => {
       ["running", "running"],
       ["recent", "draft"],
     ]);
+  });
+
+  it("keeps workflow header actions inside the detail pane when space is constrained", () => {
+    const headerRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-chat-header\s*\{([^}]*)\}/,
+    )?.[1];
+    const actionsRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-page-actions\s*\{([^}]*)\}/,
+    )?.[1];
+
+    expect(headerRule).toContain("display: flex");
+    expect(headerRule).toContain("flex-wrap: wrap");
+    expect(actionsRule).toContain("max-width: 100%");
+    expect(actionsRule).toContain("align-self: center");
+    expect(actionsRule).toContain("flex-wrap: wrap");
+  });
+
+  it("lets the Runtime editor fill the page after removing the global config toolbar", () => {
+    const runtimeLayoutRule = automationStyleSource.match(
+      /\.automation-runtime-content \.runtime-layout\s*\{([^}]*)\}/,
+    )?.[1];
+
+    expect(runtimeLayoutRule).toContain("grid-template-rows: minmax(0, 1fr)");
+    expect(runtimeLayoutRule).not.toContain("auto minmax(0, 1fr)");
   });
 });

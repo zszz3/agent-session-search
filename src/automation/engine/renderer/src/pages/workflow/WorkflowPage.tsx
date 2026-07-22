@@ -369,7 +369,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 </button>
               ) : null}
               {!workflowConfirmed && onConfirmWorkflow ? (
-          <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
+                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
                   <span>{workflowText.confirmWorkflow}</span>
                 </button>
               ) : null}

@@ -22,7 +22,7 @@ const channels: AgentChannel[] = [
 ];
 
 describe("RuntimePage", () => {
-  it("renders all execution configs in one compact selector", () => {
+  it("shows concise configs for only the selected Runtime in the editor header", () => {
     const markup = renderToStaticMarkup(createElement(RuntimePage, {
       embedded: true,
       language: "zh",
@@ -50,11 +50,12 @@ describe("RuntimePage", () => {
     }));
 
     const configSelect = markup.match(/<select aria-label="选择配置".*?<\/select>/)?.[0] ?? "";
-    expect(markup).toContain('class="runtime-config-toolbar"');
-    expect(markup).toContain('aria-label="选择配置"');
-    expect(configSelect.match(/<option/g)).toHaveLength(channels.length);
-    expect(configSelect).toContain("Codex · Codex OpenAI · OpenAI");
-    expect(configSelect).toContain("Claude Code · Claude Code · claude-code");
+    expect(markup).not.toContain('class="runtime-config-toolbar"');
+    expect(markup).toContain('class="runtime-editor-config"');
+    expect(configSelect.match(/<option/g)).toHaveLength(1);
+    expect(configSelect).toContain(">Codex OpenAI</option>");
+    expect(configSelect).not.toContain("Claude Code");
+    expect(configSelect).not.toContain("Codex · Codex OpenAI · OpenAI");
     expect(markup).not.toContain("runtime-channel-row");
   });
 });

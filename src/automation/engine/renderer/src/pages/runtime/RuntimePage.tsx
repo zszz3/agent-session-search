@@ -180,7 +180,6 @@ export function RuntimePage({
     language === "zh"
       ? "管理 Codex / Claude / API / Hermes / OpenCode / OpenClaw 执行器、Provider、API Key、插件和模型。"
       : "Manage Codex / Claude / API / Hermes / OpenCode / OpenClaw executors, providers, API keys, plugins, and models.";
-  const channelTitle = language === "zh" ? "配置" : "Config";
   const selectConfigText = language === "zh" ? "选择配置" : "Select config";
   const addConfigText = language === "zh" ? "新增配置" : "Add config";
   const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";
@@ -333,40 +332,6 @@ export function RuntimePage({
       </header> : null}
 
       <div className="runtime-layout">
-        <div className="runtime-config-toolbar">
-          <label className="runtime-config-picker">
-            <span>{channelTitle}</span>
-            <select
-              aria-label={selectConfigText}
-              value={selectedRuntimeChannelId}
-              disabled={visibleRuntimeChannels.length === 0}
-              onChange={(event) => void onSelectChannel(event.target.value)}
-            >
-              {visibleRuntimeChannels.map((channel) => {
-                const label = channel.label || channel.id;
-                const provider = channel.providerName ?? channel.modelProvider ?? channel.id;
-                return <option key={channel.id} value={channel.id}>{`${agentLabel(channel.agentId)} · ${label} · ${provider}`}</option>;
-              })}
-            </select>
-          </label>
-          <div className="runtime-config-toolbar-actions">
-            <button className="control-btn compact secondary" type="button" onClick={onAddConfig}>
-              <Plus size={13} />
-              <span>{addConfigText}</span>
-            </button>
-            <button
-              className="icon-btn"
-              type="button"
-              aria-label={deleteConfigText}
-              title={deleteConfigText}
-              disabled={!selectedRuntimeChannelId || visibleRuntimeChannels.length <= 1}
-              onClick={() => onDeleteConfig(selectedRuntimeChannelId)}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        </div>
-
         <section className="config-form runtime-editor">
           <section className="agent-provider-presets runtime-selector">
             <div className="agent-provider-presets-head">
@@ -391,9 +356,30 @@ export function RuntimePage({
           {selectedRuntimeChannelRecord ? (
             <>
               <div className="runtime-editor-actions">
-                <div>
+                <div className="runtime-editor-config">
                   <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
-                  <strong>{selectedRuntimeChannelRecord.label || selectedRuntimeChannelRecord.id}</strong>
+                  <select
+                    aria-label={selectConfigText}
+                    value={selectedRuntimeChannelId}
+                    onChange={(event) => void onSelectChannel(event.target.value)}
+                  >
+                    {selectedRuntimeChannels.map((channel) => (
+                      <option key={channel.id} value={channel.id}>{channel.label || channel.id}</option>
+                    ))}
+                  </select>
+                  <button className="icon-btn" type="button" aria-label={addConfigText} title={addConfigText} onClick={onAddConfig}>
+                    <Plus size={13} />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label={deleteConfigText}
+                    title={deleteConfigText}
+                    disabled={!selectedRuntimeChannelId || visibleRuntimeChannels.length <= 1}
+                    onClick={() => onDeleteConfig(selectedRuntimeChannelId)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
                 <div className="config-plugin-actions">
                   {localConfigImportSupported && onImportLocalConfig ? (
