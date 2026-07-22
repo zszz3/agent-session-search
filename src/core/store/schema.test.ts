@@ -138,4 +138,31 @@ describe("session store schema", () => {
       db.close();
     }
   });
+
+  it("invalidates Cursor sessions once so composer titles are backfilled", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      migrateSessionStore(db);
+      db.prepare("DELETE FROM data_migrations WHERE id = 'cursor-composer-metadata-v1'").run();
+      const insert = db.prepare(`
+        INSERT INTO sessions (
+          session_key, raw_id, source, project_path, file_path,
+          original_title, first_question, timestamp, file_mtime_ms, file_size
+        ) VALUES (?, ?, ?, '/repo', ?, 'Title', 'Question', 1, ?, 10)
+      `);
+      insert.run("cursor:legacy", "legacy", "cursor-agent", "/tmp/cursor.jsonl", 123);
+      insert.run("claude:unchanged", "unchanged", "claude-cli", "/tmp/claude.jsonl", 456);
+
+      migrateSessionStore(db);
+
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'cursor:legacy'").get()).toEqual({ file_mtime_ms: 0 });
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'claude:unchanged'").get()).toEqual({ file_mtime_ms: 456 });
+
+      db.prepare("UPDATE sessions SET file_mtime_ms = 789 WHERE session_key = 'cursor:legacy'").run();
+      migrateSessionStore(db);
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'cursor:legacy'").get()).toEqual({ file_mtime_ms: 789 });
+    } finally {
+      db.close();
+    }
+  });
 });

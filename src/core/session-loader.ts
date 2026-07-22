@@ -49,6 +49,7 @@ export interface SessionLoadOptions {
   includeCursorAgent?: boolean;
   includeTrae?: boolean;
   includeQoder?: boolean;
+  cursorStateDbPath?: string;
   cursorWorkspacePathMap?: ReadonlyMap<string, string>;
   shouldSkipFile?: (filePath: string, stat: VirtualSessionFileStat, dependencyMtimeMs?: number) => boolean;
   onSkippedFile?: (filePath: string, stat: VirtualSessionFileStat) => void;
@@ -1993,8 +1994,25 @@ function traceEventsFromCursorRows(rows: unknown[]): SessionTraceEvent[] {
   return dedupeTraceEvents(events);
 }
 
-function cursorWorkspaceStateDbPath(): string {
-  return path.join(os.homedir(), "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+function cursorWorkspaceStateDbPath(cursorDir: string, override?: string): string {
+  if (override) return override;
+  const homeDir = path.basename(cursorDir) === ".cursor" ? path.dirname(cursorDir) : cursorDir;
+  if (process.platform === "win32") {
+    return path.join(homeDir, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  if (process.platform === "darwin") {
+    return path.join(homeDir, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  return path.join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+}
+
+function cursorDatabaseStat(stateDbPath: string): VirtualSessionFileStat {
+  const databaseStat = safeStat(stateDbPath);
+  const walStat = safeStat(`${stateDbPath}-wal`);
+  return {
+    mtimeMs: Math.max(databaseStat.mtimeMs, walStat.mtimeMs),
+    size: databaseStat.size + walStat.size,
+  };
 }
 
 function folderPathFromWorkspaceMetadataEntry(entry: Record<string, unknown>): string {
@@ -2011,11 +2029,13 @@ function folderPathFromWorkspaceMetadataEntry(entry: Record<string, unknown>): s
   return "";
 }
 
-export function loadCursorWorkspacePathMap(cursorDir = path.join(os.homedir(), ".cursor")): Map<string, string> {
+export function loadCursorWorkspacePathMap(
+  cursorDir = path.join(os.homedir(), ".cursor"),
+  stateDbPath = cursorWorkspaceStateDbPath(cursorDir),
+): Map<string, string> {
   const map = new Map<string, string>();
 
   try {
-    const stateDbPath = cursorWorkspaceStateDbPath();
     if (fs.existsSync(stateDbPath)) {
       const db = new DatabaseSync(stateDbPath, { readOnly: true });
       try {
@@ -2109,6 +2129,103 @@ function cursorTimestampMsFromRows(rows: unknown[]): number {
   return 0;
 }
 
+interface CursorComposerMetadata {
+  composerId: string;
+  title: string;
+  projectPath: string;
+  createdAt: number;
+  isDraft: boolean;
+  isSubagent: boolean;
+  parentSessionId: string | null;
+  messages: SessionMessage[];
+}
+
+function loadCursorComposerMetadata(stateDbPath: string): Map<string, CursorComposerMetadata> {
+  const metadata = new Map<string, CursorComposerMetadata>();
+  const db = readOnlyDatabase(stateDbPath);
+  if (!db) return metadata;
+
+  try {
+    if (!sqliteHasColumns(db, "composerHeaders", ["composerId", "createdAt", "isSubagent", "value"])) return metadata;
+
+    const messageDrafts = new Map<
+      string,
+      Array<{ key: string; role: "user" | "assistant"; content: string; timestamp: string }>
+    >();
+    if (sqliteHasColumns(db, "cursorDiskKV", ["key", "value"])) {
+      const bubbleRows = db
+        .prepare("SELECT key, CAST(value AS TEXT) AS value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'")
+        .all() as Array<{ key?: string; value?: string }>;
+      for (const row of bubbleRows) {
+        const key = row.key || "";
+        const separator = key.indexOf(":", "bubbleId:".length);
+        if (separator < 0) continue;
+        const composerId = key.slice("bubbleId:".length, separator);
+        const bubble = parseJsonText(row.value);
+        if (!composerId || !isRecord(bubble)) continue;
+        const type = numberField(bubble, "type");
+        const role = type === 1 ? "user" : type === 2 ? "assistant" : null;
+        if (!role) continue;
+        const plainText = stringField(bubble, "text").trim();
+        const content = plainText || extractText(parseJsonText(stringField(bubble, "richText"))).trim();
+        if (!content || (role === "user" && !isMeaningfulUserMessage(content))) continue;
+        const drafts = messageDrafts.get(composerId) ?? [];
+        drafts.push({
+          key,
+          role,
+          content,
+          timestamp: timestampString(unknownField(bubble, "createdAt")),
+        });
+        messageDrafts.set(composerId, drafts);
+      }
+    }
+
+    const headerRows = db.prepare("SELECT composerId, createdAt, isSubagent, value FROM composerHeaders").all() as Array<
+      Record<string, unknown>
+    >;
+    for (const row of headerRows) {
+      const composerId = stringField(row, "composerId");
+      const header = parseJsonText(unknownField(row, "value"));
+      if (!composerId || !isRecord(header)) continue;
+
+      const workspaceIdentifier = objectField(header, "workspaceIdentifier");
+      const workspaceUri = objectField(workspaceIdentifier, "uri");
+      const agentLocation = objectField(header, "agentLocation");
+      const agentEnvironment = objectField(agentLocation, "environment");
+      const agentUri = objectField(agentEnvironment, "uri");
+      const draftTarget = objectField(header, "draftTarget");
+      const draftEnvironment = objectField(draftTarget, "environment");
+      const draftUri = objectField(draftEnvironment, "uri");
+      const subagentInfo = objectField(header, "subagentInfo");
+      const drafts = messageDrafts.get(composerId) ?? [];
+      drafts.sort((left, right) => {
+        const timestampDelta = timestampMs(left.timestamp) - timestampMs(right.timestamp);
+        return timestampDelta || left.key.localeCompare(right.key);
+      });
+
+      metadata.set(composerId, {
+        composerId,
+        title: cleanTitle(stringField(header, "name")),
+        projectPath:
+          firstStringField(workspaceUri, ["fsPath", "path"]) ||
+          firstStringField(agentUri, ["fsPath", "path"]) ||
+          firstStringField(draftUri, ["fsPath", "path"]),
+        createdAt: numberField(row, "createdAt") || numberField(header, "createdAt"),
+        isDraft: unknownField(header, "isDraft") === true,
+        isSubagent: numberField(row, "isSubagent") === 1 || Boolean(subagentInfo),
+        parentSessionId: stringField(subagentInfo, "parentComposerId") || null,
+        messages: drafts.map((draft, index) => messageFromParts(draft.role, draft.content, draft.timestamp, index)),
+      });
+    }
+  } catch {
+    return new Map();
+  } finally {
+    db.close();
+  }
+
+  return metadata;
+}
+
 export function loadCursorTranscriptFile(
   filePath: string,
   stat = safeStat(filePath),
@@ -2156,14 +2273,64 @@ export function loadCursorAgentSessions(cursorDir = path.join(os.homedir(), ".cu
 
 export function* loadCursorAgentSessionsIterator(cursorDir = path.join(os.homedir(), ".cursor"), options: SessionLoadOptions = {}): Generator<LoadedSession> {
   const projectsDir = path.join(cursorDir, "projects");
-  if (!fs.existsSync(projectsDir)) return;
-  const workspacePathMap = options.cursorWorkspacePathMap ?? loadCursorWorkspacePathMap(cursorDir);
-  for (const filePath of walkJsonlFiles(projectsDir)) {
-    if (!filePath.includes(`${path.sep}agent-transcripts${path.sep}`)) continue;
-    const stat = safeStat(filePath);
-    if (shouldSkipFile(options, filePath, stat)) continue;
-    const loaded = loadCursorTranscriptFile(filePath, stat, workspacePathMap);
-    if (loaded) yield loaded;
+  const stateDbPath = cursorWorkspaceStateDbPath(cursorDir, options.cursorStateDbPath);
+  const stateDbStat = cursorDatabaseStat(stateDbPath);
+  const composerMetadata = loadCursorComposerMetadata(stateDbPath);
+  const workspacePathMap = options.cursorWorkspacePathMap ?? loadCursorWorkspacePathMap(cursorDir, stateDbPath);
+  const transcriptSessionIds = new Set<string>();
+
+  if (fs.existsSync(projectsDir)) {
+    for (const filePath of walkJsonlFiles(projectsDir)) {
+      if (!filePath.includes(`${path.sep}agent-transcripts${path.sep}`)) continue;
+      const transcriptPath = parseCursorTranscriptPath(filePath);
+      const stat = safeStat(filePath);
+      if (shouldSkipFile(options, filePath, stat, stateDbStat.mtimeMs)) {
+        transcriptSessionIds.add(transcriptPath.sessionId);
+        continue;
+      }
+      const loaded = loadCursorTranscriptFile(filePath, stat, workspacePathMap);
+      if (!loaded) continue;
+      transcriptSessionIds.add(transcriptPath.sessionId);
+      const header = composerMetadata.get(transcriptPath.sessionId);
+      if (header) {
+        loaded.session = {
+          ...loaded.session,
+          projectPath: header.projectPath || loaded.session.projectPath,
+          originalTitle: header.title || loaded.session.originalTitle,
+          timestamp: header.createdAt || loaded.session.timestamp,
+          isSubagent: header.isSubagent || loaded.session.isSubagent,
+          parentSessionId: header.parentSessionId || loaded.session.parentSessionId,
+        };
+      }
+      yield loaded;
+    }
+  }
+
+  for (const header of composerMetadata.values()) {
+    if (transcriptSessionIds.has(header.composerId)) continue;
+    const question = cleanTitle(firstQuestion(header.messages));
+    if (header.isDraft && !header.title && !question) continue;
+    const workspaceSlug = encodeCursorWorkspaceSlug(header.projectPath);
+    const session = createIndexedSession({
+      keyPrefix: "cursor",
+      rawId: header.composerId,
+      source: "cursor-agent",
+      projectPath: header.projectPath,
+      filePath: stateDbPath,
+      originalTitle: header.title || question || header.composerId,
+      firstQuestion: question,
+      timestamp: header.createdAt,
+      stat: stateDbStat,
+      isSubagent: header.isSubagent,
+      parentSessionId: header.parentSessionId,
+    });
+    yield {
+      session: {
+        ...session,
+        sessionKey: `cursor:${workspaceSlug}:${header.composerId}`,
+      },
+      messages: header.messages,
+    };
   }
 }
 

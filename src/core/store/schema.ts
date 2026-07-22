@@ -260,6 +260,7 @@ export function migrateSessionStore(db: SessionStoreDatabase): void {
   }
   runCodexDesktopOriginatorMigration(db);
   runCodeBuddyTokenEventsMigration(db);
+  runCursorComposerMetadataMigration(db);
   addColumnIfMissing(db, "skill_sync_bindings", "remote_version", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing(db, "skill_sync_bindings", "portable_identity", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "skill_sync_bindings", "last_content_hash", "TEXT NOT NULL DEFAULT ''");
@@ -311,6 +312,22 @@ function runCodeBuddyTokenEventsMigration(db: SessionStoreDatabase): void {
     const applied = db.prepare("SELECT 1 FROM data_migrations WHERE id = ?").get(migrationId);
     if (!applied) {
       db.prepare("UPDATE sessions SET file_mtime_ms = 0 WHERE source = 'codebuddy-cli'").run();
+      db.prepare("INSERT INTO data_migrations (id, applied_at) VALUES (?, ?)").run(migrationId, Date.now());
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function runCursorComposerMetadataMigration(db: SessionStoreDatabase): void {
+  const migrationId = "cursor-composer-metadata-v1";
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const applied = db.prepare("SELECT 1 FROM data_migrations WHERE id = ?").get(migrationId);
+    if (!applied) {
+      db.prepare("UPDATE sessions SET file_mtime_ms = 0 WHERE source = 'cursor-agent' AND environment_id = 'local'").run();
       db.prepare("INSERT INTO data_migrations (id, applied_at) VALUES (?, ?)").run(migrationId, Date.now());
     }
     db.exec("COMMIT");

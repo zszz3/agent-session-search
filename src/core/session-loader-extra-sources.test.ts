@@ -26,6 +26,87 @@ function writeJsonl(filePath: string, rows: unknown[]): void {
   fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n"));
 }
 
+function writeCursorStateDb(
+  dbPath: string,
+  headers: Array<{
+    composerId: string;
+    name: string;
+    projectPath: string;
+    createdAt?: number;
+    isSubagent?: boolean;
+    parentComposerId?: string;
+  }>,
+  bubbles: Array<{
+    composerId: string;
+    bubbleId: string;
+    type: 1 | 2;
+    text?: string;
+    richText?: unknown;
+    createdAt: string;
+  }> = [],
+): void {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE composerHeaders (
+      composerId TEXT PRIMARY KEY,
+      workspaceId TEXT,
+      createdAt INTEGER,
+      lastUpdatedAt INTEGER,
+      isArchived INTEGER,
+      isSubagent INTEGER,
+      recency INTEGER,
+      checkpointAt INTEGER,
+      value TEXT
+    );
+    CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);
+  `);
+
+  const insertHeader = db.prepare(`
+    INSERT INTO composerHeaders (
+      composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, recency, checkpointAt, value
+    ) VALUES (?, ?, ?, ?, 0, ?, 0, 0, ?)
+  `);
+  for (const header of headers) {
+    const createdAt = header.createdAt ?? Date.parse("2026-07-22T10:00:00Z");
+    insertHeader.run(
+      header.composerId,
+      `workspace-${header.composerId}`,
+      createdAt,
+      createdAt,
+      header.isSubagent ? 1 : 0,
+      JSON.stringify({
+        composerId: header.composerId,
+        name: header.name,
+        createdAt,
+        isDraft: false,
+        workspaceIdentifier: {
+          id: `workspace-${header.composerId}`,
+          uri: { fsPath: header.projectPath },
+        },
+        ...(header.parentComposerId
+          ? { subagentInfo: { parentComposerId: header.parentComposerId } }
+          : {}),
+      }),
+    );
+  }
+
+  const insertBubble = db.prepare("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)");
+  for (const bubble of bubbles) {
+    insertBubble.run(
+      `bubbleId:${bubble.composerId}:${bubble.bubbleId}`,
+      JSON.stringify({
+        bubbleId: bubble.bubbleId,
+        type: bubble.type,
+        text: bubble.text ?? "",
+        ...(bubble.richText === undefined ? {} : { richText: JSON.stringify(bubble.richText) }),
+        createdAt: bubble.createdAt,
+      }),
+    );
+  }
+  db.close();
+}
+
 describe("extra session sources", () => {
   it("loads OpenClaw JSONL sessions and skips trajectory traces", () => {
     const root = tmpDir("openclaw");
@@ -565,6 +646,132 @@ describe("extra session sources", () => {
       source: "cursor",
       title: "Read · src/App.tsx",
     });
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("uses the Cursor composer title instead of the opening prompt", () => {
+    const root = tmpDir("cursor-title");
+    const stateDbPath = path.join(root, "cursor-state.vscdb");
+    const workspaceSlug = "Users-mac-work-cursor-app";
+    const composerId = "cursor-title-1";
+    const transcript = path.join(root, "projects", workspaceSlug, "agent-transcripts", composerId, `${composerId}.jsonl`);
+    writeJsonl(transcript, [
+      {
+        role: "user",
+        message: { content: [{ type: "text", text: "<user_query>Fix Cursor sidebar</user_query>" }] },
+      },
+    ]);
+    writeCursorStateDb(stateDbPath, [
+      {
+        composerId,
+        name: "修复 Cursor 会话标题",
+        projectPath: "/Users/mac/work/cursor-app",
+      },
+    ]);
+
+    const loaded = loadCursorAgentSessions(root, {
+      cursorStateDbPath: stateDbPath,
+      cursorWorkspacePathMap: new Map([[workspaceSlug, "/Users/mac/work/cursor-app"]]),
+    });
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session).toMatchObject({
+      originalTitle: "修复 Cursor 会话标题",
+      firstQuestion: "Fix Cursor sidebar",
+    });
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("loads Cursor composer sessions that do not have transcript files", () => {
+    const root = tmpDir("cursor-database-only");
+    const stateDbPath = path.join(root, "cursor-state.vscdb");
+    const composerId = "cursor-database-only-1";
+    writeCursorStateDb(
+      stateDbPath,
+      [
+        {
+          composerId,
+          name: "Repair Windows login flow",
+          projectPath: "C:\\Users\\me\\cursor-app",
+        },
+      ],
+      [
+        {
+          composerId,
+          bubbleId: "bubble-user",
+          type: 1,
+          richText: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: "Investigate login failures" }] }],
+          },
+          createdAt: "2026-07-22T10:01:00Z",
+        },
+        {
+          composerId,
+          bubbleId: "bubble-assistant",
+          type: 2,
+          text: "I will inspect the authentication flow.",
+          createdAt: "2026-07-22T10:02:00Z",
+        },
+      ],
+    );
+
+    const loaded = loadCursorAgentSessions(root, { cursorStateDbPath: stateDbPath });
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session).toMatchObject({
+      sessionKey: `cursor:C-Users-me-cursor-app:${composerId}`,
+      rawId: composerId,
+      projectPath: "C:\\Users\\me\\cursor-app",
+      originalTitle: "Repair Windows login flow",
+      firstQuestion: "Investigate login failures",
+    });
+    expect(loaded[0].messages.map((message) => `${message.role}:${message.content}`)).toEqual([
+      "user:Investigate login failures",
+      "assistant:I will inspect the authentication flow.",
+    ]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("treats Cursor composer metadata as a transcript refresh dependency", () => {
+    const root = tmpDir("cursor-title-refresh");
+    const stateDbPath = path.join(root, "cursor-state.vscdb");
+    const workspaceSlug = "Users-mac-work-cursor-app";
+    const composerId = "cursor-refresh-1";
+    const transcript = path.join(root, "projects", workspaceSlug, "agent-transcripts", composerId, `${composerId}.jsonl`);
+    writeJsonl(transcript, [
+      {
+        role: "user",
+        message: { content: [{ type: "text", text: "<user_query>Refresh my title</user_query>" }] },
+      },
+    ]);
+    writeCursorStateDb(stateDbPath, [
+      {
+        composerId,
+        name: "Current Cursor title",
+        projectPath: "/Users/mac/work/cursor-app",
+      },
+    ]);
+    const walPath = `${stateDbPath}-wal`;
+    fs.writeFileSync(walPath, "");
+    const walTimestamp = new Date(fs.statSync(stateDbPath).mtimeMs + 60_000);
+    fs.utimesSync(walPath, walTimestamp, walTimestamp);
+    const stateMtimeMs = fs.statSync(walPath).mtimeMs;
+    let observedDependencyMtimeMs = 0;
+
+    loadCursorAgentSessions(root, {
+      cursorStateDbPath: stateDbPath,
+      cursorWorkspacePathMap: new Map([[workspaceSlug, "/Users/mac/work/cursor-app"]]),
+      shouldSkipFile: (_filePath, _stat, dependencyMtimeMs) => {
+        observedDependencyMtimeMs = dependencyMtimeMs ?? 0;
+        return false;
+      },
+    });
+
+    expect(observedDependencyMtimeMs).toBe(stateMtimeMs);
 
     fs.rmSync(root, { recursive: true, force: true });
   });

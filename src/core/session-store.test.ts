@@ -1261,11 +1261,12 @@ describe("SessionStore", () => {
     const store = createInMemoryStore();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-delete-db-session-"));
     const sources = [
-      { sessionKey: "hermes:abc", source: "hermes", message: "Cannot delete shared Hermes source database." },
-      { sessionKey: "opencode:abc", source: "opencode-cli", message: "Cannot delete shared OpenCode source database." },
+      { sessionKey: "hermes:abc", source: "hermes", fileName: "hermes.db", message: "Cannot delete shared Hermes source database." },
+      { sessionKey: "opencode:abc", source: "opencode-cli", fileName: "opencode.db", message: "Cannot delete shared OpenCode source database." },
+      { sessionKey: "cursor:abc", source: "cursor-agent", fileName: "state.vscdb", message: "Cannot delete shared Cursor source database." },
     ] as const;
     for (const item of sources) {
-      const filePath = path.join(dir, `${item.source}.db`);
+      const filePath = path.join(dir, item.fileName);
       fs.writeFileSync(filePath, "sqlite placeholder", "utf8");
       store.upsertIndexedSession(sampleSession({ ...item, rawId: "abc", filePath }), messages);
       expect(() => store.deleteSession(item.sessionKey)).toThrow(item.message);

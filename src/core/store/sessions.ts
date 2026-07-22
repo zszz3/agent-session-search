@@ -497,6 +497,9 @@ export class SessionsStore {
       const indexDeleted = this.deleteSessionRecord(sessionKey);
       return sourceDeleted || indexDeleted;
     }
+    if (row.source === "cursor-agent" && /(^|[\\/])state\.vscdb$/i.test(row.file_path)) {
+      throw new Error("Cannot delete shared Cursor source database.");
+    }
 
     let deleted = false;
     this.transaction(() => {
