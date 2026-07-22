@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from "react";
-import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Pencil, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
+import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, History, Maximize2, Pencil, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
@@ -38,6 +38,7 @@ import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowRevisionDialog } from "./WorkflowRevisionDialog";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
 import { WorkflowReviewDrawer } from "./WorkflowReviewDrawer";
+import { WorkflowRunCenter } from "./WorkflowRunCenter";
 import { WORKFLOW_TEXT } from "./workflow-text";
 import type { WorkflowController } from "./workflow-controller";
 import { workflowNodeOpenTarget } from "./workflow-node-open-policy";
@@ -81,6 +82,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const nodeConversations = source.nodeConversations ?? [];
   const nodeTasks = source.nodeTasks ?? [];
   const workflowV2Plan = source.workflowV2Plan;
+  const runs = source.runs ?? [];
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
   const onStopRun = source.onStopRun;
@@ -116,10 +118,17 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const canEditDefinition = !runOwnsInput && !topologyLocked && !running;
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
   const [draftEditorOpen, setDraftEditorOpen] = useState(false);
+  const [runCenterOpen, setRunCenterOpen] = useState(false);
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (generationReview?.status === "reviewing") setReviewDrawerOpen(true);
   }, [generationReview?.status]);
+
+  useEffect(() => {
+    setRunCenterOpen(false);
+    setSelectedHistoryRunId(undefined);
+  }, [workflowId]);
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -345,6 +354,13 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
+          {workflowId ? (
+            <button className="control-btn workflow-runs-trigger" onClick={() => { setSelectedHistoryRunId(activeRunId ?? runs[0]?.runId); setRunCenterOpen(true); }} disabled={runs.length === 0} title={runs.length === 0 ? "No workflow runs yet" : "Open run history"}>
+              <History size={14} />
+              <span>Runs</span>
+              <em>{runs.length}</em>
+            </button>
+          ) : null}
           {running && !activeRunId ? (
             <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
               <CircleStop size={14} />
@@ -381,6 +397,15 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           ) : null}
         </div>
       </header>
+
+      <WorkflowRunCenter
+        runs={runs}
+        open={runCenterOpen}
+        {...(selectedHistoryRunId ? { selectedRunId: selectedHistoryRunId } : {})}
+        language={language}
+        onSelectRun={setSelectedHistoryRunId}
+        onClose={() => setRunCenterOpen(false)}
+      />
 
       {graphVisible && onReviewWorkflow ? <WorkflowReviewDrawer
         open={reviewDrawerOpen}

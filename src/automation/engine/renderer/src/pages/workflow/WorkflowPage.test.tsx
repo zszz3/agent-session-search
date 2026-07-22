@@ -137,4 +137,26 @@ describe("WorkflowPage input ownership", () => {
     expect(html).toContain("Edit workflow definition");
     expect(html).toContain("workflow-composer");
   });
+
+  test("offers the Run Center when the workflow has persisted runs", () => {
+    const value = controller(true);
+    value.runs = [{
+      runId: "run-1",
+      workflowId: "workflow",
+      status: "completed",
+      workflowV2Plan: {} as never,
+      progress: [],
+      events: [],
+      contextDocument: "",
+      startedAt: 1,
+      finishedAt: 2,
+      lastError: undefined,
+    }];
+
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("Open run history");
+    expect(html).toContain("<span>Runs</span>");
+    expect(html).toContain("<em>1</em>");
+  });
 });

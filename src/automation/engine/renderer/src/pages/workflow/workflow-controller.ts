@@ -11,6 +11,7 @@ import type {
   WorkflowV2Node,
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
+  WorkflowRunState,
   WorkflowStatus,
   WorkflowV2Plan,
 } from "../../../../shared/types";
@@ -80,6 +81,7 @@ export interface WorkflowController {
   nodeConversations?: WorkflowNodeConversation[];
   nodeTasks?: TaskRun[];
   workflowV2Plan?: WorkflowV2Plan;
+  runs?: WorkflowRunState[];
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
   onStopRun?: () => MaybePromise;

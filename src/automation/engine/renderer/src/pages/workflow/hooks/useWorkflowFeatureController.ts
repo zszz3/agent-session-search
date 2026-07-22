@@ -40,6 +40,12 @@ export function useWorkflowFeatureController({
   const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
   const latestRunId = activeWorkflow?.runIds.at(-1);
   const activeRun = selectWorkflowRunContext(snapshot.workflowStore.runs, draft.workflowId, latestRunId);
+  const workflowRuns = useMemo(
+    () => snapshot.workflowStore.runs
+      .filter((run) => run.workflowId === draft.workflowId)
+      .sort((left, right) => right.startedAt - left.startedAt),
+    [draft.workflowId, snapshot.workflowStore.runs],
+  );
   const activeRunId = activeRun?.runId;
   const nodeConversations = activeRunId
     ? snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId)
@@ -78,6 +84,7 @@ export function useWorkflowFeatureController({
       contextDocument: draft.workflowRunContextDocument,
       finalReport: draft.workflowFinalReport,
       ...(activeWorkflow?.workflowV2Plan ? { workflowV2Plan: activeWorkflow.workflowV2Plan } : {}),
+      runs: workflowRuns,
       nodeTasks: snapshot.tasks.filter((task) => draft.workflowRunProgress.some((item) => item.taskId === task.id)),
       nodeConversations,
       onObjectiveChange: draft.setWorkflowObjective,
@@ -229,6 +236,7 @@ export function useWorkflowFeatureController({
       snapshot.runtimes,
       snapshot.workDir,
       workflows,
+      workflowRuns,
     ],
   );
 }
