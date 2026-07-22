@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CheckCircle2, CircleAlert, CircleStop, Clock3, GitBranch, History, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, ChevronRight, CircleAlert, CircleStop, Clock3, GitBranch, History, X } from "lucide-react";
 import type { WorkflowRunState, WorkflowStatus } from "../../../../shared/types";
 
 interface WorkflowRunCenterProps {
@@ -7,7 +7,7 @@ interface WorkflowRunCenterProps {
   open: boolean;
   selectedRunId?: string;
   language?: "en" | "zh";
-  onSelectRun: (runId: string) => void;
+  onSelectRun: (runId: string | undefined) => void;
   onClose: () => void;
 }
 
@@ -69,12 +69,12 @@ function runIcon(status: WorkflowStatus) {
 }
 
 export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", onSelectRun, onClose }: WorkflowRunCenterProps) {
-  const [activeRunId, setActiveRunId] = useState(selectedRunId ?? runs[0]?.runId);
-  const selectedRun = runs.find((run) => run.runId === activeRunId) ?? runs[0];
+  const [activeRunId, setActiveRunId] = useState<string | undefined>(selectedRunId);
+  const selectedRun = activeRunId ? runs.find((run) => run.runId === activeRunId) : undefined;
 
   useEffect(() => {
     if (selectedRunId && runs.some((run) => run.runId === selectedRunId)) setActiveRunId(selectedRunId);
-    else if (selectedRunId === undefined && !runs.some((run) => run.runId === activeRunId)) setActiveRunId(runs[0]?.runId);
+    else if (activeRunId && !runs.some((run) => run.runId === activeRunId)) setActiveRunId(undefined);
   }, [activeRunId, runs, selectedRunId]);
 
   useEffect(() => {
@@ -90,12 +90,12 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
   if (!open) return null;
 
   const labels = language === "zh"
-    ? { title: "运行历史", close: "关闭运行历史", empty: "还没有运行记录", detail: "运行详情", timeline: "节点时间线", config: "冻结配置", graph: "图版本", started: "开始", duration: "耗时", approvedBy: "确认人", nodes: "节点", noEvents: "暂无事件记录", notStarted: "未开始" }
-    : { title: "Run history", close: "Close run history", empty: "No runs yet", detail: "Run details", timeline: "Node timeline", config: "Frozen configuration", graph: "Graph version", started: "Started", duration: "Duration", approvedBy: "Approved by", nodes: "Nodes", noEvents: "No events recorded", notStarted: "Not started" };
+    ? { title: "运行历史", close: "关闭运行历史", empty: "还没有运行记录", choose: "选择一条运行记录查看详情", back: "返回运行列表", detail: "运行详情", timeline: "节点时间线", config: "冻结配置", graph: "图版本", started: "开始", duration: "耗时", approvedBy: "确认人", nodes: "节点", noEvents: "暂无事件记录", notStarted: "未开始" }
+    : { title: "Run history", close: "Close run history", empty: "No runs yet", choose: "Select a run to view its details", back: "Back to run list", detail: "Run details", timeline: "Node timeline", config: "Frozen configuration", graph: "Graph version", started: "Started", duration: "Duration", approvedBy: "Approved by", nodes: "Nodes", noEvents: "No events recorded", notStarted: "Not started" };
 
   return (
     <div className="workflow-run-center-backdrop" role="presentation" onClick={onClose}>
-      <section className="workflow-run-center" role="dialog" aria-modal="true" aria-label={labels.title} onClick={(event) => event.stopPropagation()}>
+      <section className={`workflow-run-center ${selectedRun ? "is-detail" : ""}`} role="dialog" aria-modal="true" aria-label={labels.title} onClick={(event) => event.stopPropagation()}>
         <header className="workflow-run-center-header">
           <div className="workflow-run-center-title">
             <History size={17} />
@@ -104,7 +104,7 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
           <button type="button" className="icon-btn" onClick={onClose} aria-label={labels.close}><X size={15} /></button>
         </header>
         {runs.length === 0 ? <div className="workflow-run-center-empty"><History size={22} /><strong>{labels.empty}</strong></div> : (
-          <div className="workflow-run-center-body">
+          <div className={`workflow-run-center-body ${selectedRun ? "is-detail" : ""}`}>
             <nav className="workflow-run-center-list" aria-label={labels.title}>
               {runs.map((run) => {
                 const Icon = runIcon(run.status);
@@ -113,6 +113,7 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
                     <Icon size={14} />
                     <span><strong>{statusLabel(run.status, language)}</strong><small>{formatDate(run.startedAt, language)}</small></span>
                     <em>{formatDuration(run)}</em>
+                    <ChevronRight size={13} aria-hidden="true" />
                   </button>
                 );
               })}
@@ -120,7 +121,7 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
             {selectedRun ? (
               <main className="workflow-run-center-detail">
                 <header className="workflow-run-center-detail-head">
-                  <div><span className={`workflow-run-center-status is-${selectedRun.status}`}>{statusLabel(selectedRun.status, language)}</span><h3>{labels.detail}</h3><small>{selectedRun.runId}</small></div>
+                  <div><button type="button" className="workflow-run-center-back" onClick={() => { setActiveRunId(undefined); onSelectRun(undefined); }} aria-label={labels.back}><ArrowLeft size={14} /><span>{labels.back}</span></button><span className={`workflow-run-center-status is-${selectedRun.status}`}>{statusLabel(selectedRun.status, language)}</span><h3>{labels.detail}</h3><small>{selectedRun.runId}</small></div>
                   <div className="workflow-run-center-metrics"><span><b>{labels.started}</b>{formatDate(selectedRun.startedAt, language)}</span><span><b>{labels.duration}</b>{formatDuration(selectedRun)}</span><span><b>{labels.graph}</b>v{selectedRun.workflowV2Plan.graphVersion}</span></div>
                 </header>
                 {selectedRun.lastError ? <div className="workflow-run-center-error"><CircleAlert size={15} /><span>{selectedRun.lastError}</span></div> : null}
@@ -155,7 +156,7 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
                   </div>
                 </section>
               </main>
-            ) : null}
+            ) : <div className="workflow-run-center-choose"><History size={22} /><strong>{labels.choose}</strong></div>}
           </div>
         )}
       </section>

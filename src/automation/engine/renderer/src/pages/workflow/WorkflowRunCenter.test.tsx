@@ -64,4 +64,17 @@ describe("WorkflowRunCenter", () => {
     expect(html).toContain("node failed");
     expect(html).toContain("Provider disconnected");
   });
+
+  test("opens as a history list before a run is selected", () => {
+    const html = renderToStaticMarkup(<WorkflowRunCenter
+      runs={[run({ runId: "latest", status: "completed", startedAt: 2_000, finishedAt: 62_000 })]}
+      open
+      onSelectRun={() => undefined}
+      onClose={() => undefined}
+    />);
+
+    expect(html).toContain("workflow-run-center-backdrop");
+    expect(html).toContain("Select a run to view its details");
+    expect(html).not.toContain("Frozen configuration");
+  });
 });

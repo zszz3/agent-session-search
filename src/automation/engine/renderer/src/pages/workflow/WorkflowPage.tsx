@@ -151,6 +151,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const finalReportVisible = finalReport.trim().length > 0;
   const runProgressSignature = runProgress.map((item) => `${item.nodeId}:${item.status}`).join("|");
   const graphVisible = definitionReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
+  const showBottomActionBar = Boolean(workflowId && (graphVisible || running));
   const workflowDisplayTitle = title?.trim() || (definitionReady ? graph.objective || "Untitled workflow" : "New workflow");
   const composerValue = workflowStarted ? reply : objective;
   const composerPlaceholder = workflowStarted
@@ -353,49 +354,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
             </button>
           </div>
         </div>
-        <div className="chat-header-actions workflow-page-actions">
-          {workflowId ? (
-            <button className="control-btn workflow-runs-trigger" onClick={() => { setSelectedHistoryRunId(activeRunId ?? runs[0]?.runId); setRunCenterOpen(true); }} disabled={runs.length === 0} title={runs.length === 0 ? "No workflow runs yet" : "Open run history"}>
-              <History size={14} />
-              <span>Runs</span>
-              <em>{runs.length}</em>
-            </button>
-          ) : null}
-          {running && !activeRunId ? (
-            <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
-              <CircleStop size={14} />
-            </button>
-          ) : null}
-          {graphVisible ? (
-            running && activeRunId && onStopRun ? (
-              <button className="control-btn danger" onClick={() => { if (window.confirm("Stop this workflow run? Completed work and history will be preserved, but this run cannot resume.")) void onStopRun(); }}>
-                <CircleStop size={14} />
-                <span>Stop workflow</span>
-              </button>
-            ) : <>
-              {onReviewWorkflow ? (
-                <button
-                  className={`control-btn workflow-review-trigger is-${generationReview?.status ?? "not_reviewed"}`}
-                  onClick={() => setReviewDrawerOpen(true)}
-                  aria-haspopup="dialog"
-                  aria-expanded={reviewDrawerOpen}
-                >
-                  {generationReview?.status === "approved" ? <CheckCircle2 size={14} /> : generationReview?.status === "changes_requested" || generationReview?.status === "failed" ? <ShieldAlert size={14} /> : <RefreshCw size={14} className={generationReview?.status === "reviewing" ? "is-spinning" : ""} />}
-                  <span>{generationReview?.status === "reviewing" ? "Review running" : "Review Agent"}</span>
-                </button>
-              ) : null}
-              {!workflowConfirmed && onConfirmWorkflow ? (
-                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
-                  <span>{workflowText.confirmWorkflow}</span>
-                </button>
-              ) : null}
-              <button className="send-btn" onClick={() => void onRunWorkflow()} disabled={!validation.valid || !workflowConfirmed || running}>
-                <Play size={14} />
-                <span>{workflowText.runWorkflow}</span>
-              </button>
-            </>
-          ) : null}
-        </div>
       </header>
 
       <WorkflowRunCenter
@@ -406,6 +364,23 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         onSelectRun={setSelectedHistoryRunId}
         onClose={() => setRunCenterOpen(false)}
       />
+
+      {workflowId ? (
+        <button
+          type="button"
+          className={`workflow-runs-fab ${runCenterOpen ? "is-open" : ""}`}
+          onClick={() => { setSelectedHistoryRunId(undefined); setRunCenterOpen(true); }}
+          disabled={runs.length === 0}
+          title={runs.length === 0 ? "No workflow runs yet" : "Open run history"}
+          aria-label={runs.length === 0 ? "No workflow runs yet" : `Open ${runs.length} workflow runs`}
+          aria-haspopup="dialog"
+          aria-expanded={runCenterOpen}
+        >
+          <History size={16} />
+          <span>Runs</span>
+          <em>{runs.length}</em>
+        </button>
+      ) : null}
 
       {graphVisible && onReviewWorkflow ? <WorkflowReviewDrawer
         open={reviewDrawerOpen}
@@ -655,8 +630,46 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
             </div>
           </div>
         </div>
-        <div className="composer-hint">
+        {!showBottomActionBar ? <div className="composer-hint">
           <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · {graphVisible ? "继续对话可修改 workflow" : "先对话生成 workflow"}
+        </div> : null}
+      </section> : null}
+
+      {showBottomActionBar ? <section className="workflow-bottom-action-bar" aria-label="Workflow actions">
+        <div className="workflow-bottom-actions">
+          {running && !activeRunId ? (
+            <button className="control-btn danger workflow-stop-action" onClick={() => onStopGrill()} title="Stop agent">
+              <CircleStop size={14} />
+              <span>Stop agent</span>
+            </button>
+          ) : graphVisible && running && activeRunId && onStopRun ? (
+            <button className="control-btn danger workflow-stop-action" onClick={() => { if (window.confirm("Stop this workflow run? Completed work and history will be preserved, but this run cannot resume.")) void onStopRun(); }}>
+              <CircleStop size={14} />
+              <span>Stop workflow</span>
+            </button>
+          ) : graphVisible ? <div className="workflow-command-cluster">
+            {onReviewWorkflow ? (
+              <button
+                className={`control-btn workflow-review-trigger is-${generationReview?.status ?? "not_reviewed"}`}
+                onClick={() => setReviewDrawerOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={reviewDrawerOpen}
+              >
+                {generationReview?.status === "approved" ? <CheckCircle2 size={14} /> : generationReview?.status === "changes_requested" || generationReview?.status === "failed" ? <ShieldAlert size={14} /> : <RefreshCw size={14} className={generationReview?.status === "reviewing" ? "is-spinning" : ""} />}
+                <span>{generationReview?.status === "reviewing" ? "Reviewing" : generationReview?.status === "approved" ? "Reviewed" : generationReview?.status === "changes_requested" || generationReview?.status === "failed" ? "Review issues" : "Review"}</span>
+              </button>
+            ) : null}
+            {!workflowConfirmed && onConfirmWorkflow ? (
+              <button className="control-btn workflow-confirm-action" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
+                <CheckCircle2 size={14} />
+                <span>{workflowText.confirmWorkflow}</span>
+              </button>
+            ) : null}
+            <button className="send-btn workflow-run-action" onClick={() => void onRunWorkflow()} disabled={!validation.valid || !workflowConfirmed || running}>
+              <Play size={14} />
+              <span>{workflowText.runWorkflow}</span>
+            </button>
+          </div> : null}
         </div>
       </section> : null}
     </>
