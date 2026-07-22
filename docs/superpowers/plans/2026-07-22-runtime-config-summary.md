@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Runtime page's always-visible Provider wall with a compact current-configuration summary, searchable Provider picker, and collapsed low-frequency sections.
+**Goal:** Replace the Runtime page's always-visible Provider wall with an edge-aligned configuration sidebar, compact selected-config summary, searchable Provider picker, and collapsed low-frequency sections.
 
 **Architecture:** Keep Runtime state and existing callbacks in `RuntimePage`, extract only the controlled Provider picker because it owns a modal interaction boundary, and layer page-specific styles in the existing AgentRecall override stylesheet. No shared runtime types, persistence, or backend services change.
 
@@ -14,10 +14,11 @@
 
 - Create `src/automation/engine/renderer/src/pages/runtime/RuntimeProviderPicker.tsx`: searchable, categorized Provider modal.
 - Create `src/automation/engine/renderer/src/pages/runtime/RuntimeProviderPicker.test.ts`: server-rendered picker filtering and empty-state coverage.
-- Modify `src/automation/engine/renderer/src/pages/runtime/RuntimePage.tsx`: current-config summary, compact actions, connection fields, collapsed models/plugins/advanced sections, picker integration.
+- Modify `src/automation/engine/renderer/src/pages/runtime/RuntimePage.tsx`: configuration sidebar, selected-config summary, compact actions, connection fields, collapsed models/plugins/advanced sections, picker integration.
 - Modify `src/automation/engine/renderer/src/pages/runtime/RuntimePage.test.ts`: observable default-page structure and Provider-wall regression coverage.
-- Modify `src/renderer/src/styles/automation.css`: centered Runtime sheet, summary hierarchy, disclosure rows, modal and responsive behavior.
-- Modify `src/renderer/src/automation-ui.test.ts`: style contract for bounded width and responsive summary layout.
+- Modify `src/renderer/src/features/automation/runtime-feature-page.tsx`: mark the execution-config view for an edge-aligned workspace.
+- Modify `src/renderer/src/styles/automation.css`: configuration sidebar, summary hierarchy, disclosure rows, modal and responsive behavior.
+- Modify `src/renderer/src/automation-ui.test.ts`: style contract for the two-column workspace and responsive summary layout.
 - Modify `.release-notes/main-2-0.md`: describe the user-visible Runtime page simplification.
 
 ### Task 1: Searchable Provider picker
@@ -106,7 +107,7 @@ expect(markup).toContain('class="runtime-config-disclosure runtime-models-disclo
 expect(markup).toContain('class="runtime-config-disclosure runtime-plugins-disclosure"');
 ```
 
-Keep existing assertions proving that the configuration selector contains only the selected Runtime's channels.
+Keep assertions proving that the sidebar lists every visible configuration while the editor renders only the selected configuration's details.
 
 - [ ] **Step 2: Run the Runtime page test and verify RED**
 
@@ -122,15 +123,16 @@ In `RuntimePage`:
 
 1. Add `providerPickerOpen` and `providerQuery` state.
 2. Keep the six Runtime choices but remove the redundant `CLI` help copy from the visible layout.
-3. Replace `runtime-editor-actions` plus the separate balance panel with `runtime-config-summary` containing:
-   - Runtime badge, selected config `<select>`, add/delete controls.
+3. Replace the horizontal Runtime/config selector with a compact sidebar listing all visible configurations; keep add/delete controls in its header.
+4. Replace `runtime-editor-actions` plus the separate balance panel with `runtime-config-summary` containing:
+   - Selected Runtime badge and configuration name.
    - Current Provider label and a `更换 Provider` action.
    - First balance item value/detail, or a short idle/error message, with one refresh icon action.
    - Import and test actions.
-4. Keep API Key and configurable Model ID fields immediately below the summary as `runtime-connection-fields`.
-5. Render `RuntimeProviderPicker` only while `providerPickerOpen` is true. On selection, await `applyRuntimePreset`, close, and clear the query.
-6. Convert Codex plugins, models, and advanced Provider fields into `details.runtime-config-disclosure` sections without the `open` attribute. Put counts in each summary.
-7. Keep the existing no-config empty state unchanged.
+5. Keep API Key and configurable Model ID fields immediately below the summary as `runtime-connection-fields`.
+6. Render `RuntimeProviderPicker` only while `providerPickerOpen` is true. On selection, await `applyRuntimePreset`, close, and clear the query.
+7. Convert Codex plugins, models, and advanced Provider fields into `details.runtime-config-disclosure` sections without the `open` attribute. Put counts in each summary.
+8. Keep the existing no-config empty state unchanged.
 
 Use the existing test-result data and content, but place it directly after the summary. Do not change callbacks or persistence behavior.
 
@@ -161,11 +163,11 @@ git commit -m "feat: simplify runtime configuration hierarchy"
 Read `automation.css` as the existing test does and assert:
 
 ```ts
-const sheetRule = automationStyleSource.match(/\.automation-runtime-content \.runtime-editor\s*\{([^}]*)\}/)?.[1];
+const workspaceRule = automationStyleSource.match(/\.automation-runtime-content \.runtime-config-workspace\s*\{([^}]*)\}/)?.[1];
 const summaryRule = automationStyleSource.match(/\.automation-runtime-content \.runtime-config-summary\s*\{([^}]*)\}/)?.[1];
 
-expect(sheetRule).toContain("max-width: 1040px");
-expect(sheetRule).toContain("margin: 0 auto");
+expect(workspaceRule).toContain("grid-template-columns: 190px minmax(0, 1fr)");
+expect(workspaceRule).toContain("gap: 0");
 expect(summaryRule).toContain("grid-template-columns");
 ```
 
@@ -175,14 +177,14 @@ expect(summaryRule).toContain("grid-template-columns");
 npx vitest run src/renderer/src/automation-ui.test.ts
 ```
 
-Expected: FAIL because the bounded sheet and summary-grid declarations are absent.
+Expected: FAIL because the edge-aligned workspace and summary-grid declarations are absent.
 
 - [ ] **Step 3: Add Runtime-specific styling in `automation.css`**
 
 Implement these visual rules without changing upstream shared CSS:
 
-- Center `.runtime-editor` with `width: 100%`, `max-width: 1040px`, and `margin: 0 auto`.
-- Make the Runtime selector a quiet horizontal rail with compact choices and horizontal overflow below 760px.
+- Make `.runtime-config-workspace` a full-width grid with a 190px sidebar and an independently padded editor.
+- Keep the configuration sidebar flush with the content edge; below 760px, turn its list into a horizontally scrollable strip.
 - Style `.runtime-config-summary` as one restrained surface with a 3px Runtime-colored identity edge, an identity block, a compact status/balance block, and wrapping actions.
 - Style connection fields as a two-column row that collapses to one column.
 - Style disclosure summaries as 42px list rows separated by hairlines; expanded content receives compact internal padding rather than another nested card.
@@ -215,7 +217,7 @@ git commit -m "style: compact the runtime configuration workspace"
 Replace the current Runtime selector bullet with user-facing copy:
 
 ```md
-- 重整 Runtime 配置页：当前执行器、配置、Provider、余额和测试状态集中显示；低频 Provider 列表改为可搜索弹窗，模型、插件与高级配置默认折叠，减少首屏拥挤和横向空白。
+- 重整 Runtime 配置页：Codex、Claude Code 等配置可从贴边侧栏直接切换，Provider、余额和测试状态集中显示；低频 Provider 列表改为可搜索弹窗，模型、插件与高级配置默认折叠，减少首屏拥挤和横向空白。
 ```
 
 - [ ] **Step 2: Stop the development Electron process before automated verification**
@@ -238,10 +240,10 @@ Expected: all discovered Vitest files, script tests, build, release-note validat
 Run `npm run dev`, open Runtime, and verify at normal and narrow widths:
 
 - Provider wall is absent on first render.
-- Current config, Provider, balance, and actions read as one summary.
+- The edge-aligned sidebar switches configurations while Provider, balance, and actions read as one summary.
 - Provider picker search and close interactions work.
 - Models, plugins, and advanced settings start collapsed and expand without overflow.
-- Runtime switching preserves all existing actions.
+- Sidebar configuration switching preserves all existing actions.
 
 - [ ] **Step 5: Commit release copy and any verified visual corrections**
 

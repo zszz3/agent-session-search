@@ -10,7 +10,7 @@ import {
   OPENCLAW_DEFAULT_PRESET_ID,
   type AgentProviderPreset,
 } from "../../../../shared/provider-presets";
-import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
+import { runtimeDefinition } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
   ClaudeDefaultConfig,
@@ -44,8 +44,6 @@ import {
 import { RuntimeProviderFields } from "./RuntimeProviderFields";
 import { RuntimeProviderPicker } from "./RuntimeProviderPicker";
 import { agentRecallAutomationService } from "../../app/services/agent-recall-service";
-
-const AGENTS: AgentId[] = [...RUNTIME_IDS];
 
 const CONFIG_TEXT = {
   zh: {
@@ -168,7 +166,6 @@ export function RuntimePage({
     language === "zh"
       ? "管理 Codex / Claude / API / Hermes / OpenCode / OpenClaw 执行器、Provider、API Key、插件和模型。"
       : "Manage Codex / Claude / API / Hermes / OpenCode / OpenClaw executors, providers, API keys, plugins, and models.";
-  const selectConfigText = language === "zh" ? "选择配置" : "Select config";
   const addConfigText = language === "zh" ? "新增配置" : "Add config";
   const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";
   const runtimeConfigReady = language === "zh" ? "配置可用" : "Config works";
@@ -337,56 +334,65 @@ export function RuntimePage({
       </header> : null}
 
       <div className="runtime-layout">
-        <section className="config-form runtime-editor">
-          <nav className="runtime-selector" aria-label={language === "zh" ? "选择 Runtime" : "Select Runtime"}>
-            <span className="runtime-selector-label">Runtime</span>
-            <div className="agent-provider-preset-list">
-              {AGENTS.map((agentId) => (
+        <div className="runtime-config-workspace">
+          <aside className="runtime-config-sidebar" aria-label={language === "zh" ? "Runtime 配置" : "Runtime configs"}>
+            <header>
+              <div>
+                <strong>{currentConfigText}</strong>
+                <small>{visibleRuntimeChannels.length}</small>
+              </div>
+              <div className="runtime-sidebar-actions">
+                <button className="icon-btn" type="button" aria-label={addConfigText} title={addConfigText} onClick={onAddConfig}>
+                  <Plus size={13} />
+                </button>
+                <button
+                  className="icon-btn danger"
+                  type="button"
+                  aria-label={deleteConfigText}
+                  title={deleteConfigText}
+                  disabled={!selectedRuntimeChannelId || visibleRuntimeChannels.length <= 1}
+                  onClick={() => onDeleteConfig(selectedRuntimeChannelId)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </header>
+            <nav className="runtime-sidebar-list">
+              {visibleRuntimeChannels.map((channel) => (
                 <button
                   type="button"
-                  key={agentId}
-                  className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
-                  title={agentLabel(agentId)}
-                  onClick={() => onSelectRuntime(agentId)}
+                  key={channel.id}
+                  className={`runtime-sidebar-item ${selectedRuntimeChannelId === channel.id ? "is-active" : ""}`}
+                  data-runtime={channel.agentId}
+                  aria-current={selectedRuntimeChannelId === channel.id ? "true" : undefined}
+                  title={`${agentLabel(channel.agentId)} · ${channel.label || channel.id}`}
+                  onClick={() => {
+                    onSelectRuntime(channel.agentId);
+                    void onSelectChannel(channel.id);
+                  }}
                 >
-                  <span className={`runtime-choice-dot ${agentAccent(agentId)}`} aria-hidden="true" />
-                  <strong>{agentLabel(agentId)}</strong>
+                  <span className={`runtime-choice-dot ${agentAccent(channel.agentId)}`} aria-hidden="true" />
+                  <span>
+                    <strong>{agentLabel(channel.agentId)}</strong>
+                    <small>{channel.label || channel.id}</small>
+                  </span>
                 </button>
               ))}
-            </div>
-          </nav>
+            </nav>
+          </aside>
+
+          <section className="config-form runtime-editor">
           {selectedRuntimeChannelRecord ? (
             <>
-              <section className={`runtime-config-summary ${agentAccent(selectedRuntime)}`}>
+              <section className="runtime-config-summary" data-runtime={selectedRuntime}>
                 <div className="runtime-summary-main">
-                  <div className="runtime-summary-identity">
-                    <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
-                    <div>
-                      <span>{currentConfigText}</span>
-                      <div className="runtime-editor-config">
-                        <select
-                          aria-label={selectConfigText}
-                          value={selectedRuntimeChannelId}
-                          onChange={(event) => void onSelectChannel(event.target.value)}
-                        >
-                          {selectedRuntimeChannels.map((channel) => (
-                            <option key={channel.id} value={channel.id}>{channel.label || channel.id}</option>
-                          ))}
-                        </select>
-                        <button className="icon-btn" type="button" aria-label={addConfigText} title={addConfigText} onClick={onAddConfig}>
-                          <Plus size={13} />
-                        </button>
-                        <button
-                          className="icon-btn"
-                          type="button"
-                          aria-label={deleteConfigText}
-                          title={deleteConfigText}
-                          disabled={!selectedRuntimeChannelId || visibleRuntimeChannels.length <= 1}
-                          onClick={() => onDeleteConfig(selectedRuntimeChannelId)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+                  <div className="runtime-summary-config">
+                    <span>{runtimeExecutorLabel}</span>
+                    <div className="runtime-summary-identity">
+                      <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
+                      <strong title={selectedRuntimeChannelRecord.label || selectedRuntimeChannelRecord.id}>
+                        {selectedRuntimeChannelRecord.label || selectedRuntimeChannelRecord.id}
+                      </strong>
                     </div>
                   </div>
 
@@ -732,7 +738,8 @@ export function RuntimePage({
               </div>
             </div>
           )}
-        </section>
+          </section>
+        </div>
       </div>
     </section>
   );

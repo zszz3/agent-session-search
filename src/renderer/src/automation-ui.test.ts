@@ -94,4 +94,26 @@ describe("native automation UI", () => {
     expect(runtimeLayoutRule).toContain("grid-template-rows: minmax(0, 1fr)");
     expect(runtimeLayoutRule).not.toContain("auto minmax(0, 1fr)");
   });
+
+  it("keeps Runtime configuration in an edge-aligned two-column workspace", () => {
+    const contentRule = automationStyleSource.match(
+      /\.automation-runtime-content\.is-channels\s*\{([^}]*)\}/,
+    )?.[1];
+    const workspaceRule = automationStyleSource.match(
+      /\.automation-runtime-content \.runtime-config-workspace\s*\{([^}]*)\}/,
+    )?.[1];
+    const sidebarRule = automationStyleSource.match(
+      /\.automation-runtime-content \.runtime-config-sidebar\s*\{([^}]*)\}/,
+    )?.[1];
+    const summaryRule = automationStyleSource.match(
+      /\.automation-runtime-content \.runtime-config-summary\s*\{([^}]*)\}/,
+    )?.[1];
+
+    expect(contentRule).toContain("padding: 0");
+    expect(workspaceRule).toContain("grid-template-columns: 190px minmax(0, 1fr)");
+    expect(workspaceRule).toContain("gap: 0");
+    expect(sidebarRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(sidebarRule).toContain("border-right: 1px solid var(--border)");
+    expect(summaryRule).toContain("grid-template-columns");
+  });
 });

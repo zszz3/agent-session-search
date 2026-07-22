@@ -132,7 +132,7 @@ export function RuntimeFeaturePage({
         </button>
       </nav>
       <AutomationPageState loading={loading} error={error} language={language} onRetry={() => void refresh()}>
-        <div className="automation-runtime-content">
+        <div className={`automation-runtime-content ${view === "channels" ? "is-channels" : "is-agents"}`}>
           {view === "channels" ? (
             <RuntimePage
               embedded
