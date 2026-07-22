@@ -85,19 +85,47 @@ describe("native automation UI", () => {
     ]);
   });
 
-  it("keeps workflow header actions inside the detail pane when space is constrained", () => {
+  it("keeps proportional workflow actions below the composer and history on the right edge", () => {
     const headerRule = automationStyleSource.match(
       /\.automation-workflow-detail \.workflow-chat-header\s*\{([^}]*)\}/,
     )?.[1];
     const actionsRule = automationStyleSource.match(
       /\.automation-workflow-detail \.workflow-page-actions\s*\{([^}]*)\}/,
     )?.[1];
+    const bottomBarRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-bottom-action-bar\s*\{([^}]*)\}/,
+    )?.[1];
+    const bottomActionsRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-bottom-actions\s*\{([^}]*)\}/,
+    )?.[1];
+    const commandButtonRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-command-cluster > button\s*\{([^}]*)\}/,
+    )?.[1];
+    const runsFabRule = automationStyleSource.match(
+      /\.workflow-runs-fab\s*\{([^}]*)\}/,
+    )?.[1];
+    const runDrawerRule = automationStyleSource.match(
+      /\.workflow-run-center\s*\{([^}]*)\}/,
+    )?.[1];
+    const approvedReviewRule = automationStyleSource.match(
+      /\.automation-workflow-detail \.workflow-command-cluster \.workflow-review-trigger\.is-approved\s*\{([^}]*)\}/,
+    )?.[1];
 
     expect(headerRule).toContain("display: flex");
     expect(headerRule).toContain("flex-wrap: wrap");
     expect(actionsRule).toContain("max-width: 100%");
     expect(actionsRule).toContain("align-self: center");
-    expect(actionsRule).toContain("flex-wrap: wrap");
+    expect(bottomBarRule).toContain("max-width: min(92%, 48rem)");
+    expect(bottomBarRule).toContain("justify-content: flex-end");
+    expect(bottomActionsRule).toContain("justify-content: flex-end");
+    expect(bottomActionsRule).toContain("flex-wrap: wrap");
+    expect(commandButtonRule).toContain("width: auto");
+    expect(commandButtonRule).toContain("margin-top: 0");
+    expect(runsFabRule).toContain("position:absolute");
+    expect(runsFabRule).toContain("right:clamp(");
+    expect(runDrawerRule).toContain("width:clamp(");
+    expect(runDrawerRule).toContain("height:100dvh");
+    expect(approvedReviewRule).toContain("background: var(--panel-bg)");
   });
 
   it("lets the Runtime editor fill the page after removing the global config toolbar", () => {

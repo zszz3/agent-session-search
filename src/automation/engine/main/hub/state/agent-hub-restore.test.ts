@@ -75,11 +75,13 @@ describe("agent hub workflow progress restore", () => {
       detail: "Waiting for 输入内容",
       inputRequest: { kind: "script_parameters", parameters: [rawParameter] },
       outputs: { preview: "restored" },
+      messages: [{ id: "message-1", role: "assistant", content: "Persisted answer", at: 1_200 }],
     });
 
     expect(progress?.inputRequest).toEqual({ kind: "script_parameters", parameters: [rawParameter] });
     expect(progress?.inputRequest?.kind === "script_parameters" ? progress.inputRequest.parameters[0] : undefined).not.toBe(rawParameter);
     expect(progress?.outputs).toEqual({ preview: "restored" });
+    expect(progress?.messages).toEqual([{ id: "message-1", role: "assistant", content: "Persisted answer", at: 1_200 }]);
   });
 
   test("drops malformed input requests without dropping node progress", () => {

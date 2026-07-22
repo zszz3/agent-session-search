@@ -33,10 +33,14 @@ describe("WorkflowPage input ownership", () => {
     value.onConfirmWorkflow = () => undefined;
     value.onReviewWorkflow = () => undefined;
     const unconfirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
-    expect(unconfirmedHtml).toContain("Review Agent");
-    expect(unconfirmedHtml).toContain('<button class="control-btn"><span>Confirm workflow</span></button>');
+    expect(unconfirmedHtml).toContain("Review");
+    expect(unconfirmedHtml).toContain("workflow-command-cluster");
+    expect(unconfirmedHtml).toContain("workflow-bottom-action-bar");
+    expect(unconfirmedHtml).toContain("workflow-confirm-action");
+    expect(unconfirmedHtml).toContain("Confirm workflow");
     expect(unconfirmedHtml).toContain("Awaiting confirmation");
-    expect(unconfirmedHtml).toContain('<button class="send-btn" disabled="">');
+    expect(unconfirmedHtml).toContain('class="send-btn workflow-run-action" disabled=""');
+    expect(unconfirmedHtml.indexOf("workflow-composer")).toBeLessThan(unconfirmedHtml.indexOf("workflow-bottom-action-bar"));
 
     value.generationReview = { status: "approved", reviewerConfiguredAgentId: "reviewer-agent", reviewerModelId: "reviewer-model", reviewedRevision: 3, updatedAt: 1, result: { verdict: "approve", reviewedRevision: 3, summary: "Ready", findings: [], scriptRisks: {}, suggestions: [] } };
     value.reviewerModelId = "reviewer-model";
@@ -44,10 +48,10 @@ describe("WorkflowPage input ownership", () => {
     const confirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
     expect(confirmedHtml).not.toContain("Confirm workflow");
     expect(confirmedHtml).toContain("Confirmed r3");
-    expect(confirmedHtml).toContain('<button class="send-btn">');
+    expect(confirmedHtml).toContain('class="send-btn workflow-run-action"');
   });
 
-  test("uses a compact Review Agent entry instead of an inline review panel", () => {
+  test("uses a compact review entry instead of an inline review panel", () => {
     const value = controller(true);
     value.status = "draft";
     value.running = false;
@@ -57,7 +61,7 @@ describe("WorkflowPage input ownership", () => {
     value.onReviewWorkflow = () => undefined;
     const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
 
-    expect(html).toContain("Review Agent");
+    expect(html).toContain("Review");
     expect(html).toContain("workflow-review-trigger");
     expect(html).not.toContain("workflow-review-panel");
   });
@@ -136,5 +140,40 @@ describe("WorkflowPage input ownership", () => {
     expect(html).toContain("Edit workflow and resume: Answer");
     expect(html).toContain("Edit workflow definition");
     expect(html).toContain("workflow-composer");
+  });
+
+  test("offers run history from a separate floating action", () => {
+    const value = controller(true);
+    value.runs = [{
+      runId: "run-1",
+      workflowId: "workflow",
+      status: "completed",
+      workflowV2Plan: {} as never,
+      progress: [],
+      events: [],
+      contextDocument: "",
+      startedAt: 1,
+      finishedAt: 2,
+      lastError: undefined,
+    }];
+
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("Open run history");
+    expect(html).toContain("workflow-runs-fab");
+    expect(html).toContain("<span>Runs</span>");
+    expect(html).toContain("<em>1</em>");
+    expect(html.indexOf("workflow-runs-fab")).toBeLessThan(html.indexOf("workflow-bottom-action-bar"));
+  });
+
+  test("moves active-run stop controls into the bottom action bar", () => {
+    const value = controller(true);
+    value.onStopRun = () => undefined;
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("workflow-bottom-action-bar");
+    expect(html).toContain("workflow-stop-action");
+    expect(html).toContain("Stop workflow");
+    expect(html).not.toContain("workflow-page-actions");
   });
 });

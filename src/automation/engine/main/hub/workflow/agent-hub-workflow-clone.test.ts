@@ -22,11 +22,14 @@ describe("workflow progress cloning", () => {
       detail: "Waiting for 输入内容",
       inputRequest,
       outputs: { output: "hello" },
+      messages: [{ id: "message-1", role: "assistant", content: "hello", at: 1 }],
     });
 
     expect(cloned.inputRequest).toEqual(inputRequest);
     expect(cloned.inputRequest).not.toBe(inputRequest);
     expect(cloned.inputRequest?.kind === "script_parameters" ? cloned.inputRequest.parameters[0] : undefined).not.toBe(inputRequest.parameters[0]);
     expect(cloned.outputs).toEqual({ output: "hello" });
+    expect(cloned.messages).toEqual([{ id: "message-1", role: "assistant", content: "hello", at: 1 }]);
+    expect(cloned.messages).not.toBeUndefined();
   });
 });

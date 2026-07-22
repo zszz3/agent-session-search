@@ -93,6 +93,20 @@ function sampleState() {
     configuredAgents: [{ id: "agent-1", name: "Agent" }],
     channels: [{ id: "channel-1", name: "Local" }],
     scheduledWorkflowStore: { schedules: [] },
+    workflowNodeConversations: [{
+      conversationId: "workflow-1::run-1::build",
+      workflowId: "workflow-1",
+      runId: "run-1",
+      nodeId: "build",
+      configuredAgentId: "agent-1",
+      modelId: "model-1",
+      workDir: "/tmp/project",
+      status: "closed",
+      messages: [{ id: "node-message-1", role: "assistant", content: "Persisted interactive answer", at: 36 }],
+      createdAt: 31,
+      updatedAt: 36,
+      lastActivityAt: 36,
+    }],
     workflowStore: {
       activeWorkflowId: "workflow-1",
       workflows: [
@@ -120,6 +134,7 @@ function sampleState() {
               kind: "script_parameters",
               parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
             },
+            messages: [{ id: "run-message-1", role: "assistant", content: "Persisted one-shot answer", at: 36 }],
           }],
           runContextDocument: "run context",
           contextDocument: "context",
@@ -146,6 +161,7 @@ function sampleState() {
               kind: "script_parameters",
               parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
             },
+            messages: [{ id: "run-message-1", role: "assistant", content: "Persisted one-shot answer", at: 36 }],
           }],
           events: [
             {
@@ -271,6 +287,14 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(JSON.parse(String(workflowRow.definition_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(JSON.parse(String(workflowRow.workflow_v2_plan_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
+    const runNodeRow = db.prepare("select messages_json from workflow_run_nodes where run_id = ? and node_id = ?").get("run-1", "build") as { messages_json: string };
+    expect(JSON.parse(runNodeRow.messages_json)).toEqual([
+      expect.objectContaining({ id: "run-message-1", content: "Persisted one-shot answer" }),
+    ]);
+    const auxRow = db.prepare("select payload from app_aux_state where id = 1").get() as { payload: string };
+    expect(JSON.parse(auxRow.payload)).toMatchObject({
+      workflowNodeConversations: [{ messages: [{ content: "Persisted interactive answer" }] }],
+    });
     db.close();
   });
 
