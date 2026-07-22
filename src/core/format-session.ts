@@ -1,6 +1,10 @@
 import type { IndexedSession, SessionMessage, SessionSearchResult, SessionTraceEvent } from "./types";
 import { sessionSourceLabel } from "./session-sources";
 
+export type SessionJsonExportFormat = "openai_chat" | "openai_responses" | "anthropic";
+
+const EXPORTED_MODEL_PLACEHOLDER = "YOUR_MODEL";
+
 export function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
   const minutes = Math.floor(diff / 60_000);
@@ -80,4 +84,28 @@ export function formatSessionPlainText(
   traceEvents: SessionTraceEvent[] = [],
 ): string {
   return formatSessionMarkdown(session, messages, traceEvents).replace(/^#+\s/gm, "");
+}
+
+export function formatSessionJson(messages: SessionMessage[], format: SessionJsonExportFormat): string {
+  const conversation = messages.map(({ role, content }) => ({ role, content }));
+  const body = format === "openai_responses"
+    ? {
+        model: EXPORTED_MODEL_PLACEHOLDER,
+        input: conversation,
+        stream: false,
+      }
+    : format === "anthropic"
+      ? {
+          model: EXPORTED_MODEL_PLACEHOLDER,
+          max_tokens: 4096,
+          messages: conversation,
+          stream: false,
+        }
+      : {
+          model: EXPORTED_MODEL_PLACEHOLDER,
+          messages: conversation,
+          stream: false,
+        };
+
+  return `${JSON.stringify(body, null, 2)}\n`;
 }

@@ -139,6 +139,7 @@ export function DetailPanel({
   onCopyResume,
   onCopyMarkdown,
   onExportMarkdown,
+  onExportJson,
   onCopyPlain,
   onDelete,
   onReveal,
@@ -180,6 +181,7 @@ export function DetailPanel({
   onCopyResume: () => void;
   onCopyMarkdown: () => void;
   onExportMarkdown: () => void;
+  onExportJson: () => void;
   onCopyPlain: () => void;
   onDelete: () => void;
   onReveal: () => void;
@@ -469,6 +471,9 @@ export function DetailPanel({
             <button onClick={onCopyMarkdown} disabled={actionRunning}>Markdown</button>
             <button onClick={onExportMarkdown} disabled={actionRunning}>
               <Download size={15} /> {l("Export MD", "导出 MD")}
+            </button>
+            <button onClick={onExportJson} disabled={actionRunning}>
+              <Download size={15} /> {l("Export JSON", "导出 JSON")}
             </button>
             <button onClick={onCopyPlain} disabled={actionRunning}>{l("Plain Text", "纯文本")}</button>
           </div>

@@ -37,6 +37,7 @@ describe("detail panel actions", () => {
 
     expect(detailPanel).toContain("onResume");
     expect(detailPanel).toContain("onExportMarkdown");
+    expect(detailPanel).toContain("onExportJson");
     expect(detailPanel).not.toContain("onFocusTerminal");
     expect(detailPanel).not.toMatch(/Bring to Front/);
     expect(detailPanel).toMatch(/Export MD/);
@@ -55,6 +56,7 @@ describe("detail panel actions", () => {
     expect(contextMenu).not.toMatch(/Bring to Front/);
     expect(contextMenu).not.toContain("onFocusTerminal");
     expect(contextMenu).toMatch(/Export Markdown/);
+    expect(contextMenu).toMatch(/Export JSON/);
     expect(contextMenu).not.toMatch(/Copy Plain Text/);
   });
 
@@ -74,6 +76,18 @@ describe("detail panel actions", () => {
     expect(mainSource).toContain("command:export-markdown");
     expect(mainSource).toContain("showSaveDialog");
     expect(mainSource).toContain("formatSessionMarkdown");
+  });
+
+  it("wires API request JSON export through format selection and a save dialog", () => {
+    expect(preloadSource).toContain("exportJson");
+    expect(preloadSource).toContain("command:export-json");
+    const handler = mainHandlerSource("command:export-json");
+    expect(handler).toContain("chooseJsonExportFormat");
+    expect(handler).toContain("chooseJsonExportPath");
+    expect(handler).toContain("formatSessionJson");
+    expect(mainSource).toContain("OpenAI Chat Completions");
+    expect(mainSource).toContain("OpenAI Responses");
+    expect(mainSource).toContain("Anthropic Messages");
   });
 
   it("opens detail on the newest message window and pages older messages backward", () => {

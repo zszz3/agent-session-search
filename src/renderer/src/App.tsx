@@ -1504,6 +1504,25 @@ export function App(): ReactElement {
     }
   }
 
+  async function exportJson(sessionKey: string): Promise<void> {
+    setContextMenu(null);
+    setActionStatus({ kind: "running", message: t("Exporting JSON...", "正在导出 JSON...") });
+    try {
+      const exported = await window.sessionSearch.exportJson(sessionKey);
+      if (!exported) {
+        setActionStatus(null);
+        return;
+      }
+      const successMessage = t("JSON exported.", "JSON 已导出。");
+      setActionStatus({ kind: "success", message: successMessage });
+      window.setTimeout(() => {
+        setActionStatus((current) => (current?.kind === "success" && current.message === successMessage ? null : current));
+      }, 1800);
+    } catch (error) {
+      setActionStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   function beginMigrate(session: SessionSearchResult): void {
     setContextMenu(null);
     setMigrationDialog({ kind: "select", session });
@@ -2324,6 +2343,7 @@ export function App(): ReactElement {
             void runAction(t("Copying markdown", "正在复制 Markdown"), () => window.sessionSearch.copyMarkdown(detail.sessionKey), t("Markdown copied.", "Markdown 已复制。"))
           }
           onExportMarkdown={() => void exportMarkdown(detail.sessionKey)}
+          onExportJson={() => void exportJson(detail.sessionKey)}
           onCopyPlain={() =>
             void runAction(t("Copying plain text", "正在复制纯文本"), () => window.sessionSearch.copyPlainText(detail.sessionKey), t("Plain text copied.", "纯文本已复制。"))
           }
@@ -2372,6 +2392,7 @@ export function App(): ReactElement {
           onCopyResume={() => undefined}
           onCopyMarkdown={() => undefined}
           onExportMarkdown={() => undefined}
+          onExportJson={() => undefined}
           onCopyPlain={() => undefined}
           onDelete={() => undefined}
           onReveal={() => undefined}
@@ -2427,6 +2448,7 @@ export function App(): ReactElement {
             void runAction(t("Copying markdown", "正在复制 Markdown"), () => window.sessionSearch.copyMarkdown(contextMenu.session.sessionKey), t("Markdown copied.", "Markdown 已复制。"))
           }
           onExportMarkdown={() => void exportMarkdown(contextMenu.session.sessionKey)}
+          onExportJson={() => void exportJson(contextMenu.session.sessionKey)}
           onDelete={() => requestDeleteSession(contextMenu.session)}
           onReveal={() =>
             void runAction(
@@ -2894,6 +2916,7 @@ function ContextMenu({
   onCopyResume,
   onCopyMarkdown,
   onExportMarkdown,
+  onExportJson,
   onDelete,
   onReveal,
 }: {
@@ -2915,6 +2938,7 @@ function ContextMenu({
   onCopyResume: () => void;
   onCopyMarkdown: () => void;
   onExportMarkdown: () => void;
+  onExportJson: () => void;
   onDelete: () => void;
   onReveal: () => void;
 }): ReactElement {
@@ -2971,6 +2995,9 @@ function ContextMenu({
       <button onClick={onCopyMarkdown}>{l("Copy Markdown", "复制 Markdown")}</button>
       <button onClick={onExportMarkdown}>
         <Download size={14} /> {l("Export Markdown", "导出 Markdown")}
+      </button>
+      <button onClick={onExportJson}>
+        <Download size={14} /> {l("Export JSON", "导出 JSON")}
       </button>
       <button onClick={onReveal} disabled={localOnlyDisabled} title={revealTitle}>
         <FolderOpen size={14} /> Show in {revealLabel}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSessionMarkdown, formatSessionPlainText } from "./format-session";
+import { formatSessionJson, formatSessionMarkdown, formatSessionPlainText } from "./format-session";
 import type { IndexedSession, SessionMessage, SessionTraceEvent } from "./types";
 
 const session: IndexedSession = {
@@ -71,5 +71,41 @@ describe("formatSessionPlainText", () => {
     expect(text).toContain("Tool Trace");
     expect(text).toContain("shell_command · npm test");
     expect(text).toContain("stdout:");
+  });
+});
+
+describe("formatSessionJson", () => {
+  it("exports an OpenAI Chat Completions request body", () => {
+    expect(JSON.parse(formatSessionJson(messages, "openai_chat"))).toEqual({
+      model: "YOUR_MODEL",
+      messages: [
+        { role: "user", content: "run tests" },
+        { role: "assistant", content: "I will run them." },
+      ],
+      stream: false,
+    });
+  });
+
+  it("exports an OpenAI Responses request body", () => {
+    expect(JSON.parse(formatSessionJson(messages, "openai_responses"))).toEqual({
+      model: "YOUR_MODEL",
+      input: [
+        { role: "user", content: "run tests" },
+        { role: "assistant", content: "I will run them." },
+      ],
+      stream: false,
+    });
+  });
+
+  it("exports an Anthropic Messages request body with max_tokens", () => {
+    expect(JSON.parse(formatSessionJson(messages, "anthropic"))).toEqual({
+      model: "YOUR_MODEL",
+      max_tokens: 4096,
+      messages: [
+        { role: "user", content: "run tests" },
+        { role: "assistant", content: "I will run them." },
+      ],
+      stream: false,
+    });
   });
 });

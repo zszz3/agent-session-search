@@ -23,7 +23,12 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { loadActiveCodexSummaryEndpointDefaults } from "../core/codex-profile";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
-import { formatSessionMarkdown, formatSessionPlainText } from "../core/format-session";
+import {
+  formatSessionJson,
+  formatSessionMarkdown,
+  formatSessionPlainText,
+  type SessionJsonExportFormat,
+} from "../core/format-session";
 import { normalizeExternalLink } from "../core/external-link";
 import {
   defaultSettings,
@@ -419,12 +424,12 @@ function enabledRemoteOptionalSources(settings: AppSettings): SessionSource[] {
     .map((descriptor) => descriptor.id);
 }
 
-function markdownExportFileName(title: string): string {
+function exportFileName(title: string, extension: "md" | "json"): string {
   const safeTitle = title
     .replace(/[\\/:*?"<>|\x00-\x1f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return `${safeTitle || "session"}.md`;
+  return `${safeTitle || "session"}.${extension}`;
 }
 
 function sshArgsForSession(session: SessionSearchResult): string[] | undefined {
@@ -509,6 +514,32 @@ async function chooseMarkdownExportPath(defaultFileName: string): Promise<string
   const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
   if (result.canceled || !result.filePath) return null;
   return path.extname(result.filePath) ? result.filePath : `${result.filePath}.md`;
+}
+
+async function chooseJsonExportFormat(): Promise<SessionJsonExportFormat | null> {
+  const options: Electron.MessageBoxOptions = {
+    type: "question",
+    title: "Export JSON",
+    message: "Choose an API request format",
+    detail: "The exported model is a placeholder. Replace YOUR_MODEL before sending the request.",
+    buttons: ["OpenAI Chat Completions", "OpenAI Responses", "Anthropic Messages", "Cancel"],
+    defaultId: 0,
+    cancelId: 3,
+    noLink: true,
+  };
+  const result = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+  return (["openai_chat", "openai_responses", "anthropic"] as const)[result.response] ?? null;
+}
+
+async function chooseJsonExportPath(defaultFileName: string): Promise<string | null> {
+  const options = {
+    title: "Export JSON",
+    defaultPath: path.join(app.getPath("documents"), defaultFileName),
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  };
+  const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return null;
+  return path.extname(result.filePath) ? result.filePath : `${result.filePath}.json`;
 }
 
 async function chooseLocalProjectDirectory(): Promise<string | null> {
@@ -1551,9 +1582,20 @@ function registerIpc(): void {
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     const session = store.getSession(sessionKey);
     if (!session) return false;
-    const exportPath = await chooseMarkdownExportPath(markdownExportFileName(session.displayTitle || session.originalTitle || session.rawId));
+    const exportPath = await chooseMarkdownExportPath(exportFileName(session.displayTitle || session.originalTitle || session.rawId, "md"));
     if (!exportPath) return false;
     await fs.writeFile(exportPath, formatSessionMarkdown(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)), "utf-8");
+    return true;
+  });
+  ipcMain.handle("command:export-json", async (_event, sessionKey: string) => {
+    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    const session = store.getSession(sessionKey);
+    if (!session) return false;
+    const format = await chooseJsonExportFormat();
+    if (!format) return false;
+    const exportPath = await chooseJsonExportPath(exportFileName(session.displayTitle || session.originalTitle || session.rawId, "json"));
+    if (!exportPath) return false;
+    await fs.writeFile(exportPath, formatSessionJson(store.getAllMessages(sessionKey), format), "utf-8");
     return true;
   });
   ipcMain.handle("command:copy-plain", async (_event, sessionKey: string) => {
