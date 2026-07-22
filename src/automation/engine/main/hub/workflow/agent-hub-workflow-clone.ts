@@ -29,6 +29,7 @@ export function cloneWorkflowRunProgressItem(item: WorkflowRunProgressItem): Wor
     ...(item.intervention !== undefined ? { intervention: structuredClone(item.intervention) } : {}),
     ...(item.inputRequest !== undefined ? { inputRequest: structuredClone(item.inputRequest) } : {}),
     ...(item.outputs !== undefined ? { outputs: structuredClone(item.outputs) } : {}),
+    ...(item.messages !== undefined ? { messages: structuredClone(item.messages) } : {}),
   };
 }
 

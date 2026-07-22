@@ -9,6 +9,7 @@ import type {
 } from "../../../shared/types";
 import type { WorkflowNodeInputRequest } from "../../../shared/workflow/run";
 import type { WorkflowV2ScriptParameterDef } from "../../../shared/workflow-v2/definition";
+import type { WorkflowNodeMessage } from "../../../shared/workflow-v2/conversation";
 import { isWorkflowV2HumanIntervention } from "../../../shared/workflow-v2/review";
 import {
   asArray,
@@ -109,7 +110,25 @@ export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgres
   }
   const outputs = asRecord(record.outputs);
   if (outputs) item.outputs = structuredClone(outputs);
+  const messages = asArray(record.messages)
+    .map((message) => restoreWorkflowNodeHistoryMessage(message))
+    .filter((message): message is WorkflowNodeMessage => Boolean(message));
+  if (messages.length > 0) item.messages = messages;
   return item;
+}
+
+function restoreWorkflowNodeHistoryMessage(raw: unknown): WorkflowNodeMessage | undefined {
+  const record = asRecord(raw);
+  const role = record?.role;
+  const id = asOptionalString(record?.id);
+  const content = asOptionalString(record?.content);
+  if (!record || !id || content === undefined || (role !== "user" && role !== "assistant" && role !== "system" && role !== "tool")) return undefined;
+  const message: WorkflowNodeMessage = { id, role, content, at: asNumber(record.at, Date.now()) };
+  const name = asOptionalString(record.name);
+  if (name) message.name = name;
+  const event = restoreEvent(record.event);
+  if (event) message.event = event;
+  return message;
 }
 
 export function restoreWorkflowArtifactReference(raw: unknown): WorkflowArtifactReference | undefined {

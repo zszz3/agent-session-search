@@ -2094,6 +2094,9 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       finalReport: expect.stringContaining("# Workflow V2 Run Summary"),
     });
     expect(finished.progress!.some((item) => item.nodeId === "__final_review__")).toBe(false);
+    expect(finished.progress?.find((item) => item.nodeId === "draft")?.messages).toEqual([
+      expect.objectContaining({ role: "assistant", content: expect.stringContaining('"nodeId":"draft"') }),
+    ]);
     const events = fixture.updates.flatMap((update) => update.appendEvents ?? []);
     expect(events.map((event) => `${event.nodeId}:${event.type}`)).toEqual([
       "draft:node_started",

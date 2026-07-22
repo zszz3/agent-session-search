@@ -21,7 +21,13 @@ function run(input: { runId: string; status: WorkflowRunState["status"]; started
     workflowId: "workflow",
     status: input.status,
     workflowV2Plan: plan,
-    progress: [{ nodeId: "research", title: "Research", status: input.status === "failed" ? "failed" : "completed", detail: input.status === "failed" ? "Provider disconnected" : "Report ready" }],
+    progress: [{
+      nodeId: "research",
+      title: "Research",
+      status: input.status === "failed" ? "failed" : "completed",
+      detail: input.status === "failed" ? "Provider disconnected" : "Report ready",
+      messages: [{ id: `${input.runId}:assistant`, role: "assistant", content: "Historical research answer", at: input.startedAt + 1_500 }],
+    }],
     events: [
       { type: "node_started", nodeId: "research", at: input.startedAt + 1_000, attempt: 1 },
       input.status === "failed"
@@ -63,6 +69,35 @@ describe("WorkflowRunCenter", () => {
     expect(html).toContain("llm · gpt-test");
     expect(html).toContain("node failed");
     expect(html).toContain("Provider disconnected");
+    expect(html).toContain("Message history");
+    expect(html).toContain("Historical research answer");
+  });
+
+  test("shows persisted interactive conversation messages for the selected run node", () => {
+    const html = renderToStaticMarkup(<WorkflowRunCenter
+      runs={[run({ runId: "interactive-run", status: "completed", startedAt: 2_000, finishedAt: 62_000 })]}
+      conversations={[{
+        conversationId: "conversation-1",
+        workflowId: "workflow",
+        runId: "interactive-run",
+        nodeId: "research",
+        configuredAgentId: "agent",
+        modelId: "model",
+        workDir: "C:/workspace",
+        status: "closed",
+        messages: [{ id: "message-1", role: "user", content: "Persist this follow-up", at: 3_000 }],
+        createdAt: 2_000,
+        updatedAt: 3_000,
+        lastActivityAt: 3_000,
+      }]}
+      open
+      selectedRunId="interactive-run"
+      onSelectRun={() => undefined}
+      onClose={() => undefined}
+    />);
+
+    expect(html).toContain("Persist this follow-up");
+    expect(html).not.toContain("Historical research answer");
   });
 
   test("opens as a history list before a run is selected", () => {

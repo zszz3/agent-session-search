@@ -2,6 +2,7 @@ import type { RunTaskRequest, TaskRun } from "../../../shared/types";
 import type { RuntimeConversation } from "../../../shared/runtime/conversation";
 import type { WorkflowEvent, WorkflowRunProgressItem } from "../../../shared/workflow/run";
 import type { WorkflowV2LLMNode, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
+import type { WorkflowNodeMessage } from "../../../shared/workflow-v2/conversation";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type {
   WorkflowV2Plan,
@@ -80,6 +81,31 @@ const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function workflowNodeHistoryMessages(task: TaskRun): WorkflowNodeMessage[] {
+  return task.messages.flatMap((message, messageIndex) => {
+    const messages: WorkflowNodeMessage[] = [];
+    if (message.content.trim()) {
+      messages.push({
+        id: `${message.id || `${task.id}:message:${messageIndex}`}:content`,
+        role: message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system",
+        content: message.content,
+        at: Number.isFinite(message.timestamp) ? message.timestamp : task.updatedAt,
+      });
+    }
+    for (const event of message.events ?? []) {
+      messages.push({
+        id: event.id,
+        role: event.type === "tool_call" || event.type === "tool_result" ? "tool" : "system",
+        content: event.content || event.type.replaceAll("_", " "),
+        at: event.timestamp,
+        ...(event.name ? { name: event.name } : {}),
+        event: structuredClone(event),
+      });
+    }
+    return messages;
+  });
 }
 
 class WorkflowV2OneShotInputRequestSignal extends Error {
@@ -694,7 +720,7 @@ export class WorkflowV2RunExecutor {
         archiveTaskId = completedTask.id;
         const artifact = taskArtifact(completedTask);
         const output = parseWorkflowV2WorkerArtifact(request.node, artifact);
-        updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id }, {
+        updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id, messages: workflowNodeHistoryMessages(completedTask) }, {
           type: "node_output",
           nodeId: request.node.id,
           taskId: task.id,

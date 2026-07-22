@@ -79,6 +79,7 @@ export interface WorkflowController {
   contextDocument?: string;
   finalReport?: string;
   nodeConversations?: WorkflowNodeConversation[];
+  runHistoryConversations?: WorkflowNodeConversation[];
   nodeTasks?: TaskRun[];
   workflowV2Plan?: WorkflowV2Plan;
   runs?: WorkflowRunState[];

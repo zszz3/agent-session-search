@@ -50,6 +50,7 @@ export function useWorkflowFeatureController({
   const nodeConversations = activeRunId
     ? snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId)
     : [];
+  const runHistoryConversations = snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId);
   const artifacts = activeRunId ? (snapshot.artifacts ?? []).filter((artifact) => artifact.target === activeRunId) : [];
 
   return useMemo(
@@ -85,6 +86,7 @@ export function useWorkflowFeatureController({
       finalReport: draft.workflowFinalReport,
       ...(activeWorkflow?.workflowV2Plan ? { workflowV2Plan: activeWorkflow.workflowV2Plan } : {}),
       runs: workflowRuns,
+      runHistoryConversations,
       nodeTasks: snapshot.tasks.filter((task) => draft.workflowRunProgress.some((item) => item.taskId === task.id)),
       nodeConversations,
       onObjectiveChange: draft.setWorkflowObjective,
@@ -225,6 +227,7 @@ export function useWorkflowFeatureController({
       draft,
       language,
       nodeConversations,
+      runHistoryConversations,
       onChooseWorkDir,
       onReadOutputFile,
       onResolveRuntimeApproval,

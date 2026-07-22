@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, ChevronRight, CircleAlert, CircleStop, Clock3, GitBranch, History, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, ChevronRight, CircleAlert, CircleStop, Clock3, GitBranch, History, MessageSquareText, X } from "lucide-react";
 import type { WorkflowRunState, WorkflowStatus } from "../../../../shared/types";
+import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 
 interface WorkflowRunCenterProps {
   runs: WorkflowRunState[];
+  conversations?: WorkflowNodeConversation[];
   open: boolean;
   selectedRunId?: string;
   language?: "en" | "zh";
@@ -68,7 +70,7 @@ function runIcon(status: WorkflowStatus) {
   return Clock3;
 }
 
-export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", onSelectRun, onClose }: WorkflowRunCenterProps) {
+export function WorkflowRunCenter({ runs, conversations = [], open, selectedRunId, language = "en", onSelectRun, onClose }: WorkflowRunCenterProps) {
   const [activeRunId, setActiveRunId] = useState<string | undefined>(selectedRunId);
   const selectedRun = activeRunId ? runs.find((run) => run.runId === activeRunId) : undefined;
 
@@ -90,8 +92,8 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
   if (!open) return null;
 
   const labels = language === "zh"
-    ? { title: "运行历史", close: "关闭运行历史", empty: "还没有运行记录", choose: "选择一条运行记录查看详情", back: "返回运行列表", detail: "运行详情", timeline: "节点时间线", config: "冻结配置", graph: "图版本", started: "开始", duration: "耗时", approvedBy: "确认人", nodes: "节点", noEvents: "暂无事件记录", notStarted: "未开始" }
-    : { title: "Run history", close: "Close run history", empty: "No runs yet", choose: "Select a run to view its details", back: "Back to run list", detail: "Run details", timeline: "Node timeline", config: "Frozen configuration", graph: "Graph version", started: "Started", duration: "Duration", approvedBy: "Approved by", nodes: "Nodes", noEvents: "No events recorded", notStarted: "Not started" };
+    ? { title: "运行历史", close: "关闭运行历史", empty: "还没有运行记录", choose: "选择一条运行记录查看详情", back: "返回运行列表", detail: "运行详情", timeline: "节点时间线", messages: "消息历史", config: "冻结配置", graph: "图版本", started: "开始", duration: "耗时", approvedBy: "确认人", nodes: "节点", noEvents: "暂无事件记录", notStarted: "未开始" }
+    : { title: "Run history", close: "Close run history", empty: "No runs yet", choose: "Select a run to view its details", back: "Back to run list", detail: "Run details", timeline: "Node timeline", messages: "Message history", config: "Frozen configuration", graph: "Graph version", started: "Started", duration: "Duration", approvedBy: "Approved by", nodes: "Nodes", noEvents: "No events recorded", notStarted: "Not started" };
 
   return (
     <div className="workflow-run-center-backdrop" role="presentation" onClick={onClose}>
@@ -136,6 +138,8 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
                       const progress = selectedRun.progress.find((item) => item.nodeId === node.nodeId);
                       const events = selectedRun.events.filter((event) => event.nodeId === node.nodeId).sort((left, right) => left.at - right.at);
                       const eventError = [...events].reverse().find((event) => event.error)?.error;
+                      const conversation = conversations.find((item) => item.runId === selectedRun.runId && item.nodeId === node.nodeId);
+                      const messages = conversation?.messages.length ? conversation.messages : progress?.messages ?? [];
                       return (
                         <article key={node.nodeId} className={`workflow-run-center-node ${progress ? `is-${progress.status}` : ""}`}>
                           <div className="workflow-run-center-node-head">
@@ -150,6 +154,15 @@ export function WorkflowRunCenter({ runs, open, selectedRunId, language = "en", 
                               {events.map((event, index) => <span key={`${event.type}-${event.at}-${index}`}>{eventLabel(event.type, language)} · {formatDate(event.at, language)}{event.attempt ? ` · #${event.attempt}` : ""}</span>)}
                             </div>
                           ) : <small className="workflow-run-center-no-events">{selectedNodeIds.has(node.nodeId) ? labels.noEvents : labels.notStarted}</small>}
+                          {messages.length > 0 ? <details className="workflow-run-center-messages">
+                            <summary><MessageSquareText size={13} /><span>{labels.messages}</span><em>{messages.length}</em></summary>
+                            <div className="workflow-run-center-message-list">
+                              {messages.map((message) => <article key={message.id} className={`is-${message.role}`}>
+                                <header><strong>{message.name || message.role}</strong><time>{formatDate(message.at, language)}</time></header>
+                                <p>{message.content}</p>
+                              </article>)}
+                            </div>
+                          </details> : null}
                         </article>
                       );
                     })}

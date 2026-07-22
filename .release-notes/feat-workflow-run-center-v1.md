@@ -11,6 +11,7 @@
 - 新增目录级 Agent Memory 管理：用户可主动选择工作目录，查看从 Git 根目录逐级继承的 `AGENTS.md`、`CLAUDE.md` 与 Cursor Rules，并在当前目录新建或编辑记忆文件；还可按 Codex、Claude Code、Cursor 预览最终生效内容，将一份记忆同步为其他 Agent 的格式，确认差异后写入并支持立即撤销。检查范围仅限所选目录的继承链，不会遍历整个项目。
 - 新增 Runtime、MCP 与 Workflow 工作区：可通过紧凑下拉切换并测试 Codex、Claude Code、API、Hermes、OpenCode 和 OpenClaw 配置，管理本地或远程 MCP 服务及工具，把自定义 MCP 按 Agent 绑定到新会话，并在应用内完成 Workflow 的创建、审核、确认、运行、暂停、人工介入和输出查看；工作台会同步展示真实 Workflow 状态并直达详情。
 - Workflow 右侧新增独立的运行历史入口，可展开历史抽屉并进入任意一次运行，查看状态、耗时、图版本、冻结配置、节点执行时间线、重试次数和错误详情。
+- Workflow 节点的历史消息会随运行记录持久保存；重新打开应用后，仍可在运行历史的对应节点中查看用户、Agent 与工具消息。
 - 新增 Agent 评测工作区：可维护测试数据集，组合确定性规则或 LLM Judge，针对 Runtime 中的 Agent 重复运行实验，并查看每个 Case 的输出、评分理由、通过率、耗时和历史结果；历史记录较多时仍可按需继续加载。
 
 ## Bug 修复

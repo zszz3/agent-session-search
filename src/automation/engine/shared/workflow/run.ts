@@ -1,6 +1,7 @@
 import type { WorkflowV2Plan } from "../workflow-v2/planning";
 import type { WorkflowV2HumanIntervention } from "../workflow-v2/review";
 import type { WorkflowV2ScriptParameterDef } from "../workflow-v2/definition";
+import type { WorkflowNodeMessage } from "../workflow-v2/conversation";
 
 export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
 
@@ -21,6 +22,7 @@ export interface WorkflowRunProgressItem {
   intervention?: WorkflowV2HumanIntervention;
   inputRequest?: WorkflowNodeInputRequest;
   outputs?: Record<string, unknown>;
+  messages?: WorkflowNodeMessage[];
 }
 
 export type WorkflowEventType =

@@ -83,6 +83,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const nodeTasks = source.nodeTasks ?? [];
   const workflowV2Plan = source.workflowV2Plan;
   const runs = source.runs ?? [];
+  const runHistoryConversations = source.runHistoryConversations ?? [];
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
   const onStopRun = source.onStopRun;
@@ -358,6 +359,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
 
       <WorkflowRunCenter
         runs={runs}
+        conversations={runHistoryConversations}
         open={runCenterOpen}
         {...(selectedHistoryRunId ? { selectedRunId: selectedHistoryRunId } : {})}
         language={language}

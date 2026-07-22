@@ -81,8 +81,8 @@ export class SqliteWorkflowRepository {
       asArray(workflow.runProgress).forEach((item, sequence) => {
         db.prepare(
           `insert into workflow_run_progress
-           (workflow_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, sequence)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (workflow_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, messages_json, sequence)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           workflowId,
           asString(item.nodeId),
@@ -92,6 +92,7 @@ export class SqliteWorkflowRepository {
           asOptionalString(item.taskId) ?? null,
           json(item.inputRequest),
           json(item.intervention),
+          json(item.messages),
           sequence,
         );
       });
@@ -125,8 +126,8 @@ export class SqliteWorkflowRepository {
     asArray(run.progress).forEach((item, itemSequence) => {
       db.prepare(
         `insert into workflow_run_nodes
-         (run_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, sequence)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (run_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, messages_json, sequence)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         runId,
         asString(item.nodeId),
@@ -136,6 +137,7 @@ export class SqliteWorkflowRepository {
         asOptionalString(item.taskId) ?? null,
         json(item.inputRequest),
         json(item.intervention),
+        json(item.messages),
         itemSequence,
       );
     });
@@ -269,6 +271,7 @@ export class SqliteWorkflowRepository {
         optional(item, "taskId", row.task_id);
         optional(item, "inputRequest", parseJson(row.input_request_json));
         optional(item, "intervention", parseJson(row.intervention_json));
+        optional(item, "messages", parseJson(row.messages_json));
         return item;
       });
   }
