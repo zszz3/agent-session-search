@@ -1,4 +1,4 @@
-import { asRecord, type RecordValue } from "./sqlite-values";
+import { asRecord, type RecordValue } from "./persisted-values";
 
 export function postgresTime(value: unknown): number {
   if (value instanceof Date) return value.getTime();

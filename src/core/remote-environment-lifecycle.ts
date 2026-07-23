@@ -1,6 +1,16 @@
 import type { SessionStore } from "./session-store";
 import type { EnvironmentUpsertInput, SessionEnvironment } from "./types";
 
+export type RemoteEnvironmentStore = Pick<
+  SessionStore,
+  | "deleteEnvironment"
+  | "deleteEnvironmentSessions"
+  | "getEnvironment"
+  | "listEnvironments"
+  | "updateEnvironmentSyncState"
+  | "upsertEnvironment"
+>;
+
 export interface RemoteEnvironmentWatchManager {
   start(environment: SessionEnvironment): void;
   stop(environmentId: string): void;
@@ -8,7 +18,7 @@ export interface RemoteEnvironmentWatchManager {
 }
 
 export interface RemoteEnvironmentLifecycleOptions {
-  store: SessionStore;
+  store: RemoteEnvironmentStore;
   syncEnvironment: (environment: SessionEnvironment) => Promise<void>;
   watchManager: RemoteEnvironmentWatchManager;
   onEnvironmentsUpdated?: (environments: SessionEnvironment[]) => void;
@@ -30,7 +40,7 @@ interface ReconcileResult {
 }
 
 export class RemoteEnvironmentLifecycle {
-  private readonly store: SessionStore;
+  private readonly store: RemoteEnvironmentStore;
   private readonly syncEnvironment: (environment: SessionEnvironment) => Promise<void>;
   private readonly watchManager: RemoteEnvironmentWatchManager;
   private readonly onEnvironmentsUpdated: (environments: SessionEnvironment[]) => void;

@@ -12,7 +12,6 @@ import {
   type ApiProviderKeyTarget,
   type SessionSyncBinding,
 } from "./postgres/metadata-repository";
-import { POSTGRES_MIGRATIONS } from "./postgres/schema";
 import {
   PostgresSessionRepository,
   type TraceEventQueryOptions,
@@ -21,7 +20,6 @@ import {
   PostgresSkillRepository,
   type SkillSyncBinding,
 } from "./postgres/skill-repository";
-import { PGliteTestPool } from "./postgres/test-pglite";
 import type {
   EnvironmentSyncState,
   EnvironmentUpsertInput,
@@ -430,12 +428,4 @@ function deleteSessionSourceFile(filePath: string): void {
     throw error;
   }
   fs.rmSync(normalized, { force: true });
-}
-
-export function createInMemoryStore(): SessionStore {
-  const database = new PostgresDatabase(new PGliteTestPool(), {
-    migrationLock: false,
-    migrations: POSTGRES_MIGRATIONS,
-  });
-  return new SessionStore(database, database.initialize());
 }

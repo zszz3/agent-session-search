@@ -36,8 +36,6 @@ export function resolveDatabaseUrl(env = process.env, home = homedir()) {
   }
 }
 
-export const resolveDbPath = resolveDatabaseUrl;
-
 function clamp(value, fallback, max) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 1) return fallback;

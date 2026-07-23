@@ -7,7 +7,7 @@ import {
   asString,
   optional,
   type RecordValue,
-} from "./sqlite-values";
+} from "./persisted-values";
 import {
   jsonParameter,
   postgresJson,

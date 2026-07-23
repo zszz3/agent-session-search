@@ -7,7 +7,12 @@ import type {
 } from "./database";
 
 class PGliteClient implements PostgresClient {
-  constructor(private readonly database: PGlite) {}
+  private released = false;
+
+  constructor(
+    private readonly database: PGlite,
+    private readonly releaseLock: () => void,
+  ) {}
 
   async query<Row extends Record<string, unknown>>(
     text: string,
@@ -28,28 +33,50 @@ class PGliteClient implements PostgresClient {
     };
   }
 
-  release(): void {}
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    this.releaseLock();
+  }
 }
 
 export class PGliteTestPool implements PostgresPool {
-  private readonly client: PGliteClient;
+  private lockTail = Promise.resolve();
 
-  constructor(private readonly database = new PGlite({ extensions: { pg_trgm } })) {
-    this.client = new PGliteClient(database);
-  }
+  constructor(private readonly database = new PGlite({ extensions: { pg_trgm } })) {}
 
-  query<Row extends Record<string, unknown>>(
+  async query<Row extends Record<string, unknown>>(
     text: string,
     values?: readonly unknown[],
   ): Promise<PostgresQueryResult<Row>> {
-    return this.client.query<Row>(text, values);
+    const release = await this.acquireLock();
+    try {
+      return await new PGliteClient(this.database, release).query<Row>(text, values);
+    } finally {
+      release();
+    }
   }
 
   async connect(): Promise<PostgresClient> {
-    return this.client;
+    return new PGliteClient(this.database, await this.acquireLock());
   }
 
   async end(): Promise<void> {
-    await this.database.close();
+    const release = await this.acquireLock();
+    try {
+      await this.database.close();
+    } finally {
+      release();
+    }
+  }
+
+  private async acquireLock(): Promise<() => void> {
+    let release!: () => void;
+    const previous = this.lockTail;
+    this.lockTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    return release;
   }
 }

@@ -38,8 +38,3 @@ export function resolveDatabaseUrl(
     return null;
   }
 }
-
-// Kept temporarily for packaged consumers compiled against the previous API.
-export const dbPointerPath = databaseUrlPointerPath;
-export const writeDbPointer = writeDatabaseUrlPointer;
-export const resolveDbPath = resolveDatabaseUrl;

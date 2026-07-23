@@ -133,7 +133,7 @@ export class NativeAutomationService {
   private async initializeInternal(): Promise<void> {
     await this.hubInstance.loadModelChannels(this.paths.channelsPath);
     await this.hubInstance.loadPersistedState(
-      new PostgresAppStore(this.options.database, this.paths.databasePath),
+      new PostgresAppStore(this.options.database, this.paths.fileStoragePath),
     );
     this.hubInstance.setMcpServers(await this.registryInstance.list());
     this.hubInstance.ensureBundledWorkflows(await this.loadWorkflows(this.options.bundledWorkflowsPath));

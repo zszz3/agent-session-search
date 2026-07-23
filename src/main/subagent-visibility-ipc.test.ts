@@ -13,8 +13,8 @@ describe("subagent visibility IPC", () => {
   });
 
   it("applies the same visibility to AI finder searches", () => {
-    expect(mainSource).toContain('store.searchSessions(visibleSearchOptions({ query, limit: 12 }))');
-    expect(mainSource).toContain('const sessions = store.searchSessions(visibleSearchOptions({');
-    expect(mainSource).toContain('const projects = store.listProjects(visibleProjectOptions())');
+    expect(mainSource).toContain('await store.searchSessions(visibleSearchOptions({ query, limit: 12 }))');
+    expect(mainSource).toContain('const sessions = await store.searchSessions(visibleSearchOptions({');
+    expect(mainSource).toContain('const projects = await store.listProjects(visibleProjectOptions())');
   });
 });

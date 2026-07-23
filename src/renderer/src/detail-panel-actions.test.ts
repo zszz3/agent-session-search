@@ -229,9 +229,9 @@ describe("detail panel actions", () => {
   });
 
   it("guards local-only commands and passes ssh args in main command handlers", () => {
-    expect(mainSource).toContain("function sshArgsForSession");
+    expect(mainSource).toContain("async function sshArgsForSession");
     expect(mainSource).toContain("buildSshArgs(environment, \"\")");
-    expect(mainSource).toContain("getResumeCommand(session, getSettings(), { sshArgs: requireSshArgsForRemoteSession(session) })");
+    expect(mainSource).toContain("{ sshArgs: await requireSshArgsForRemoteSession(session) }");
     expect(mainSource).toContain("throw new Error(\"SSH environment is not available for this remote session.\")");
     expect(mainSource).toContain("openResumeInTerminal(session, getSettings(), { sshArgs })");
     expect(mainSource).toContain("openResumeInSpecificTerminal(session, getSettings(), \"iTerm\", { sshArgs })");
@@ -260,7 +260,7 @@ describe("detail panel actions", () => {
     for (const channel of ["command:copy-resume", "command:resume", "command:resume-iterm"]) {
       const handler = mainHandlerSource(channel);
       expect(handler).not.toContain("ensureRemoteSessionDetailsLoaded(sessionKey)");
-      expect(handler).toContain("const session = store.getSession(sessionKey)");
+      expect(handler).toContain("const session = await store.getSession(sessionKey)");
     }
     expect(mainHandlerSource("command:copy-resume")).toContain("async (_event, sessionKey: string)");
   });

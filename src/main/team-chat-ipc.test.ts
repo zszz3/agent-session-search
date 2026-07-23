@@ -56,15 +56,13 @@ describe("registerTeamChatIpc", () => {
     expect(service.useLocalDatabase).toHaveBeenCalledWith();
   });
 
-  it("validates connection URLs and delegates a valid connection", async () => {
+  it("uses the shared managed database and ignores Renderer connection payloads", async () => {
     const { invoke, service } = setup();
 
-    await expect(invoke(TEAM_CHAT_CHANNELS.connectionConnect, { connectionUrl: "https://example.com/db" }))
-      .rejects.toThrow(/postgres/i);
     await expect(invoke(TEAM_CHAT_CHANNELS.connectionConnect, {
-      connectionUrl: "postgresql://user:secret@localhost/agent_recall",
+      connectionUrl: "https://renderer-must-not-select-storage.example",
     })).resolves.toMatchObject({ state: "ready" });
-    expect(service.connect).toHaveBeenCalledWith("postgresql://user:secret@localhost/agent_recall");
+    expect(service.connect).toHaveBeenCalledWith();
   });
 
   it("bounds room names and member selection before delegation", async () => {

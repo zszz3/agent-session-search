@@ -8,7 +8,7 @@ import {
   asString,
   optional,
   type RecordValue,
-} from "./sqlite-values";
+} from "./persisted-values";
 import { jsonParameter, postgresJson, postgresTime } from "./postgres-values";
 
 export class PostgresWorkflowRepository {
