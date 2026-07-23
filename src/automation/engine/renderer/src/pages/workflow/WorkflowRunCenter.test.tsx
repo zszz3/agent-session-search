@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { WorkflowRunState } from "../../../../shared/types";
+import type { RegisteredArtifact, WorkflowRunState } from "../../../../shared/types";
 import { WorkflowRunCenter } from "./WorkflowRunCenter";
 
 function run(input: { runId: string; status: WorkflowRunState["status"]; startedAt: number; finishedAt?: number; lastError?: string }): WorkflowRunState {
@@ -26,6 +26,8 @@ function run(input: { runId: string; status: WorkflowRunState["status"]; started
       title: "Research",
       status: input.status === "failed" ? "failed" : "completed",
       detail: input.status === "failed" ? "Provider disconnected" : "Report ready",
+      outputs: { result: "ready" },
+      inputSummary: { topic: "workflow history", secret: "[REDACTED]" },
       messages: [{ id: `${input.runId}:assistant`, role: "assistant", content: "Historical research answer", at: input.startedAt + 1_500 }],
     }],
     events: [
@@ -38,6 +40,7 @@ function run(input: { runId: string; status: WorkflowRunState["status"]; started
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     lastError: input.lastError,
+    configurationSnapshot: { configuredAgentId: "agent-1", runtimeId: "codex", channelId: "channel-1", modelId: "gpt-test", agentRevision: 2 },
   };
 }
 
@@ -46,12 +49,36 @@ describe("WorkflowRunCenter", () => {
     expect(renderToStaticMarkup(<WorkflowRunCenter runs={[]} open={false} onSelectRun={() => undefined} onClose={() => undefined} />)).toBe("");
   });
 
+  test("renders loading and load failure states explicitly", () => {
+    const loading = renderToStaticMarkup(<WorkflowRunCenter runs={[]} loading open onSelectRun={() => undefined} onClose={() => undefined} />);
+    const failed = renderToStaticMarkup(<WorkflowRunCenter runs={[]} error="Could not load run history" open onSelectRun={() => undefined} onClose={() => undefined} />);
+
+    expect(loading).toContain("Loading run history");
+    expect(failed).toContain("Could not load run history");
+  });
+
+  test("limits large run lists and lets the user load more", () => {
+    const runs = Array.from({ length: 55 }, (_, index) => run({ runId: `run-${index}`, status: "completed", startedAt: index + 1, finishedAt: index + 2 }));
+    const html = renderToStaticMarkup(<WorkflowRunCenter runs={runs} open onSelectRun={() => undefined} onClose={() => undefined} />);
+
+    expect(html).toContain("Load more runs");
+    expect(html).toContain("50/55");
+  });
+
   test("renders the selected historical run with frozen configuration, timeline, and errors", () => {
     const html = renderToStaticMarkup(<WorkflowRunCenter
       runs={[
         run({ runId: "latest", status: "completed", startedAt: 2_000, finishedAt: 62_000 }),
         run({ runId: "failed-run", status: "failed", startedAt: 1_000, finishedAt: 31_000, lastError: "Provider disconnected" }),
       ]}
+      artifacts={[{
+        id: "artifact-1",
+        target: "failed-run",
+        kind: "text",
+        title: "Failure report",
+        content: "A bounded historical artifact preview",
+        registeredAt: 30_000,
+      } satisfies RegisteredArtifact]}
       open
       selectedRunId="failed-run"
       onSelectRun={() => undefined}
@@ -62,15 +89,39 @@ describe("WorkflowRunCenter", () => {
     expect(html).toContain("2 runs");
     expect(html).toContain("failed-run");
     expect(html).toContain("Frozen configuration");
+    expect(html).toContain("Read-only snapshot");
     expect(html).toContain("desktop-user");
+    expect(html).toContain("Agent revision");
+    expect(html).toContain("agent-1");
     expect(html).toContain("Graph version");
     expect(html).toContain("v3");
     expect(html).toContain("Research");
+    expect(html).toContain("Node status: failed");
     expect(html).toContain("llm · gpt-test");
     expect(html).toContain("node failed");
     expect(html).toContain("Provider disconnected");
     expect(html).toContain("Message history");
     expect(html).toContain("Historical research answer");
+    expect(html).toContain("Outputs");
+    expect(html).toContain("Input summary");
+    expect(html).toContain("[REDACTED]");
+    expect(html).toContain("Filter runs");
+    expect(html).toContain("Trigger source");
+    expect(html).toContain("Failure report");
+    expect(html).toContain("A bounded historical artifact preview");
+  });
+
+  test("shows terminal metadata and result summary in the run list", () => {
+    const html = renderToStaticMarkup(<WorkflowRunCenter
+      runs={[run({ runId: "finished-run", status: "completed", startedAt: 2_000, finishedAt: 62_000 })]}
+      open
+      onSelectRun={() => undefined}
+      onClose={() => undefined}
+    />);
+
+    expect(html).toContain("manual");
+    expect(html).toContain("ready");
+    expect(html).toContain("Finished");
   });
 
   test("renders node execution telemetry for runtime, channel, model, attempts, tokens, cost, and duration", () => {
@@ -121,6 +172,33 @@ describe("WorkflowRunCenter", () => {
     expect(html).toContain("1,540");
     expect(html).toContain("$0.031");
     expect(html).toContain("15s");
+  });
+
+  test("renders historical human input and reviewer decisions", () => {
+    const observedRun = run({ runId: "decision-run", status: "failed", startedAt: 2_000, finishedAt: 62_000 });
+    observedRun.progress[0]!.inputRequest = { kind: "script_parameters", parameters: [{ key: "topic", label: "Topic", location: "body", valueType: "string", source: "user", required: true }] };
+    observedRun.events.push({
+      type: "gate_opened",
+      nodeId: "research",
+      at: 12_000,
+      detail: "Reviewer requested human decision",
+      intervention: {
+        nodeId: "research",
+        source: "review_rejection",
+        reason: "Evidence is incomplete",
+        allowedActions: ["continue", "reject"],
+        requestedAt: 12_000,
+        reviewVerdict: { decision: "reject", reasons: ["Evidence is incomplete"], riskLevel: "medium", confidence: "high" },
+      },
+    });
+
+    const html = renderToStaticMarkup(<WorkflowRunCenter runs={[observedRun]} open selectedRunId="decision-run" onSelectRun={() => undefined} onClose={() => undefined} />);
+
+    expect(html).toContain("Input requested");
+    expect(html).toContain("topic");
+    expect(html).toContain("Reviewer requested human decision");
+    expect(html).toContain("review_rejection");
+    expect(html).toContain("reject");
   });
 
   test("uses OpenAI cached-input semantics separately from Anthropic cache fields", () => {

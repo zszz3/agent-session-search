@@ -107,6 +107,7 @@ export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgres
   if (status === "awaiting_input") {
     const inputRequest = restoreWorkflowNodeInputRequest(record.inputRequest);
     if (inputRequest) item.inputRequest = inputRequest;
+    if (record.inputSummary && typeof record.inputSummary === "object" && !Array.isArray(record.inputSummary)) item.inputSummary = structuredClone(record.inputSummary) as Record<string, unknown>;
   }
   const outputs = asRecord(record.outputs);
   if (outputs) item.outputs = structuredClone(outputs);

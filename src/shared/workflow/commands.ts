@@ -4,7 +4,7 @@ import type { WorkflowV2AcceptanceCriterion, WorkflowV2CostBudget, WorkflowV2Gra
 import type { WorkflowV2InterventionAction } from "../workflow-v2/review";
 import type { WorkflowV2GenerationReviewState } from "../workflow-v2/generation-review";
 import type { WorkflowGrillMessage } from "./draft";
-import type { WorkflowArtifactReference, WorkflowEvent, WorkflowRunProgressItem, WorkflowStatus } from "./run";
+import type { WorkflowArtifactReference, WorkflowEvent, WorkflowRunConfigurationSnapshot, WorkflowRunProgressItem, WorkflowRunTriggerSource, WorkflowStatus } from "./run";
 
 // Shared request/result shells for workflow mutations. Keeping these stable
 // lets preload/main/UI layers migrate independently without renaming payloads.
@@ -130,6 +130,8 @@ export interface AppendWorkflowRunContextRequest extends AppendWorkflowContextRe
 export interface StartWorkflowRunRequest {
   workflowId: string;
   contextDocument?: string;
+  triggerSource?: WorkflowRunTriggerSource;
+  configurationSnapshot?: WorkflowRunConfigurationSnapshot;
 }
 
 export interface ListWorkflowOutputsRequest {
@@ -139,6 +141,7 @@ export interface ListWorkflowOutputsRequest {
 export interface RunWorkflowRequest {
   workflowId: string;
   contextDocument?: string;
+  triggerSource?: WorkflowRunTriggerSource;
 }
 
 export interface ConfirmWorkflowRequest {

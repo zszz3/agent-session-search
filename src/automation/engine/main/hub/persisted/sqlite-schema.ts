@@ -124,8 +124,11 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       detail text,
       task_id text,
       input_request_json text,
+      input_summary_json text,
       intervention_json text,
       messages_json text,
+      outputs_json text,
+      telemetry_json text,
       sequence integer not null,
       primary key (workflow_id, node_id)
     );
@@ -134,6 +137,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       workflow_id text not null references workflows(id) on delete cascade,
       workflow_v2_plan_json text,
       status text not null,
+      trigger_source text not null default 'manual',
+      configuration_snapshot_json text,
       context_document text not null,
       final_report text,
       started_at integer not null,
@@ -154,8 +159,11 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       detail text,
       task_id text,
       input_request_json text,
+      input_summary_json text,
       intervention_json text,
       messages_json text,
+      outputs_json text,
+      telemetry_json text,
       sequence integer not null,
       primary key (run_id, node_id)
     );
@@ -192,12 +200,20 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   ensureColumn(db, "workflows", "definition_json", "text");
   ensureColumn(db, "workflows", "workflow_v2_plan_json", "text");
   ensureColumn(db, "workflow_runs", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_runs", "trigger_source", "text not null default 'manual'");
+  ensureColumn(db, "workflow_runs", "configuration_snapshot_json", "text");
   ensureColumn(db, "workflow_run_progress", "input_request_json", "text");
   ensureColumn(db, "workflow_run_progress", "intervention_json", "text");
+  ensureColumn(db, "workflow_run_progress", "input_summary_json", "text");
   ensureColumn(db, "workflow_run_progress", "messages_json", "text");
+  ensureColumn(db, "workflow_run_progress", "outputs_json", "text");
+  ensureColumn(db, "workflow_run_progress", "telemetry_json", "text");
   ensureColumn(db, "workflow_run_nodes", "input_request_json", "text");
   ensureColumn(db, "workflow_run_nodes", "intervention_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "input_summary_json", "text");
   ensureColumn(db, "workflow_run_nodes", "messages_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "outputs_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "telemetry_json", "text");
 }
 
 function ensureColumn(db: SqliteSchemaDatabase, table: string, column: string, definition: string): void {

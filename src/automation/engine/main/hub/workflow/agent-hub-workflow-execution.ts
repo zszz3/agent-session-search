@@ -6,6 +6,7 @@ import type {
 } from "../../../shared/types";
 import type { WorkflowDraftState } from "../../../shared/workflow/draft";
 import type { WorkflowRunState } from "../../../shared/workflow/run";
+import type { RunWorkflowRequest } from "../../../shared/workflow/commands";
 
 export function scheduledWorkflowEventTarget(
   event: ScheduledWorkflowDueEvent,
@@ -51,7 +52,7 @@ export async function runScheduledWorkflowEvent(input: {
   workflow: WorkflowDraftState | undefined;
   runId: string;
   recordScheduledWorkflowRun: (run: ScheduledWorkflowRun) => void;
-  runWorkflow: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
+  runWorkflow: (input: RunWorkflowRequest) => WorkflowOperationResult;
   finishScheduledWorkflowRun: (
     runId: string,
     input: {
@@ -95,6 +96,7 @@ export async function runScheduledWorkflowEvent(input: {
   const started = input.runWorkflow({
     workflowId: input.workflow.workflowId,
     contextDocument: input.workflow.contextDocument,
+    triggerSource: "scheduled",
   });
   if (!started.ok || !started.runId) {
     const message = started.error || "Workflow failed to start.";
