@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP stdio server exposing the local agent-recall database, so
+// MCP stdio server exposing the local AgentRecall PostgreSQL database, so
 // Claude Code / Codex can recall "how did I solve X before" from past sessions
 // and manage them (tag, favorite, visibility).
 //
@@ -24,10 +24,10 @@ export function resolveAppVersion(packageUrl = new URL("../package.json", import
 }
 
 // Mirrors src/core/app-paths.ts (this file runs standalone, outside the bundle).
-export function resolveDbPath(env = process.env, home = homedir()) {
-  const override = env.AGENT_RECALL_DB && env.AGENT_RECALL_DB.trim();
+export function resolveDatabaseUrl(env = process.env, home = homedir()) {
+  const override = env.AGENT_RECALL_DATABASE_URL && env.AGENT_RECALL_DATABASE_URL.trim();
   if (override) return override;
-  const pointer = path.join(home, ".agent-recall", "db-path");
+  const pointer = path.join(home, ".agent-recall", "database-url");
   try {
     if (!existsSync(pointer)) return null;
     return readFileSync(pointer, "utf8").trim() || null;
@@ -42,13 +42,18 @@ function clamp(value, fallback, max) {
   return Math.min(Math.floor(n), max);
 }
 
-// Quote each term so user input cannot break FTS5 MATCH syntax; terms AND together.
-function ftsMatchExpr(query) {
-  const terms = query
-    .split(/\s+/)
-    .map((term) => term.replace(/["']/g, "").trim())
-    .filter(Boolean);
-  return terms.length ? terms.map((term) => `"${term}"`).join(" ") : '""';
+function searchTerms(query) {
+  const terms = [];
+  const pattern = /"([^"]+)"|(\S+)/gu;
+  for (const match of String(query ?? "").matchAll(pattern)) {
+    const value = (match[1] ?? match[2] ?? "").trim();
+    if (value) terms.push(value);
+  }
+  return terms;
+}
+
+function likePattern(term) {
+  return `%${term.replace(/[\\%_]/gu, (value) => `\\${value}`)}%`;
 }
 
 function toResult(row) {
@@ -62,70 +67,90 @@ function toResult(row) {
   };
 }
 
-const BASE_COLUMNS = ["session_key", "source", "project_path", "timestamp", "original_title", "first_question", "custom_title"];
+const RESULT_COLUMNS = `
+  s.session_key, s.source, s.project_path, s.started_at AS timestamp, s.original_title,
+  s.first_question, s.custom_title, s.ai_summary
+`;
 
-// ai_summary only exists once the app has migrated the DB; tolerate an older DB
-// (the MCP server is read-only and cannot migrate it itself).
-function hasColumn(db, table, column) {
-  try {
-    return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  } catch {
-    return false;
-  }
-}
-
-function resultColumns(db, prefix = "") {
-  const summary = hasColumn(db, "sessions", "ai_summary") ? `${prefix}ai_summary` : "NULL AS ai_summary";
-  return [...BASE_COLUMNS.map((c) => `${prefix}${c}`), summary].join(", ");
-}
-
-export function searchSessions(db, { query = "", source = "", project = "", limit = 20 } = {}) {
+export async function searchSessions(db, { query = "", source = "", project = "", limit = 20 } = {}) {
   const cap = clamp(limit, 20, MAX_RESULTS);
   const filters = [];
   const params = [];
   if (source) {
-    filters.push("s.source = ?");
     params.push(source);
+    filters.push(`s.source = $${params.length}`);
   }
   if (project) {
-    filters.push("s.project_path LIKE ?");
     params.push(`%${project}%`);
+    filters.push(`s.project_path ILIKE $${params.length}`);
   }
 
   const q = String(query || "").trim();
   if (q) {
-    const where = ["session_fts MATCH ?", ...filters].join(" AND ");
-    const rows = db
-      .prepare(
-        `SELECT ${resultColumns(db, "s.")}
-         FROM session_fts JOIN sessions s ON s.session_key = session_fts.session_key
-         WHERE ${where}
-         ORDER BY rank
-         LIMIT ?`,
-      )
-      .all(ftsMatchExpr(q), ...params, cap);
-    return rows.map(toResult);
+    const searchable = `concat_ws(' ', t.search_text, s.original_title, s.first_question, s.custom_title, s.ai_summary)`;
+    for (const term of searchTerms(q)) {
+      params.push(likePattern(term));
+      filters.push(`${searchable} ILIKE $${params.length} ESCAPE '\\'`);
+    }
+    params.push(q, cap);
+    const rows = await db.query(
+      `SELECT ${RESULT_COLUMNS},
+              max(similarity(lower(t.search_text), lower($${params.length - 1}))) AS score
+         FROM agent_recall.sessions s
+         JOIN agent_recall.session_turns t ON t.session_key = s.session_key
+        WHERE ${filters.join(" AND ")}
+        GROUP BY s.session_key
+        ORDER BY score DESC, s.file_mtime_ms DESC
+        LIMIT $${params.length}`,
+      params,
+    );
+    return rows.rows.map(toResult);
   }
 
   const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-  const rows = db
-    .prepare(`SELECT ${resultColumns(db, "s.")} FROM sessions s ${where} ORDER BY s.file_mtime_ms DESC LIMIT ?`)
-    .all(...params, cap);
-  return rows.map(toResult);
+  params.push(cap);
+  const rows = await db.query(
+    `SELECT ${RESULT_COLUMNS}
+       FROM agent_recall.sessions s
+       ${where}
+      ORDER BY s.file_mtime_ms DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+  return rows.rows.map(toResult);
 }
 
-export function getSession(db, { sessionKey, maxMessages = 40, offset = 0 } = {}) {
+export async function getSession(db, { sessionKey, maxMessages = 40, offset = 0 } = {}) {
   if (!sessionKey) return null;
-  const row = db.prepare("SELECT * FROM sessions WHERE session_key = ?").get(sessionKey);
+  const row = (await db.query(
+    `SELECT ${RESULT_COLUMNS}
+       FROM agent_recall.sessions s
+      WHERE s.session_key = $1`,
+    [sessionKey],
+  )).rows[0];
   if (!row) return null;
   const cap = clamp(maxMessages, 40, MAX_MESSAGES);
   const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
-  const totalRow = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_key = ?").get(sessionKey);
-  const totalMessages = totalRow?.n ?? 0;
-  const messages = db
-    .prepare("SELECT role, content FROM messages WHERE session_key = ? ORDER BY message_index LIMIT ? OFFSET ?")
-    .all(sessionKey, cap, start);
-  const nextOffset = start + messages.length < totalMessages ? start + messages.length : null;
+  const totalRow = (await db.query(
+    `SELECT count(*)::integer AS n
+       FROM agent_recall.turn_messages m
+       JOIN agent_recall.session_turns t ON t.id = m.turn_id
+      WHERE t.session_key = $1`,
+    [sessionKey],
+  )).rows[0];
+  const totalMessages = Number(totalRow?.n ?? 0);
+  const messages = (await db.query(
+    `SELECT m.role, m.content
+       FROM agent_recall.turn_messages m
+       JOIN agent_recall.session_turns t ON t.id = m.turn_id
+      WHERE t.session_key = $1
+      ORDER BY t.turn_index, m.message_index
+      LIMIT $2 OFFSET $3`,
+    [sessionKey, cap, start],
+  )).rows;
+  const nextOffset = start + messages.length < totalMessages
+    ? start + messages.length
+    : null;
   return {
     ...toResult(row),
     totalMessages,
@@ -137,42 +162,50 @@ export function getSession(db, { sessionKey, maxMessages = 40, offset = 0 } = {}
   };
 }
 
-export function listProjects(db) {
-  return db
-    .prepare(
-      "SELECT project_path, COUNT(*) AS sessions FROM sessions WHERE project_path <> '' GROUP BY project_path ORDER BY sessions DESC LIMIT 100",
-    )
-    .all()
-    .map((row) => ({ project: row.project_path, sessions: row.sessions }));
+export async function listProjects(db) {
+  const result = await db.query(
+    `SELECT project_path, count(*)::integer AS sessions
+       FROM agent_recall.sessions
+      WHERE project_path <> ''
+      GROUP BY project_path
+      ORDER BY sessions DESC
+      LIMIT 100`,
+  );
+  return result.rows.map((row) => ({ project: row.project_path, sessions: Number(row.sessions) }));
 }
 
-export function listTags(db) {
-  return db.prepare("SELECT name FROM tags ORDER BY lower(name)").all().map((row) => row.name);
+export async function listTags(db) {
+  return (await db.query("SELECT name FROM agent_recall.tags ORDER BY lower(name)")).rows
+    .map((row) => row.name);
 }
 
 // Returns the most recently active sessions (by file mtime / last activity).
 // This lets an agent find "the session I'm currently in" or "my latest codex
 // session" without a sessionKey — the missing piece for natural-language
 // migration like "把这次会话迁移到 claude".
-export function getLatestSessions(db, { source = "", projectPath = "", limit = 5 } = {}) {
+export async function getLatestSessions(db, { source = "", projectPath = "", limit = 5 } = {}) {
   const cap = clamp(limit, 1, 20);
   const filters = [];
   const params = [];
   if (source) {
-    filters.push("s.source = ?");
     params.push(source);
+    filters.push(`s.source = $${params.length}`);
   }
   if (projectPath) {
-    filters.push("s.project_path LIKE ?");
     params.push(`%${projectPath}%`);
+    filters.push(`s.project_path ILIKE $${params.length}`);
   }
   const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-  const rows = db
-    .prepare(
-      `SELECT ${resultColumns(db, "s.")} FROM sessions s ${where} ORDER BY s.file_mtime_ms DESC LIMIT ?`,
-    )
-    .all(...params, cap);
-  return rows.map(toResult);
+  params.push(cap);
+  const rows = await db.query(
+    `SELECT ${RESULT_COLUMNS}
+       FROM agent_recall.sessions s
+       ${where}
+      ORDER BY s.file_mtime_ms DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+  return rows.rows.map(toResult);
 }
 
 // --- Write operations -----------------------------------------------------
@@ -180,55 +213,74 @@ export function getLatestSessions(db, { source = "", projectPath = "", limit = 5
 // raw SQL because this bin runs standalone (outside the app bundle) and can't
 // import SessionStore. All are idempotent.
 
-function sessionExists(db, sessionKey) {
-  return Boolean(db.prepare("SELECT 1 FROM sessions WHERE session_key = ?").get(sessionKey));
+async function sessionExists(db, sessionKey) {
+  return (await db.query(
+    "SELECT 1 FROM agent_recall.sessions WHERE session_key = $1",
+    [sessionKey],
+  )).rows.length > 0;
 }
 
-function currentTags(db, sessionKey) {
-  return db
-    .prepare(
-      `SELECT tags.name
-       FROM session_tags JOIN tags ON tags.id = session_tags.tag_id
-       WHERE session_tags.session_key = ?
-       ORDER BY lower(tags.name)`,
-    )
-    .all(sessionKey)
-    .map((row) => row.name);
+async function currentTags(db, sessionKey) {
+  return (await db.query(
+    `SELECT tags.name
+       FROM agent_recall.session_tags
+       JOIN agent_recall.tags ON tags.id = session_tags.tag_id
+      WHERE session_tags.session_key = $1
+      ORDER BY lower(tags.name)`,
+    [sessionKey],
+  )).rows.map((row) => row.name);
 }
 
 // Drop a tag from the tags table once no session references it (matches
 // SessionStore.deleteUnusedTag), so removing the last use doesn't leave orphans.
-function deleteUnusedTag(db, tagName) {
-  db.prepare(
-    `DELETE FROM tags
-     WHERE name = ?
-       AND NOT EXISTS (SELECT 1 FROM session_tags WHERE session_tags.tag_id = tags.id)`,
-  ).run(tagName);
+async function deleteUnusedTag(db, tagName) {
+  await db.query(
+    `DELETE FROM agent_recall.tags
+      WHERE name = $1
+        AND NOT EXISTS (
+          SELECT 1
+            FROM agent_recall.session_tags
+           WHERE session_tags.tag_id = tags.id
+        )`,
+    [tagName],
+  );
 }
 
-export function tagSession(db, { sessionKey, action, tag } = {}) {
-  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+export async function tagSession(db, { sessionKey, action, tag } = {}) {
+  if (!sessionKey || !await sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
   const name = String(tag ?? "").trim();
   if (!name) return { ok: false, error: "Tag must not be empty." };
   if (action !== "add" && action !== "remove") return { ok: false, error: 'action must be "add" or "remove".' };
 
   if (action === "add") {
-    db.prepare("INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING").run(name);
-    const row = db.prepare("SELECT id FROM tags WHERE name = ?").get(name);
-    db.prepare("INSERT INTO session_tags (session_key, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(sessionKey, row.id);
+    await db.query(
+      "INSERT INTO agent_recall.tags (name) VALUES ($1) ON CONFLICT(name) DO NOTHING",
+      [name],
+    );
+    await db.query(
+      `INSERT INTO agent_recall.session_tags (session_key, tag_id)
+       SELECT $1, id FROM agent_recall.tags WHERE name = $2
+       ON CONFLICT DO NOTHING`,
+      [sessionKey, name],
+    );
   } else {
-    db.prepare(
-      `DELETE FROM session_tags
-       WHERE session_key = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)`,
-    ).run(sessionKey, name);
-    deleteUnusedTag(db, name);
+    await db.query(
+      `DELETE FROM agent_recall.session_tags
+        WHERE session_key = $1
+          AND tag_id = (SELECT id FROM agent_recall.tags WHERE name = $2)`,
+      [sessionKey, name],
+    );
+    await deleteUnusedTag(db, name);
   }
-  return { ok: true, sessionKey, action, tag: name, tags: currentTags(db, sessionKey) };
+  return { ok: true, sessionKey, action, tag: name, tags: await currentTags(db, sessionKey) };
 }
 
-export function toggleFavorite(db, { sessionKey, favorited } = {}) {
-  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
-  db.prepare("UPDATE sessions SET favorited = ? WHERE session_key = ?").run(favorited ? 1 : 0, sessionKey);
+export async function toggleFavorite(db, { sessionKey, favorited } = {}) {
+  if (!sessionKey || !await sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+  await db.query(
+    "UPDATE agent_recall.sessions SET favorited = $1 WHERE session_key = $2",
+    [Boolean(favorited), sessionKey],
+  );
   return { ok: true, sessionKey, favorited: Boolean(favorited) };
 }
 
@@ -236,33 +288,48 @@ export function toggleFavorite(db, { sessionKey, favorited } = {}) {
 // pinned / hidden flags (see App.tsx ViewMode). Each call sets the requested
 // dimension and clears what would otherwise hide the session from that view,
 // without disturbing unrelated flags (e.g. favoriting doesn't unpin).
-export function setVisibility(db, { sessionKey, visibility } = {}) {
-  if (!sessionKey || !sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
+export async function setVisibility(db, { sessionKey, visibility } = {}) {
+  if (!sessionKey || !await sessionExists(db, sessionKey)) return { ok: false, error: "Session not found." };
   switch (visibility) {
     case "default":
       // Return to the normal list: un-hide and un-pin, leave favorite as-is.
-      db.prepare("UPDATE sessions SET hidden = 0, pinned = 0 WHERE session_key = ?").run(sessionKey);
+      await db.query(
+        "UPDATE agent_recall.sessions SET hidden = false, pinned = false WHERE session_key = $1",
+        [sessionKey],
+      );
       break;
     case "favorites":
-      db.prepare("UPDATE sessions SET favorited = 1, hidden = 0 WHERE session_key = ?").run(sessionKey);
+      await db.query(
+        "UPDATE agent_recall.sessions SET favorited = true, hidden = false WHERE session_key = $1",
+        [sessionKey],
+      );
       break;
     case "pinned":
-      db.prepare("UPDATE sessions SET pinned = 1, hidden = 0 WHERE session_key = ?").run(sessionKey);
+      await db.query(
+        "UPDATE agent_recall.sessions SET pinned = true, hidden = false WHERE session_key = $1",
+        [sessionKey],
+      );
       break;
     case "hidden":
-      db.prepare("UPDATE sessions SET hidden = 1 WHERE session_key = ?").run(sessionKey);
+      await db.query(
+        "UPDATE agent_recall.sessions SET hidden = true WHERE session_key = $1",
+        [sessionKey],
+      );
       break;
     default:
       return { ok: false, error: 'visibility must be one of "default", "favorites", "hidden", "pinned".' };
   }
-  const row = db.prepare("SELECT favorited, pinned, hidden FROM sessions WHERE session_key = ?").get(sessionKey);
+  const row = (await db.query(
+    "SELECT favorited, pinned, hidden FROM agent_recall.sessions WHERE session_key = $1",
+    [sessionKey],
+  )).rows[0];
   return {
     ok: true,
     sessionKey,
     visibility,
-    favorited: row.favorited === 1,
-    pinned: row.pinned === 1,
-    hidden: row.hidden === 1,
+    favorited: row.favorited === true,
+    pinned: row.pinned === true,
+    hidden: row.hidden === true,
   };
 }
 
@@ -279,7 +346,7 @@ function validateMigrationBundle(bundle) {
   ) {
     throw new Error("migration bundle is missing MIGRATION_TARGET_IDS");
   }
-  for (const name of ["isMigrationTarget", "SessionStore", "migrateSessionForMcp"]) {
+  for (const name of ["isMigrationTarget", "openMcpSessionStore", "migrateSessionForMcp"]) {
     if (typeof bundle[name] !== "function") {
       throw new Error(`migration bundle is missing ${name}`);
     }
@@ -310,9 +377,9 @@ async function loadMigrationBundle() {
   );
 }
 
-// SDK-free, unit-testable wrapper. Accepts a raw DatabaseSync (the same handle
-// the query/write tools use) and delegates to the bundled migration facade.
-export async function migrateSession(db, { sessionKey, target } = {}) {
+// SDK-free wrapper. It opens a typed SessionStore over the same PostgreSQL
+// endpoint and delegates to the bundled migration facade.
+export async function migrateSession(connectionUrl, { sessionKey, target } = {}) {
   if (!sessionKey || typeof sessionKey !== "string") {
     return { ok: false, error: "sessionKey is required." };
   }
@@ -320,7 +387,10 @@ export async function migrateSession(db, { sessionKey, target } = {}) {
   if (!bundle.isMigrationTarget(target)) {
     return { ok: false, error: `target must be one of ${bundle.MIGRATION_TARGET_IDS.map((value) => `"${value}"`).join(", ")}.` };
   }
-  const store = new bundle.SessionStore(db);
+  if (!connectionUrl || typeof connectionUrl !== "string") {
+    return { ok: false, error: "PostgreSQL connection URL is unavailable." };
+  }
+  const store = await bundle.openMcpSessionStore(connectionUrl);
   try {
     const result = await bundle.migrateSessionForMcp(
       { sessionKey, target },
@@ -329,6 +399,8 @@ export async function migrateSession(db, { sessionKey, target } = {}) {
     return { ok: true, ...result };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await store.close().catch(() => undefined);
   }
 }
 
@@ -349,25 +421,27 @@ function errorContent(message) {
 }
 
 async function runServer() {
-  const dbPath = resolveDbPath();
-  if (!dbPath || !existsSync(dbPath)) {
+  const databaseUrl = resolveDatabaseUrl();
+  if (!databaseUrl) {
     process.stderr.write(
-      "agent-recall database not found. Open the app at least once, or set AGENT_RECALL_DB.\n",
+      "AgentRecall PostgreSQL endpoint not found. Open the app, or set AGENT_RECALL_DATABASE_URL.\n",
     );
     process.exit(1);
   }
 
-  const { DatabaseSync } = await import("node:sqlite");
+  const { Pool } = await import("pg");
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const { z } = await import("zod");
 
-  // Read-write: the write tools (tag/favorite/visibility) mutate this DB. The
-  // app keeps it in WAL mode, so this separate process writes safely alongside
-  // it (SQLite serializes writers). busy_timeout tolerates brief write contention.
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA busy_timeout = 5000");
-  db.exec("PRAGMA foreign_keys = ON");
+  const db = new Pool({
+    connectionString: databaseUrl,
+    max: 3,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    application_name: "agent-recall-mcp",
+  });
+  await db.query("SELECT 1");
   const server = new McpServer({ name: "agent-recall", version: resolveAppVersion() });
   let migrateTargetSchema = null;
   try {
@@ -391,7 +465,7 @@ async function runServer() {
         limit: z.number().describe("Max results (1-50, default 20).").optional(),
       },
     },
-    async (args) => jsonContent(searchSessions(db, args)),
+    async (args) => jsonContent(await searchSessions(db, args)),
   );
 
   server.registerTool(
@@ -406,7 +480,7 @@ async function runServer() {
       },
     },
     async (args) => {
-      const result = getSession(db, args);
+      const result = await getSession(db, args);
       return result ? jsonContent(result) : { content: [{ type: "text", text: "Session not found." }], isError: true };
     },
   );
@@ -414,13 +488,13 @@ async function runServer() {
   server.registerTool(
     "list_projects",
     { description: "List indexed projects with session counts, to scope a search.", inputSchema: {} },
-    async () => jsonContent(listProjects(db)),
+    async () => jsonContent(await listProjects(db)),
   );
 
   server.registerTool(
     "list_tags",
     { description: "List all tags, to scope a search.", inputSchema: {} },
-    async () => jsonContent(listTags(db)),
+    async () => jsonContent(await listTags(db)),
   );
 
   server.registerTool(
@@ -438,7 +512,7 @@ async function runServer() {
         limit: z.number().describe("Max results (1-20, default 5).").optional(),
       },
     },
-    async (args) => jsonContent(getLatestSessions(db, args)),
+    async (args) => jsonContent(await getLatestSessions(db, args)),
   );
 
   server.registerTool(
@@ -453,7 +527,7 @@ async function runServer() {
       },
     },
     async (args) => {
-      const result = tagSession(db, args);
+      const result = await tagSession(db, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
   );
@@ -468,7 +542,7 @@ async function runServer() {
       },
     },
     async (args) => {
-      const result = toggleFavorite(db, args);
+      const result = await toggleFavorite(db, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
   );
@@ -484,7 +558,7 @@ async function runServer() {
       },
     },
     async (args) => {
-      const result = setVisibility(db, args);
+      const result = await setVisibility(db, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
   );
@@ -506,12 +580,17 @@ async function runServer() {
       },
     },
     async (args) => {
-      const result = await migrateSession(db, args);
+      const result = await migrateSession(databaseUrl, args);
       return result.ok ? jsonContent(result) : errorContent(result.error);
     },
     );
   }
 
+  const close = async () => {
+    await db.end().catch(() => undefined);
+  };
+  process.once("SIGINT", () => void close().finally(() => process.exit(0)));
+  process.once("SIGTERM", () => void close().finally(() => process.exit(0)));
   await server.connect(new StdioServerTransport());
 }
 

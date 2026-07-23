@@ -7,7 +7,7 @@ import {
   loadMcpSourceSession,
   migrateSessionForMcp,
 } from "./mcp-migration";
-import { createInMemoryStore } from "./session-store";
+import { createInMemoryStore } from "./postgres/test-session-store";
 import {
   loadClaudeCliSessionRows,
   loadCodeBuddyCliSessionFile,
@@ -32,10 +32,10 @@ afterAll(() => {
   for (const directory of temporaryProjectDirectories) fs.rmSync(directory, { recursive: true, force: true });
 });
 
-function seedLocalSession(
+async function seedLocalSession(
   store: ReturnType<typeof createInMemoryStore>,
   overrides: Partial<IndexedSession> & { messages?: SessionMessage[] } = {},
-): { sessionKey: string; projectPath: string } {
+): Promise<{ sessionKey: string; projectPath: string }> {
   const projectPath = overrides.projectPath ?? makeProjectDir();
   const sessionKey = overrides.sessionKey ?? "codex:source-1";
   const base: IndexedSession = {
@@ -57,7 +57,7 @@ function seedLocalSession(
     { role: "user", content: "how do I fix the bug", timestamp: "2026-06-01T10:00:00Z", index: 0 },
     { role: "assistant", content: "I will help you fix the bug", timestamp: "2026-06-01T10:01:00Z", index: 1 },
   ];
-  store.upsertIndexedSession(base, messages, [], []);
+  await store.upsertIndexedSession(base, messages, [], []);
   return { sessionKey, projectPath };
 }
 
@@ -104,7 +104,7 @@ describe("migrateSessionForMcp — happy path", () => {
     "migrates a local session to %s, writes a loadable file, indexes it, and returns launched=false",
     async (target) => {
       const store = createInMemoryStore();
-      const { sessionKey, projectPath } = seedLocalSession(store);
+      const { sessionKey, projectPath } = await seedLocalSession(store);
       const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
       try {
         const result = await migrateSessionForMcp(
@@ -128,11 +128,11 @@ describe("migrateSessionForMcp — happy path", () => {
 
         // The migrated session is immediately searchable in the DB.
         const indexedSessionKey = loaded?.session.sessionKey ?? `${target}:${result.targetSessionId}`;
-        const found = store.getSession(indexedSessionKey);
+        const found = await store.getSession(indexedSessionKey);
         expect(found).not.toBeNull();
         expect(found?.source).toBe(targetSources[target]);
       } finally {
-        store.close();
+        await store.close();
         fs.rmSync(homeDir, { recursive: true, force: true });
         fs.rmSync(projectPath, { recursive: true, force: true });
       }
@@ -143,7 +143,7 @@ describe("migrateSessionForMcp — happy path", () => {
     const store = createInMemoryStore();
     const projectPath = makeProjectDir();
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
-    const { sessionKey } = seedLocalSession(store, {
+    const { sessionKey } = await seedLocalSession(store, {
       sessionKey: "tclaude:source-1",
       rawId: "source-1",
       source: "tclaude-cli",
@@ -157,16 +157,16 @@ describe("migrateSessionForMcp — happy path", () => {
 
       expect(result).toMatchObject({ target: "codex-internal", launched: false, indexed: true });
       expect(result.targetFilePath).toContain(path.join(homeDir, ".codex-internal"));
-      const indexed = store.getSession(`codex-internal:${result.targetSessionId}`);
+      const indexed = await store.getSession(`codex-internal:${result.targetSessionId}`);
       expect(indexed?.source).toBe("codex-internal");
-      expect(store.listSessionMigrations(sessionKey)[0]).toMatchObject({
+      expect((await store.listSessionMigrations(sessionKey))[0]).toMatchObject({
         sourceAgent: "claude",
         targetAgent: "codex-internal",
       });
       expect(result.resumeCommand).toContain(`CODEX_HOME=${path.join(homeDir, ".codex-internal")}`);
       expect(result.resumeCommand).toContain(result.targetSessionId);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
       fs.rmSync(projectPath, { recursive: true, force: true });
     }
@@ -174,7 +174,7 @@ describe("migrateSessionForMcp — happy path", () => {
 
   it("rejects a disabled optional target before CLI inspection or file writes", async () => {
     const store = createInMemoryStore();
-    const { sessionKey, projectPath } = seedLocalSession(store);
+    const { sessionKey, projectPath } = await seedLocalSession(store);
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     const inspectCli = vi.fn(noOpInspect);
     try {
@@ -186,9 +186,9 @@ describe("migrateSessionForMcp — happy path", () => {
       ).rejects.toThrow("TCodex migration target is disabled in Settings.");
       expect(inspectCli).not.toHaveBeenCalled();
       expect(fs.existsSync(path.join(homeDir, ".tcodex"))).toBe(false);
-      expect(store.listSessionMigrations(sessionKey)).toEqual([]);
+      expect(await store.listSessionMigrations(sessionKey)).toEqual([]);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
       fs.rmSync(projectPath, { recursive: true, force: true });
     }
@@ -196,14 +196,14 @@ describe("migrateSessionForMcp — happy path", () => {
 
   it("records a session_migrations row", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store);
+    const { sessionKey } = await seedLocalSession(store);
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     try {
       const result = await migrateSessionForMcp(
         { sessionKey, target: "codex" },
         { store, settings: defaultSettings, inspectCli: noOpInspect, homeDir, idFactory: () => "migration-id-1", now: () => 12345 },
       );
-      const migrations = store.listSessionMigrations(sessionKey);
+      const migrations = await store.listSessionMigrations(sessionKey);
       expect(migrations).toHaveLength(1);
       expect(migrations[0]).toMatchObject({
         id: "migration-id-1",
@@ -261,7 +261,7 @@ describe("migrateSessionForMcp — long-session compression", () => {
 
   it("uses ai-compressed strategy when the compressor succeeds", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store, { messages: longMessages() });
+    const { sessionKey } = await seedLocalSession(store, { messages: longMessages() });
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     const compress = vi.fn().mockResolvedValue(VALID_HANDOFF);
     try {
@@ -279,7 +279,7 @@ describe("migrateSessionForMcp — long-session compression", () => {
 
   it("falls back to locally-truncated when compression fails", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store, { messages: longMessages() });
+    const { sessionKey } = await seedLocalSession(store, { messages: longMessages() });
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     const compress = vi.fn().mockRejectedValue(new Error("provider down"));
     try {
@@ -296,7 +296,7 @@ describe("migrateSessionForMcp — long-session compression", () => {
 
   it("falls back to locally-truncated when no compressor is available", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store, { messages: longMessages() });
+    const { sessionKey } = await seedLocalSession(store, { messages: longMessages() });
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     try {
       // No custom provider configured and no compressor injected => null compressor.
@@ -314,7 +314,7 @@ describe("migrateSessionForMcp — long-session compression", () => {
 describe("migrateSessionForMcp — custom provider", () => {
   it("builds the compressor from a configured custom summary endpoint", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store);
+    const { sessionKey } = await seedLocalSession(store);
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mig-home-"));
     try {
       // Provide a complete custom provider so resolveSummaryEndpoint returns a
@@ -345,12 +345,12 @@ describe("migrateSessionForMcp — custom provider", () => {
 });
 
 describe("migrateSessionForMcp — temporary session cleanup", () => {
-  it("deletes a temporary codex:* session record produced during compression", () => {
+  it("deletes a temporary codex:* session record produced during compression", async () => {
     const store = createInMemoryStore();
     // Seed a real session + a dirty temporary codex session that an ephemeral
     // codex exec run would leave behind.
-    seedLocalSession(store, { sessionKey: "codex:real" });
-    store.upsertIndexedSession(
+    await seedLocalSession(store, { sessionKey: "codex:real" });
+    await store.upsertIndexedSession(
       {
         sessionKey: "codex:temp-ephemeral",
         rawId: "temp-ephemeral",
@@ -369,14 +369,16 @@ describe("migrateSessionForMcp — temporary session cleanup", () => {
       [],
       [],
     );
-    expect(store.getSession("codex:temp-ephemeral")).not.toBeNull();
+    expect(await store.getSession("codex:temp-ephemeral")).not.toBeNull();
 
     const cleaner = createMcpTemporarySessionCleaner(store);
     cleaner("codex:temp-ephemeral");
+    await vi.waitFor(async () => {
+      expect(await store.getSession("codex:temp-ephemeral")).toBeNull();
+    });
 
-    expect(store.getSession("codex:temp-ephemeral")).toBeNull();
     // The real session is untouched.
-    expect(store.getSession("codex:real")).not.toBeNull();
+    expect(await store.getSession("codex:real")).not.toBeNull();
   });
 
   it("does not throw when cleaning a non-existent session", () => {
@@ -401,7 +403,7 @@ describe("migrateSessionForMcp — error cases", () => {
     const store = createInMemoryStore();
     const projectPath = makeProjectDir();
     // Register an SSH environment so hydrateRow resolves the session as remote.
-    store.upsertEnvironment({
+    await store.upsertEnvironment({
       id: "ssh-env-1",
       kind: "ssh",
       label: "Remote Build Server",
@@ -410,7 +412,7 @@ describe("migrateSessionForMcp — error cases", () => {
       enabled: true,
     });
     // Seed a session belonging to that SSH environment.
-    store.upsertIndexedSession(
+    await store.upsertIndexedSession(
       {
         sessionKey: "codex:remote-1",
         rawId: "remote-1",
@@ -441,7 +443,7 @@ describe("migrateSessionForMcp — error cases", () => {
 
   it("rejects when the project path does not exist", async () => {
     const store = createInMemoryStore();
-    seedLocalSession(store, { projectPath: "/this/path/definitely/does/not/exist" });
+    await seedLocalSession(store, { projectPath: "/this/path/definitely/does/not/exist" });
     await expect(
       migrateSessionForMcp(
         { sessionKey: "codex:source-1", target: "codex" },
@@ -452,7 +454,7 @@ describe("migrateSessionForMcp — error cases", () => {
 
   it("rejects when the CLI version check fails", async () => {
     const store = createInMemoryStore();
-    const { sessionKey } = seedLocalSession(store);
+    const { sessionKey } = await seedLocalSession(store);
     const failingInspect = async () => {
       throw new Error("Codex CLI binary not found: codex");
     };
@@ -464,14 +466,14 @@ describe("migrateSessionForMcp — error cases", () => {
     ).rejects.toThrow("binary not found");
   });
 
-  it("validates the source session is local before any work", () => {
+  it("validates the source session is local before any work", async () => {
     const store = createInMemoryStore();
-    expect(() => loadMcpSourceSession(store, "codex:missing")).toThrow("Session not found");
+    await expect(loadMcpSourceSession(store, "codex:missing")).rejects.toThrow("Session not found");
   });
 
   it("rejects an empty project path", async () => {
     const store = createInMemoryStore();
-    store.upsertIndexedSession(
+    await store.upsertIndexedSession(
       {
         sessionKey: "codex:no-path",
         rawId: "no-path",

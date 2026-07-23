@@ -8,8 +8,8 @@ import { SkillService, type SkillStorePort } from "./services/skill-service";
 
 function createHarness(options: { throwOnSources?: boolean } = {}) {
   const store: SkillStorePort = {
-    listProjects: vi.fn(() => []),
-    getSkillUsageSnapshot: vi.fn(() => ({
+    listProjects: vi.fn(async () => []),
+    getSkillUsageSnapshot: vi.fn(async () => ({
       path: "/tmp/usage.jsonl",
       exists: false,
       totalEvents: 0,
@@ -17,13 +17,13 @@ function createHarness(options: { throwOnSources?: boolean } = {}) {
       byName: {},
       byAgentName: {},
     })),
-    isSkillUsageSourceFresh: vi.fn(() => false),
-    upsertSkillUsageSource: vi.fn(),
-    pruneSkillUsageSources: vi.fn(),
-    listSkillSyncBindings: vi.fn(() => []),
-    getSkillSyncBindingForPortableIdentity: vi.fn(() => null),
-    upsertSkillSyncBinding: vi.fn(),
-    deleteSkillSyncBindingsForRemoteIds: vi.fn(),
+    isSkillUsageSourceFresh: vi.fn(async () => false),
+    upsertSkillUsageSource: vi.fn(async () => undefined),
+    pruneSkillUsageSources: vi.fn(async () => undefined),
+    listSkillSyncBindings: vi.fn(async () => []),
+    getSkillSyncBindingForPortableIdentity: vi.fn(async () => null),
+    upsertSkillSyncBinding: vi.fn(async () => undefined),
+    deleteSkillSyncBindingsForRemoteIds: vi.fn(async () => undefined),
   };
   const timeoutCallbacks = new Map<number, () => void>();
   const intervalCallbacks = new Map<number, () => void>();
@@ -73,7 +73,7 @@ function createHarness(options: { throwOnSources?: boolean } = {}) {
 }
 
 describe("skill usage refresh lifecycle", () => {
-  it("starts exactly one initial refresh and one background interval", () => {
+  it("starts exactly one initial refresh and one background interval", async () => {
     const harness = createHarness();
     harness.service.startUsageRefresh();
     harness.service.startUsageRefresh();
@@ -83,8 +83,10 @@ describe("skill usage refresh lifecycle", () => {
     harness.timeoutCallbacks.get(1)?.();
     harness.intervalCallbacks.get(2)?.();
 
-    expect(harness.listSkillUsageSources).toHaveBeenCalledTimes(2);
-    expect(harness.store.pruneSkillUsageSources).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(harness.listSkillUsageSources).toHaveBeenCalledTimes(2);
+      expect(harness.store.pruneSkillUsageSources).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("uses the configured refresh delays", () => {
@@ -126,9 +128,9 @@ describe("skill usage refresh lifecycle", () => {
     expect(harness.clearInterval).toHaveBeenCalledWith(2);
   });
 
-  it("isolates background refresh failures and reports them", () => {
+  it("isolates background refresh failures and reports them", async () => {
     const harness = createHarness({ throwOnSources: true });
-    expect(() => harness.service.refreshUsageSafely()).not.toThrow();
+    await expect(harness.service.refreshUsageSafely()).resolves.toBeUndefined();
     expect(harness.logError).toHaveBeenCalledWith("Failed to refresh skill usage: usage source failed");
   });
 });

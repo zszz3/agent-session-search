@@ -152,7 +152,7 @@ describe("remote session sync model", () => {
     expect(first.payload.search_text).toContain("Fixed the login bug");
   });
 
-  it("builds upload payloads for indexed SSH remote sessions", () => {
+  it("builds upload payloads for indexed SSH remote sessions", async () => {
     const remoteSession: SessionSearchResult = {
       ...SESSION,
       sessionKey: "codex:ssh:abc",
@@ -164,12 +164,16 @@ describe("remote session sync model", () => {
       environmentLabel: "SSH dev",
     };
     const store = {
-      getSession: () => remoteSession,
-      getAllMessages: () => MESSAGES,
-      getTraceEvents: () => [],
+      getSession: async () => remoteSession,
+      getAllMessages: async () => MESSAGES,
+      getTraceEvents: async () => [],
     };
 
-    const { payload, portable } = buildRemoteSessionUploadFromStore(store, remoteSession.sessionKey, 12_000);
+    const { payload, portable } = await buildRemoteSessionUploadFromStore(
+      store,
+      remoteSession.sessionKey,
+      12_000,
+    );
 
     expect(portable).toMatchObject({
       sourceSessionKey: "codex:ssh:abc",

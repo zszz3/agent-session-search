@@ -2,7 +2,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { dbPointerPath, resolveDbPath, writeDbPointer } from "./app-paths";
+import {
+  databaseUrlPointerPath,
+  resolveDatabaseUrl,
+  writeDatabaseUrlPointer,
+} from "./app-paths";
 
 describe("app-paths db pointer", () => {
   let home: string;
@@ -14,17 +18,20 @@ describe("app-paths db pointer", () => {
   });
 
   it("writes and reads back the pointer", () => {
-    writeDbPointer("/data/session-search.sqlite", home);
-    expect(readFileSync(dbPointerPath(home), "utf8").trim()).toBe("/data/session-search.sqlite");
-    expect(resolveDbPath({}, home)).toBe("/data/session-search.sqlite");
+    const connectionUrl = "postgresql://agent:secret@127.0.0.1:5432/agent_recall";
+    writeDatabaseUrlPointer(connectionUrl, home);
+    expect(readFileSync(databaseUrlPointerPath(home), "utf8").trim()).toBe(connectionUrl);
+    expect(resolveDatabaseUrl({}, home)).toBe(connectionUrl);
   });
 
   it("prefers the env override over the pointer", () => {
-    writeDbPointer("/data/from-pointer.sqlite", home);
-    expect(resolveDbPath({ AGENT_RECALL_DB: "/data/from-env.sqlite" }, home)).toBe("/data/from-env.sqlite");
+    writeDatabaseUrlPointer("postgresql://pointer@127.0.0.1/agent_recall", home);
+    expect(resolveDatabaseUrl({
+      AGENT_RECALL_DATABASE_URL: "postgresql://override@127.0.0.1/agent_recall",
+    }, home)).toBe("postgresql://override@127.0.0.1/agent_recall");
   });
 
   it("returns null when neither override nor pointer exists", () => {
-    expect(resolveDbPath({}, home)).toBeNull();
+    expect(resolveDatabaseUrl({}, home)).toBeNull();
   });
 });

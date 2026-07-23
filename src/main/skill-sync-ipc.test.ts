@@ -26,9 +26,9 @@ function createMainRegistrar() {
 
 function createService(): SkillsIpcService {
   return {
-    listSkills: vi.fn(() => ({ skills: [], roots: [], scannedAt: 1 })),
-    listImportCandidates: vi.fn(() => ({ skills: [], roots: [], scannedAt: 1 })),
-    importLocalSkills: vi.fn(() => []),
+    listSkills: vi.fn(async () => ({ skills: [], roots: [], scannedAt: 1 })),
+    listImportCandidates: vi.fn(async () => ({ skills: [], roots: [], scannedAt: 1 })),
+    importLocalSkills: vi.fn(async () => []),
     updateManagedSkillTargets: vi.fn(() => ({} as never)),
     listDiscoveredSkills: vi.fn(async () => ({ skills: [], total: 0, hasMore: false, page: 0, stale: false })),
     aiSearchDiscoveredSkills: vi.fn(async () => ({
@@ -42,7 +42,7 @@ function createService(): SkillsIpcService {
     })),
     getDiscoveredSkill: vi.fn(async () => { throw new Error("not used"); }),
     importDiscoveredSkill: vi.fn(async () => { throw new Error("not used"); }),
-    refreshUsage: vi.fn(() => ({ refreshed: 0, skipped: 0, total: 0, totalEvents: 0, lastRefreshedAt: 1 })),
+    refreshUsage: vi.fn(async () => ({ refreshed: 0, skipped: 0, total: 0, totalEvents: 0, lastRefreshedAt: 1 })),
     getSyncSnapshot: vi.fn(async () => ({
       status: { kind: "ready" as const, setupSql: "select 1" },
       remoteSkillGroups: [],
@@ -65,7 +65,7 @@ function createService(): SkillsIpcService {
     copySetupSql: vi.fn(),
     copyPath: vi.fn(),
     reveal: vi.fn(async () => undefined),
-    delete: vi.fn(() => ({ deletedPath: "/tmp/skill", skillName: "skill" })),
+    delete: vi.fn(async () => ({ deletedPath: "/tmp/skill", skillName: "skill" })),
     getUsageHookStatus: vi.fn(() => true),
     installUsageHook: vi.fn(() => "installed"),
     uninstallUsageHook: vi.fn(() => "removed"),

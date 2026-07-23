@@ -23,6 +23,8 @@ import type {
   SessionStats,
   SessionStatsOptions,
   SessionTraceEvent,
+  SessionTurnDetail,
+  SessionTurnSummary,
   TagListOptions,
   UsageQuotaSnapshot,
 } from "../core/types";
@@ -51,6 +53,10 @@ const api = {
     ipcRenderer.invoke("session:messages", sessionKey, offset, limit),
   getTraceEvents: (sessionKey: string, options?: TraceEventQueryOptions): Promise<SessionTraceEvent[]> =>
     ipcRenderer.invoke("session:trace-events", sessionKey, options),
+  listSessionTurns: (sessionKey: string): Promise<SessionTurnSummary[]> =>
+    ipcRenderer.invoke("session:turns", sessionKey),
+  getSessionTurn: (sessionKey: string, turnId: string): Promise<SessionTurnDetail | null> =>
+    ipcRenderer.invoke("session:turn", sessionKey, turnId),
   getLiveSessions: (): Promise<LiveSessionSnapshot> => ipcRenderer.invoke("sessions:live"),
   summarizeSession: (sessionKey: string): Promise<SessionSearchResult | null> =>
     ipcRenderer.invoke("session:summarize", sessionKey),

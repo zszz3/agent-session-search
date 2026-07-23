@@ -1,11 +1,114 @@
 import { describe, expect, it, vi } from "vitest";
-import { createInMemoryStore, type SessionStore } from "./session-store";
-import { RemoteEnvironmentLifecycle, type RemoteEnvironmentWatchManager } from "./remote-environment-lifecycle";
-import type { SessionEnvironment, SessionMessage } from "./types";
+import {
+  RemoteEnvironmentLifecycle,
+  type RemoteEnvironmentStore,
+  type RemoteEnvironmentWatchManager,
+} from "./remote-environment-lifecycle";
+import type {
+  EnvironmentSyncState,
+  EnvironmentUpsertInput,
+  SessionEnvironment,
+} from "./types";
 
-const messages: SessionMessage[] = [
-  { role: "user", content: "remote session", timestamp: "2026-06-05T10:00:00Z", index: 0 },
-];
+interface LifecycleSession {
+  sessionKey: string;
+  rawId: string;
+  environmentId: string;
+}
+
+class LifecycleTestStore implements RemoteEnvironmentStore {
+  private readonly environments = new Map<string, SessionEnvironment>();
+  private readonly sessions = new Map<string, LifecycleSession>();
+  private timestamp = 1;
+
+  async listEnvironments(): Promise<SessionEnvironment[]> {
+    return [...this.environments.values()]
+      .sort((left, right) => left.kind.localeCompare(right.kind) || left.label.localeCompare(right.label))
+      .map((environment) => ({ ...environment }));
+  }
+
+  async getEnvironment(id: string): Promise<SessionEnvironment | null> {
+    const environment = this.environments.get(id);
+    return environment ? { ...environment } : null;
+  }
+
+  async upsertEnvironment(input: EnvironmentUpsertInput): Promise<SessionEnvironment> {
+    const id = input.id ?? input.label.toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "-");
+    const existing = this.environments.get(id);
+    const environment: SessionEnvironment = {
+      id,
+      kind: input.kind,
+      label: input.label,
+      hostAlias: input.hostAlias ?? null,
+      host: input.host ?? null,
+      user: input.user ?? null,
+      port: input.port ?? null,
+      authMode: input.authMode ?? "none",
+      identityFile: input.identityFile ?? null,
+      enabled: input.enabled ?? true,
+      syncState: existing?.syncState ?? "idle",
+      lastSyncedAt: existing?.lastSyncedAt ?? null,
+      lastError: existing?.lastError ?? null,
+      createdAt: existing?.createdAt ?? this.timestamp++,
+      updatedAt: this.timestamp++,
+    };
+    this.environments.set(id, environment);
+    return { ...environment };
+  }
+
+  async updateEnvironmentSyncState(
+    id: string,
+    state: EnvironmentSyncState,
+    options: { lastSyncedAt?: number | null; lastError?: string | null } = {},
+  ): Promise<void> {
+    const environment = this.environments.get(id);
+    if (!environment) return;
+    this.environments.set(id, {
+      ...environment,
+      syncState: state,
+      lastSyncedAt: Object.hasOwn(options, "lastSyncedAt")
+        ? options.lastSyncedAt ?? null
+        : environment.lastSyncedAt,
+      lastError: Object.hasOwn(options, "lastError")
+        ? options.lastError ?? null
+        : environment.lastError,
+      updatedAt: this.timestamp++,
+    });
+  }
+
+  async deleteEnvironmentSessions(environmentId: string): Promise<void> {
+    for (const [sessionKey, session] of this.sessions) {
+      if (session.environmentId === environmentId) this.sessions.delete(sessionKey);
+    }
+  }
+
+  async deleteEnvironment(environmentId: string): Promise<void> {
+    this.environments.delete(environmentId);
+    await this.deleteEnvironmentSessions(environmentId);
+  }
+
+  upsertRemoteSession(environment: SessionEnvironment): void {
+    const host = environment.hostAlias ?? environment.host ?? "unknown";
+    const sessionKey = `ssh:${environment.id}:codex:${host}`;
+    this.sessions.set(sessionKey, {
+      sessionKey,
+      rawId: host,
+      environmentId: environment.id,
+    });
+  }
+
+  searchSessions(options: { environmentId?: string; query?: string }): LifecycleSession[] {
+    const query = options.query?.toLocaleLowerCase();
+    return [...this.sessions.values()].filter((session) => (
+      (!options.environmentId || options.environmentId === "all" || session.environmentId === options.environmentId)
+      && (!query || session.rawId.toLocaleLowerCase().includes(query))
+    ));
+  }
+}
+
+function createStore(): LifecycleTestStore {
+  return new LifecycleTestStore();
+}
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void } {
   let resolve!: () => void;
@@ -29,26 +132,8 @@ function createWatchManager(): RemoteEnvironmentWatchManager & {
   };
 }
 
-function upsertRemoteSession(store: SessionStore, environment: SessionEnvironment): void {
-  const host = environment.hostAlias ?? environment.host ?? "unknown";
-  store.upsertIndexedSession(
-    {
-      sessionKey: `ssh:${environment.id}:codex:${host}`,
-      rawId: host,
-      source: "codex-cli",
-      environmentId: environment.id,
-      projectPath: `/work/${host}`,
-      filePath: `/remote/${host}.jsonl`,
-      originalTitle: host,
-      firstQuestion: host,
-      timestamp: 1,
-      fileMtimeMs: 1,
-      fileSize: 1,
-      prUrl: null,
-      prNumber: null,
-    },
-    messages,
-  );
+async function upsertRemoteSession(store: LifecycleTestStore, environment: SessionEnvironment): Promise<void> {
+  store.upsertRemoteSession(environment);
 }
 
 async function flushPromises(): Promise<void> {
@@ -57,14 +142,14 @@ async function flushPromises(): Promise<void> {
 
 describe("RemoteEnvironmentLifecycle", () => {
   it("stops an existing watcher before syncing an updated ssh environment", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncEnvironment = vi.fn(async (_environment: SessionEnvironment) => undefined);
     const lifecycle = new RemoteEnvironmentLifecycle({ store, syncEnvironment, watchManager });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
     await lifecycle.waitForIdle("ssh-devbox");
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "new", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "new", enabled: true });
     await lifecycle.waitForIdle("ssh-devbox");
 
     expect(watchManager.stop).toHaveBeenCalledWith("ssh-devbox");
@@ -73,7 +158,7 @@ describe("RemoteEnvironmentLifecycle", () => {
   });
 
   it("removes rows written by an in-flight sync after the environment is deleted", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const lifecycle = new RemoteEnvironmentLifecycle({
@@ -81,53 +166,53 @@ describe("RemoteEnvironmentLifecycle", () => {
       watchManager,
       syncEnvironment: async (environment) => {
         await syncGate.promise;
-        upsertRemoteSession(store, environment);
+        await upsertRemoteSession(store, environment);
       },
     });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
     await flushPromises();
-    lifecycle.deleteEnvironment("ssh-devbox");
+    await lifecycle.deleteEnvironment("ssh-devbox");
     syncGate.resolve();
     await lifecycle.waitForIdle("ssh-devbox");
 
-    expect(store.getEnvironment("ssh-devbox")).toBeNull();
-    expect(store.searchSessions({ environmentId: "ssh-devbox" })).toEqual([]);
-    expect(store.searchSessions({ query: "old", environmentId: "all" })).toEqual([]);
+    expect(await store.getEnvironment("ssh-devbox")).toBeNull();
+    expect(await store.searchSessions({ environmentId: "ssh-devbox" })).toEqual([]);
+    expect(await store.searchSessions({ query: "old", environmentId: "all" })).toEqual([]);
   });
 
   it("schedules a latest-config follow-up when an environment is updated during an active sync", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const gates = [createDeferred(), createDeferred()];
     const syncEnvironment = vi.fn(async (environment: SessionEnvironment) => {
       const gate = gates[syncEnvironment.mock.calls.length - 1];
       await gate.promise;
-      upsertRemoteSession(store, environment);
+      await upsertRemoteSession(store, environment);
     });
     const lifecycle = new RemoteEnvironmentLifecycle({ store, syncEnvironment, watchManager });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "old", enabled: true });
     await flushPromises();
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "new", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "new", enabled: true });
     await flushPromises();
 
     expect(syncEnvironment.mock.calls.map(([environment]) => environment.hostAlias)).toEqual(["old"]);
 
     gates[0].resolve();
-    await flushPromises();
-
-    expect(syncEnvironment.mock.calls.map(([environment]) => environment.hostAlias)).toEqual(["old", "new"]);
+    await vi.waitFor(() => {
+      expect(syncEnvironment.mock.calls.map(([environment]) => environment.hostAlias)).toEqual(["old", "new"]);
+    });
 
     gates[1].resolve();
     await lifecycle.waitForIdle("ssh-devbox");
 
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.rawId)).toEqual(["new"]);
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.rawId)).toEqual(["new"]);
     expect(watchManager.start.mock.calls.at(-1)?.[0].hostAlias).toBe("new");
   });
 
   it("records current sync failures without starting a watcher", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncError = new Error("Permission denied");
     const lifecycle = new RemoteEnvironmentLifecycle({
@@ -138,18 +223,18 @@ describe("RemoteEnvironmentLifecycle", () => {
       },
     });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
     await lifecycle.waitForIdle("ssh-devbox");
 
     expect(watchManager.start).not.toHaveBeenCalled();
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: "Permission denied",
     });
   });
 
   it("drops queued same-config syncs after the active sync fails", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const syncError = new Error("Permission denied");
@@ -158,7 +243,7 @@ describe("RemoteEnvironmentLifecycle", () => {
     });
     const lifecycle = new RemoteEnvironmentLifecycle({ store, syncEnvironment, watchManager });
 
-    const environment = lifecycle.saveEnvironment({
+    const environment = await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "devbox",
@@ -174,14 +259,14 @@ describe("RemoteEnvironmentLifecycle", () => {
 
     expect(syncEnvironment).toHaveBeenCalledTimes(1);
     expect(watchManager.start).not.toHaveBeenCalled();
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: "Permission denied",
     });
   });
 
   it("rejects manual refresh when it waits on an already-running failed sync", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const syncError = new Error("Permission denied");
@@ -193,7 +278,7 @@ describe("RemoteEnvironmentLifecycle", () => {
       },
     });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
     await flushPromises();
     const refresh = lifecycle.refreshEnvironment("ssh-devbox");
     await flushPromises();
@@ -201,14 +286,14 @@ describe("RemoteEnvironmentLifecycle", () => {
     syncGate.reject(syncError);
 
     await expect(refresh).rejects.toThrow("Permission denied");
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: "Permission denied",
     });
   });
 
   it("handles falsy sync rejection reasons as failures", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const lifecycle = new RemoteEnvironmentLifecycle({
       store,
@@ -218,11 +303,11 @@ describe("RemoteEnvironmentLifecycle", () => {
       },
     });
 
-    lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
+    await lifecycle.saveEnvironment({ id: "ssh-devbox", kind: "ssh", label: "devbox", hostAlias: "bad-host", enabled: true });
     await lifecycle.waitForIdle("ssh-devbox");
 
     expect(watchManager.start).not.toHaveBeenCalled();
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: "0",
     });
@@ -230,7 +315,7 @@ describe("RemoteEnvironmentLifecycle", () => {
   });
 
   it("preserves indexed sessions when an environment is disabled during an active sync", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const lifecycle = new RemoteEnvironmentLifecycle({
@@ -241,17 +326,17 @@ describe("RemoteEnvironmentLifecycle", () => {
       },
     });
 
-    const environment = lifecycle.saveEnvironment({
+    const environment = await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "devbox",
       hostAlias: "devbox",
       enabled: true,
     });
-    upsertRemoteSession(store, environment);
+    await upsertRemoteSession(store, environment);
     await flushPromises();
 
-    lifecycle.saveEnvironment({
+    await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "devbox",
@@ -261,36 +346,36 @@ describe("RemoteEnvironmentLifecycle", () => {
     syncGate.resolve();
     await lifecycle.waitForIdle("ssh-devbox");
 
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.rawId)).toEqual(["devbox"]);
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.rawId)).toEqual(["devbox"]);
     expect(watchManager.stop).toHaveBeenCalledWith("ssh-devbox");
     expect(watchManager.start).not.toHaveBeenCalled();
   });
 
   it("sets disabled environments to idle when an active sync completes", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const lifecycle = new RemoteEnvironmentLifecycle({
       store,
       watchManager,
       syncEnvironment: async (environment) => {
-        store.updateEnvironmentSyncState(environment.id, "syncing", { lastError: null });
+        await store.updateEnvironmentSyncState(environment.id, "syncing", { lastError: null });
         await syncGate.promise;
-        store.updateEnvironmentSyncState(environment.id, "watching", { lastError: null });
+        await store.updateEnvironmentSyncState(environment.id, "watching", { lastError: null });
       },
     });
 
-    const environment = lifecycle.saveEnvironment({
+    const environment = await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "devbox",
       hostAlias: "devbox",
       enabled: true,
     });
-    upsertRemoteSession(store, environment);
+    await upsertRemoteSession(store, environment);
     await flushPromises();
 
-    lifecycle.saveEnvironment({
+    await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "devbox",
@@ -300,13 +385,13 @@ describe("RemoteEnvironmentLifecycle", () => {
     syncGate.resolve();
     await lifecycle.waitForIdle("ssh-devbox");
 
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.rawId)).toEqual(["devbox"]);
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({ enabled: false, syncState: "idle" });
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.rawId)).toEqual(["devbox"]);
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({ enabled: false, syncState: "idle" });
     expect(watchManager.start).not.toHaveBeenCalled();
   });
 
   it("preserves sessions and starts the watcher with current metadata after a label-only update during active sync", async () => {
-    const store = createInMemoryStore();
+    const store = createStore();
     const watchManager = createWatchManager();
     const syncGate = createDeferred();
     const syncEnvironment = vi.fn(async () => {
@@ -314,17 +399,17 @@ describe("RemoteEnvironmentLifecycle", () => {
     });
     const lifecycle = new RemoteEnvironmentLifecycle({ store, syncEnvironment, watchManager });
 
-    const environment = lifecycle.saveEnvironment({
+    const environment = await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "Old label",
       hostAlias: "devbox",
       enabled: true,
     });
-    upsertRemoteSession(store, environment);
+    await upsertRemoteSession(store, environment);
     await flushPromises();
 
-    lifecycle.saveEnvironment({
+    await lifecycle.saveEnvironment({
       id: "ssh-devbox",
       kind: "ssh",
       label: "New label",
@@ -335,7 +420,7 @@ describe("RemoteEnvironmentLifecycle", () => {
     await lifecycle.waitForIdle("ssh-devbox");
 
     expect(syncEnvironment).toHaveBeenCalledTimes(1);
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.rawId)).toEqual(["devbox"]);
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.rawId)).toEqual(["devbox"]);
     expect(watchManager.start.mock.calls.at(-1)?.[0]).toMatchObject({ id: "ssh-devbox", label: "New label" });
   });
 });

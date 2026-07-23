@@ -23,10 +23,8 @@ function nodeMajor(version) {
   return parseInt(String(version).replace(/^v/, "").split(".")[0], 10) || 0;
 }
 
-// The MCP server needs node >= 22 (node:sqlite). Crucially, node 22's bundled
-// SQLite includes the fts5 module that the SessionStore depends on, while some
-// node 23 builds ship SQLite without fts5 — so we prefer node 22 specifically
-// and only fall back to other >=22 versions when 22 is unavailable.
+// The packaged MCP server and SDK require Node 22 or newer. Prefer the current
+// process, then fall back to an installed compatible runtime.
 function nodeCommand() {
   const candidates = [];
 
@@ -49,7 +47,7 @@ function nodeCommand() {
   // Common install locations.
   candidates.push("/opt/homebrew/bin/node", "/usr/local/bin/node", "node");
 
-  // First pass: prefer node 22.x (fts5 is reliably available there).
+  // First pass: prefer the project's baseline Node 22 runtime.
   for (const candidate of candidates) {
     try {
       let version;
@@ -65,7 +63,7 @@ function nodeCommand() {
     }
   }
 
-  // Second pass: any node >= 22 (last resort — may lack fts5 on node 23+).
+  // Second pass: any newer compatible Node runtime.
   for (const candidate of candidates) {
     try {
       let version;
