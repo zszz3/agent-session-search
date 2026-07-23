@@ -30,7 +30,7 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         created_at, updated_at
       )
       VALUES (
-        'local', 'local', 'This Mac', null, null, null, null, 'none',
+        'local', 'local', 'Local', null, null, null, null, 'none',
         null, true, 'idle', null, null, now(), now()
       )
       ON CONFLICT (id) DO NOTHING;
