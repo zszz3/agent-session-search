@@ -12,7 +12,7 @@ import {
   parseCursorTranscriptPath,
   parseJsonlText,
 } from "./session-loader";
-import { writeMigratedSession } from "./session-migration-writers";
+import { targetFilePath, writeMigratedSession } from "./session-migration-writers";
 import type { LoadedSession, MigrationTarget, PortableSession, SessionSource } from "./types";
 
 const SESSION_ID = "10000000-0000-4000-8000-000000000001";
@@ -220,7 +220,9 @@ describe("writeMigratedSession", () => {
         `rollout-2026-06-23T06-07-08-901Z-${SESSION_ID}.jsonl`,
       ),
     });
-    expect(fs.existsSync(path.join(homeDir, ".codex", "session_index.jsonl"))).toBe(false);
+    expect(readRows(path.join(homeDir, ".codex", "session_index.jsonl"))).toEqual([
+      { id: SESSION_ID, thread_name: portable().title, updated_at: NOW.toISOString() },
+    ]);
 
     const rows = readRows(result.filePath);
     expect(rows[0]).toEqual({
@@ -263,6 +265,61 @@ describe("writeMigratedSession", () => {
 
       const rows = readRows(result.filePath);
       expect(rows[0]?.payload?.model_provider).toBe(modelProvider);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["codex", ".codex"],
+    ["tcodex", ".tcodex"],
+    ["codex-internal", ".codex-internal"],
+  ] as const)("updates the native session index for $target", async (target, root) => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `migration-writer-index-${target}-`));
+    try {
+      const targetHome = path.join(homeDir, root);
+      fs.mkdirSync(targetHome, { recursive: true });
+      fs.writeFileSync(
+        path.join(targetHome, "session_index.jsonl"),
+        `${JSON.stringify({ id: SESSION_ID, thread_name: "old title", updated_at: "2026-06-22T00:00:00.000Z" })}\n` +
+        `${JSON.stringify({ id: "other-session", thread_name: "Other", updated_at: "2026-06-22T00:00:00.000Z" })}\n`,
+      );
+
+      await writeMigratedSession({
+        target,
+        session: portable(),
+        homeDir,
+        now: NOW,
+        idFactory: idFactory([SESSION_ID]),
+      });
+
+      expect(readRows(path.join(targetHome, "session_index.jsonl"))).toEqual([
+        { id: "other-session", thread_name: "Other", updated_at: "2026-06-22T00:00:00.000Z" },
+        { id: SESSION_ID, thread_name: portable().title, updated_at: NOW.toISOString() },
+      ]);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a Codex migration when its native index is malformed", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-writer-index-invalid-"));
+    const targetHome = path.join(homeDir, ".codex");
+    const finalFile = targetFilePath("codex", portable().projectPath, SESSION_ID, homeDir, NOW);
+    try {
+      fs.mkdirSync(targetHome, { recursive: true });
+      fs.writeFileSync(path.join(targetHome, "session_index.jsonl"), "not-json\n");
+
+      await expect(
+        writeMigratedSession({
+          target: "codex",
+          session: portable(),
+          homeDir,
+          now: NOW,
+          idFactory: idFactory([SESSION_ID]),
+        }),
+      ).rejects.toThrow("Codex session index could not be read");
+      expect(fs.existsSync(finalFile)).toBe(false);
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }

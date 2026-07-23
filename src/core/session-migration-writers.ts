@@ -54,6 +54,7 @@ export async function writeMigratedSession(options: WriteMigratedSessionOptions)
   const runtimeMetadata = await loadMigrationTargetRuntimeMetadata(options.target, targetHome);
   const rows = serializeSession(options.target, options.session, sessionId, createId, runtimeMetadata);
   const tempPath = `${filePath}.tmp-${crypto.randomUUID()}`;
+  let finalFileCreated = false;
 
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   try {
@@ -70,9 +71,12 @@ export async function writeMigratedSession(options: WriteMigratedSessionOptions)
     await fs.promises.chmod(tempPath, 0o600);
     if (options.rename) await options.rename(tempPath, filePath);
     else await fs.promises.rename(tempPath, filePath);
+    finalFileCreated = true;
+    await updateCodexSessionIndex(options.target, targetHome, options.session, sessionId, now);
     return { sessionId, filePath };
   } catch (error) {
     await fs.promises.rm(tempPath, { force: true });
+    if (finalFileCreated) await fs.promises.rm(filePath, { force: true });
     throw error;
   }
 }
@@ -477,6 +481,69 @@ async function writeJsonlAndSync(filePath: string, rows: unknown[]): Promise<voi
   } finally {
     await handle.close();
   }
+}
+
+async function updateCodexSessionIndex(
+  target: MigrationTarget,
+  targetHome: string,
+  session: PortableSession,
+  sessionId: string,
+  now: Date,
+): Promise<void> {
+  if (migrationTargetDescriptor(target).family !== "codex") return;
+
+  const indexPath = path.join(targetHome, "session_index.jsonl");
+  let existingRows: unknown[] = [];
+  try {
+    existingRows = readCodexSessionIndex(indexPath);
+  } catch (error) {
+    throw new Error(
+      `Codex session index could not be read from ${indexPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const rows = existingRows.filter((row) => !isRecord(row) || row.id !== sessionId);
+  rows.push({
+    id: sessionId,
+    thread_name: session.title || sessionId,
+    updated_at: now.toISOString(),
+  });
+
+  const tempPath = `${indexPath}.tmp-${crypto.randomUUID()}`;
+  try {
+    await writeJsonlAndSync(tempPath, rows);
+    await fs.promises.rename(tempPath, indexPath);
+  } catch (error) {
+    await fs.promises.rm(tempPath, { force: true });
+    throw new Error(
+      `Codex session index could not be updated at ${indexPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function readCodexSessionIndex(indexPath: string): unknown[] {
+  let content: string;
+  try {
+    content = fs.readFileSync(indexPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const rows: unknown[] = [];
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      throw new Error("contains invalid JSONL");
+    }
+  }
+  return rows;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function readJsonlStrict(filePath: string, target: MigrationTarget): unknown[] {
