@@ -81,8 +81,8 @@ export class SqliteWorkflowRepository {
       asArray(workflow.runProgress).forEach((item, sequence) => {
         db.prepare(
           `insert into workflow_run_progress
-           (workflow_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, messages_json, sequence)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (workflow_id, node_id, title, status, detail, task_id, input_request_json, input_summary_json, intervention_json, messages_json, outputs_json, telemetry_json, sequence)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           workflowId,
           asString(item.nodeId),
@@ -91,8 +91,11 @@ export class SqliteWorkflowRepository {
           asOptionalString(item.detail) ?? null,
           asOptionalString(item.taskId) ?? null,
           json(item.inputRequest),
+          json(item.inputSummary),
           json(item.intervention),
           json(item.messages),
+          json(item.outputs),
+          json(item.telemetry),
           sequence,
         );
       });
@@ -109,13 +112,15 @@ export class SqliteWorkflowRepository {
     const runId = asString(run.runId);
     db.prepare(
       `insert into workflow_runs
-       (id, workflow_id, workflow_v2_plan_json, status, context_document, final_report, started_at, finished_at, last_error)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, workflow_id, workflow_v2_plan_json, status, trigger_source, configuration_snapshot_json, context_document, final_report, started_at, finished_at, last_error)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runId,
       workflowId,
       json(run.workflowV2Plan),
       asString(run.status),
+      asOptionalString(run.triggerSource) ?? "manual",
+      json(run.configurationSnapshot),
       asString(run.contextDocument),
       asOptionalString(run.finalReport) ?? null,
       asNumber(run.startedAt),
@@ -126,8 +131,8 @@ export class SqliteWorkflowRepository {
     asArray(run.progress).forEach((item, itemSequence) => {
       db.prepare(
         `insert into workflow_run_nodes
-         (run_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, messages_json, sequence)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (run_id, node_id, title, status, detail, task_id, input_request_json, input_summary_json, intervention_json, messages_json, outputs_json, telemetry_json, sequence)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         runId,
         asString(item.nodeId),
@@ -136,8 +141,11 @@ export class SqliteWorkflowRepository {
         asOptionalString(item.detail) ?? null,
         asOptionalString(item.taskId) ?? null,
         json(item.inputRequest),
+        json(item.inputSummary),
         json(item.intervention),
         json(item.messages),
+        json(item.outputs),
+        json(item.telemetry),
         itemSequence,
       );
     });
@@ -244,6 +252,7 @@ export class SqliteWorkflowRepository {
       runId,
       workflowId: row.workflow_id,
       status: row.status,
+      triggerSource: row.trigger_source === "scheduled" || row.trigger_source === "mcp" || row.trigger_source === "recovery" || row.trigger_source === "rerun" ? row.trigger_source : "manual",
       progress: this.loadProgress(db, "workflow_run_nodes", "run_id", runId),
       events: db
         .prepare("select * from workflow_events where run_id = ? order by sequence")
@@ -257,6 +266,7 @@ export class SqliteWorkflowRepository {
     optional(run, "finishedAt", row.finished_at);
     optional(run, "lastError", row.last_error);
     optional(run, "workflowV2Plan", parseJson(row.workflow_v2_plan_json));
+    optional(run, "configurationSnapshot", parseJson(row.configuration_snapshot_json));
     return run;
   }
 
@@ -270,14 +280,17 @@ export class SqliteWorkflowRepository {
         optional(item, "detail", row.detail);
         optional(item, "taskId", row.task_id);
         optional(item, "inputRequest", parseJson(row.input_request_json));
+        optional(item, "inputSummary", parseJson(row.input_summary_json));
         optional(item, "intervention", parseJson(row.intervention_json));
         optional(item, "messages", parseJson(row.messages_json));
+        optional(item, "outputs", parseJson(row.outputs_json));
+        optional(item, "telemetry", parseJson(row.telemetry_json));
         return item;
       });
   }
 
   private loadWorkflowEvent(db: DatabaseSync, row: RecordValue): RecordValue {
-    const event: RecordValue = { type: row.type, nodeId: row.node_id, at: row.at };
+    const event: RecordValue = { type: row.type, nodeId: row.node_id, at: row.at, sequence: row.sequence };
     optional(event, "attempt", row.attempt);
     optional(event, "taskId", row.task_id);
     optional(event, "detail", row.detail);

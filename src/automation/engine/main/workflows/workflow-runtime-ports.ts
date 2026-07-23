@@ -2,7 +2,7 @@ import type {
   AppSnapshot,
   RunTaskRequest,
 } from "../../shared/types";
-import type { FinishWorkflowRunRequest, WorkflowOperationResult } from "../../shared/workflow/commands";
+import type { FinishWorkflowRunRequest, StartWorkflowRunRequest, WorkflowOperationResult } from "../../shared/workflow/commands";
 import type { WorkflowEvent, WorkflowRunProgressItem } from "../../shared/workflow/run";
 import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
 import type { WorkflowV2ScriptAuthorization, WorkflowV2ScriptNode } from "../../shared/workflow-v2/definition";
@@ -53,7 +53,7 @@ export interface WorkflowV2StorePort {
 
 export interface WorkflowRuntimeDependencies {
   snapshot: () => AppSnapshot;
-  startWorkflowRun: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
+  startWorkflowRun: (input: StartWorkflowRunRequest) => WorkflowOperationResult;
   finishWorkflowRun: (input: FinishWorkflowRunRequest) => WorkflowOperationResult;
   updateWorkflowRunState: (input: WorkflowRunStateUpdate) => void;
   runTask: (input: RunTaskRequest, approvalPolicy?: { allowedFileWriteRoot: string }) => Promise<AppSnapshot>;

@@ -52,6 +52,7 @@ export function useWorkflowFeatureController({
     : [];
   const runHistoryConversations = snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId);
   const artifacts = activeRunId ? (snapshot.artifacts ?? []).filter((artifact) => artifact.target === activeRunId) : [];
+  const runHistoryArtifacts = (snapshot.artifacts ?? []).filter((artifact) => workflowRuns.some((run) => run.runId === artifact.target));
 
   return useMemo(
     () => ({
@@ -82,6 +83,7 @@ export function useWorkflowFeatureController({
       ...(activeRunId ? { activeRunId } : {}),
       ...(activeRun ? { activeRunStatus: activeRun.status } : {}),
       artifacts,
+      runHistoryArtifacts,
       contextDocument: draft.workflowRunContextDocument,
       finalReport: draft.workflowFinalReport,
       ...(activeWorkflow?.workflowV2Plan ? { workflowV2Plan: activeWorkflow.workflowV2Plan } : {}),

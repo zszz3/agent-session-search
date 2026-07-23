@@ -135,6 +135,8 @@ function sampleState() {
               parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
             },
             messages: [{ id: "run-message-1", role: "assistant", content: "Persisted one-shot answer", at: 36 }],
+            outputs: { result: "built" },
+            telemetry: { provider: "openai", runtimeId: "codex", channelId: "channel-1", modelId: "model-1", attempt: 1, startedAt: 32, finishedAt: 36, inputTokens: 10, outputTokens: 5, totalTokens: 15, estimatedCost: 0.002 },
           }],
           runContextDocument: "run context",
           contextDocument: "context",
@@ -151,6 +153,8 @@ function sampleState() {
           runId: "run-1",
           workflowId: "workflow-1",
           status: "running",
+          triggerSource: "scheduled",
+          configurationSnapshot: { configuredAgentId: "agent-1", runtimeId: "codex", channelId: "channel-1", modelId: "model-1", reasoningEffort: "high", agentRevision: 2 },
           workflowV2Plan,
           progress: [{
             nodeId: "build",
@@ -162,12 +166,15 @@ function sampleState() {
               parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
             },
             messages: [{ id: "run-message-1", role: "assistant", content: "Persisted one-shot answer", at: 36 }],
+            outputs: { result: "built" },
+            telemetry: { provider: "openai", runtimeId: "codex", channelId: "channel-1", modelId: "model-1", attempt: 1, startedAt: 32, finishedAt: 36, inputTokens: 10, outputTokens: 5, totalTokens: 15, estimatedCost: 0.002 },
           }],
           events: [
             {
               type: "node_output",
               nodeId: "build",
               at: 35,
+              sequence: 0,
               attempt: 1,
               summary: "built",
               artifactRefs: [{ kind: "file", title: "binary", path: "/tmp/app" }],
@@ -287,10 +294,15 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(JSON.parse(String(workflowRow.definition_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(JSON.parse(String(workflowRow.workflow_v2_plan_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
+    expect(db.prepare("select trigger_source from workflow_runs where id = ?").get("run-1")).toEqual({ trigger_source: "scheduled" });
+    expect(JSON.parse(String((db.prepare("select configuration_snapshot_json from workflow_runs where id = ?").get("run-1") as { configuration_snapshot_json: string }).configuration_snapshot_json))).toMatchObject({ configuredAgentId: "agent-1", runtimeId: "codex" });
     const runNodeRow = db.prepare("select messages_json from workflow_run_nodes where run_id = ? and node_id = ?").get("run-1", "build") as { messages_json: string };
     expect(JSON.parse(runNodeRow.messages_json)).toEqual([
       expect.objectContaining({ id: "run-message-1", content: "Persisted one-shot answer" }),
     ]);
+    const telemetryRow = db.prepare("select outputs_json, telemetry_json from workflow_run_nodes where run_id = ? and node_id = ?").get("run-1", "build") as { outputs_json: string; telemetry_json: string };
+    expect(JSON.parse(telemetryRow.outputs_json)).toEqual({ result: "built" });
+    expect(JSON.parse(telemetryRow.telemetry_json)).toMatchObject({ totalTokens: 15, estimatedCost: 0.002 });
     const auxRow = db.prepare("select payload from app_aux_state where id = 1").get() as { payload: string };
     expect(JSON.parse(auxRow.payload)).toMatchObject({
       workflowNodeConversations: [{ messages: [{ content: "Persisted interactive answer" }] }],
