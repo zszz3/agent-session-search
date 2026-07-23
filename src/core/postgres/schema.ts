@@ -24,6 +24,17 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         updated_at timestamptz NOT NULL
       );
 
+      INSERT INTO agent_recall.environments (
+        id, kind, label, host_alias, host, "user", port, auth_mode,
+        identity_file, enabled, sync_state, last_synced_at, last_error,
+        created_at, updated_at
+      )
+      VALUES (
+        'local', 'local', 'This Mac', null, null, null, null, 'none',
+        null, true, 'idle', null, null, now(), now()
+      )
+      ON CONFLICT (id) DO NOTHING;
+
       CREATE TABLE agent_recall.sessions (
         session_key text PRIMARY KEY,
         raw_id text NOT NULL,

@@ -252,12 +252,25 @@ export interface SessionSearchResult extends IndexedSession {
   matchHits?: SessionMatchHit[];
   messageMatchCount?: number;
   metadataMatch?: "title" | "project" | "summary" | null;
+  bestTurn?: SessionTurnMatch | null;
+  turnMatchCount?: number;
 }
 
 export interface SessionMatchHit {
   messageIndex: number;
   role: SessionMessage["role"];
   timestamp: string;
+  snippet: string;
+  matchedTerms: string[];
+  turnId?: string;
+  turnIndex?: number;
+}
+
+export interface SessionTurnMatch {
+  turnId: string;
+  turnIndex: number;
+  sourceMessageIndex: number | null;
+  startedAt: number | null;
   snippet: string;
   matchedTerms: string[];
 }
