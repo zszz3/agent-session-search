@@ -309,4 +309,27 @@ describe("PostgresSessionRepository", () => {
     expect(stats.dailyTokenUsage).toHaveLength(7);
     expect(stats.dailyTokenUsage.reduce((sum, day) => sum + day.totalTokens, 0)).toBe(165);
   });
+
+  it("compares the previous period and returns a trimmed Token trend", async () => {
+    await repository.upsertIndexedSession(session(), messages, tokens, traces);
+
+    const currentDay = Date.parse("2026-07-20T12:00:00.000Z");
+    const currentStats = await repository.getStats({ period: "today" }, currentDay);
+    expect(currentStats.total.totalTokens).toBe(165);
+    expect(currentStats.previousTotal?.totalTokens).toBe(0);
+
+    const followingDay = Date.parse("2026-07-21T12:00:00.000Z");
+    const followingStats = await repository.getStats({ period: "today" }, followingDay);
+    expect(followingStats.total.totalTokens).toBe(0);
+    expect(followingStats.previousTotal?.totalTokens).toBe(165);
+    expect((await repository.getStats({ period: "allTime" }, followingDay)).previousTotal)
+      .toBeNull();
+
+    await expect(repository.getStatsTrend({ period: "today" }, currentDay))
+      .resolves.toMatchObject({
+        period: "today",
+        granularity: "day",
+        buckets: [{ totalTokens: 165 }],
+      });
+  });
 });

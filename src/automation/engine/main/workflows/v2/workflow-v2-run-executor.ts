@@ -1,6 +1,7 @@
 import type { RunTaskRequest, TaskRun } from "../../../shared/types";
 import type { RuntimeConversation } from "../../../shared/runtime/conversation";
-import type { WorkflowEvent, WorkflowRunProgressItem } from "../../../shared/workflow/run";
+import { mergeRuntimeUsage } from "../../../../../shared/runtime/usage";
+import type { WorkflowEvent, WorkflowRunNodeTelemetry, WorkflowRunProgressItem } from "../../../shared/workflow/run";
 import type { WorkflowV2LLMNode, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowNodeMessage } from "../../../shared/workflow-v2/conversation";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
@@ -23,6 +24,21 @@ import type { WorkflowRunRegistry } from "../workflow-run-registry";
 import { WorkflowV2RunPersistence } from "./workflow-v2-run-persistence";
 import type { ExecuteWorkflowV2RunInput, WorkflowV2RecoveryOverride } from "./workflow-v2-execution-contract";
 export type { WorkflowV2RecoveryOverride } from "./workflow-v2-execution-contract";
+
+function addNodeUsage(telemetry: WorkflowRunNodeTelemetry, usage: TaskRun["usage"]): WorkflowRunNodeTelemetry {
+  if (!usage) return telemetry;
+  return { ...telemetry, ...mergeRuntimeUsage(telemetry, usage) };
+}
+
+function startNodeAttempt(previous: WorkflowRunNodeTelemetry | undefined, next: WorkflowRunNodeTelemetry): WorkflowRunNodeTelemetry {
+  if (!previous) return next;
+  const merged = addNodeUsage(next, previous);
+  return {
+    ...merged,
+    attempt: next.attempt,
+    startedAt: previous.startedAt,
+  };
+}
 import type { WorkflowRuntimeDependencies } from "../workflow-runtime-ports";
 import type {
   WorkflowV2ExecutionLeaseState,
@@ -100,6 +116,7 @@ function workflowNodeHistoryMessages(task: TaskRun): WorkflowNodeMessage[] {
         role: event.type === "tool_call" || event.type === "tool_result" ? "tool" : "system",
         content: event.content || event.type.replaceAll("_", " "),
         at: event.timestamp,
+        eventType: event.type,
         ...(event.name ? { name: event.name } : {}),
         event: structuredClone(event),
       });
@@ -290,7 +307,12 @@ export class WorkflowV2RunExecutor {
 
     const startModelTask = async (nodeId: string, request: RunTaskRequest, allowOutputWrite = false): Promise<TaskRun> => {
       consumeModelCallBudget(nodeId);
-      const task = await startWorkflowTask(request, allowOutputWrite);
+      const task = await startWorkflowTask({
+        ...request,
+        planningWorkflowId: workflow.workflowId,
+        workflowRunId: runId,
+        workflowNodeId: nodeId,
+      }, allowOutputWrite);
       this.runRegistry.get(runId)?.taskIdByNodeId.set(nodeId, task.id);
       return task;
     };
@@ -663,7 +685,7 @@ export class WorkflowV2RunExecutor {
             effectiveDeveloperInstructions,
             "This is a persistent multi-turn conversation. Ask concise questions whenever required information is incomplete.",
             "Do not claim the node is complete until all acceptance criteria are satisfied.",
-            "When complete, return the structured worker-output packet for explicit user confirmation.",
+            "When complete, call workflow_node_complete (or its namespaced MCP equivalent) exactly once with the structured worker output for explicit user confirmation. Do not print the worker-output JSON as ordinary assistant content.",
           ].join("\n\n"),
           contextDocument: effectiveContextDocument,
         });
@@ -689,6 +711,25 @@ export class WorkflowV2RunExecutor {
       }
       const attempt = (runtimeAttemptByNodeId.get(request.node.id) ?? 0) + 1;
       runtimeAttemptByNodeId.set(request.node.id, attempt);
+      const configuredAgent = latestSnapshot.configuredAgents.find((item) => item.id === agentRoute.configuredAgentId);
+      const channel = configuredAgent?.channelId
+        ? latestSnapshot.channels.find((item) => item.id === configuredAgent.channelId)
+        : undefined;
+      const provider = channel?.apiFormat === "anthropic" || configuredAgent?.runtimeAgentId === "claude"
+        ? "anthropic"
+        : channel?.apiFormat?.startsWith("openai")
+          ? "openai"
+          : undefined;
+      const nextTelemetry: WorkflowRunNodeTelemetry = {
+        ...(provider ? { provider } : {}),
+        ...(configuredAgent?.runtimeAgentId ? { runtimeId: configuredAgent.runtimeAgentId } : {}),
+        ...(configuredAgent?.channelId ? { channelId: configuredAgent.channelId } : {}),
+        modelId: agentRoute.modelId,
+        attempt,
+        startedAt: Date.now(),
+      };
+      const previousTelemetry = latestProgress.find((item) => item.nodeId === request.node.id)?.telemetry;
+      const telemetry = startNodeAttempt(previousTelemetry, nextTelemetry);
       const task = await startModelTask(request.node.id, {
         prompt: effectivePrompt,
         developerInstructions: effectiveDeveloperInstructions,
@@ -701,7 +742,7 @@ export class WorkflowV2RunExecutor {
           : {}),
       }, true);
       consumedRecoveryNodeIds.add(request.node.id);
-      updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
+      updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id, telemetry });
 
       let taskIds = [task.id];
       const supervisorTaskIds: string[] = [];
@@ -718,9 +759,21 @@ export class WorkflowV2RunExecutor {
           supervisorTaskIds,
         });
         archiveTaskId = completedTask.id;
+        // Message history is an execution artifact, independent from whether the
+        // worker output passes structured validation. Archive it before parsing so
+        // failed or malformed one-shot responses remain inspectable in run history.
+        const historyMessages = workflowNodeHistoryMessages(completedTask);
+        const completedTelemetry = { ...addNodeUsage(telemetry, completedTask.usage), finishedAt: Date.now() };
+        updateNode(request.node.id, {
+          status: "running",
+          detail: "Task output received",
+          taskId: task.id,
+          telemetry: completedTelemetry,
+          ...(historyMessages.length > 0 ? { messages: historyMessages } : {}),
+        });
         const artifact = taskArtifact(completedTask);
         const output = parseWorkflowV2WorkerArtifact(request.node, artifact);
-        updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id, messages: workflowNodeHistoryMessages(completedTask) }, {
+        updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id, telemetry: completedTelemetry }, {
           type: "node_output",
           nodeId: request.node.id,
           taskId: task.id,
@@ -729,6 +782,23 @@ export class WorkflowV2RunExecutor {
         });
         return output;
       } catch (error) {
+        const taskForHistory = error instanceof WorkflowV2OneShotInputRequestSignal
+          ? error.task
+          : [...taskIds]
+              .map((taskId) => latestSnapshot.tasks.find((item) => item.id === taskId))
+              .find((item): item is TaskRun => Boolean(item));
+        if (taskForHistory) {
+          const historyMessages = workflowNodeHistoryMessages(taskForHistory);
+          updateNode(request.node.id, {
+            status: "running",
+            detail: "Task history archived",
+            taskId: taskForHistory.id,
+            telemetry: { ...addNodeUsage(telemetry, taskForHistory.usage), finishedAt: Date.now() },
+            ...(historyMessages.length > 0 ? { messages: historyMessages } : {}),
+          });
+        } else {
+          updateNode(request.node.id, { telemetry: { ...telemetry, finishedAt: Date.now() } });
+        }
         if (error instanceof WorkflowV2OneShotInputRequestSignal) {
           await this.deps.stopTask(error.task.id);
           archiveTaskId = undefined;
@@ -792,6 +862,8 @@ export class WorkflowV2RunExecutor {
         ...(approvalGrant ? { approvalGrant } : {}),
       });
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
+      const telemetry: WorkflowRunNodeTelemetry = { attempt: 1, startedAt: Date.now() };
+      updateNode(request.node.id, { status: "running", detail: "Script running", telemetry });
       let output: WorkflowV2WorkerOutput;
       try {
         output = await executeAuthorizedWorkflowV2Script({ deps: this.deps, node: request.node, workDir: workflowWorkDir, upstreamOutputs: request.upstreamOutputs, timeoutMs, inputs: resolvedInput.values, controller,
@@ -814,7 +886,7 @@ export class WorkflowV2RunExecutor {
       } finally {
         this.runRegistry.get(runId)?.abortControllerByNodeId?.delete(request.node.id);
       }
-      updateNode(request.node.id, { status: "running", detail: output.summary }, {
+      updateNode(request.node.id, { status: "running", detail: output.summary, telemetry: { ...telemetry, finishedAt: Date.now() } }, {
         type: "node_output",
         nodeId: request.node.id,
         attempt: 1,

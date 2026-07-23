@@ -106,6 +106,9 @@ export class PostgresWorkflowRepository {
         runId,
         workflowId: row.workflow_id,
         status: row.status,
+        triggerSource: isWorkflowTriggerSource(row.trigger_source)
+          ? row.trigger_source
+          : "manual",
         progress: mapProgress(nodesByRun.get(runId) ?? []),
         events: (eventsByRun.get(runId) ?? []).map((event) =>
           mapEvent(event, artifactsByEvent.get(asString(event.id)) ?? [])),
@@ -118,6 +121,11 @@ export class PostgresWorkflowRepository {
       }
       optional(run, "lastError", row.last_error);
       optional(run, "workflowV2Plan", postgresJson(row.workflow_v2_plan));
+      optional(
+        run,
+        "configurationSnapshot",
+        postgresJson(row.configuration_snapshot),
+      );
       return run;
     });
 
@@ -211,14 +219,19 @@ export class PostgresWorkflowRepository {
     const runId = asString(run.runId);
     await database.query(
       `insert into agent_recall.workflow_runs (
-        id, workflow_id, workflow_v2_plan, status, context_document,
-        final_report, started_at, finished_at, last_error
-      ) values ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9)`,
+        id, workflow_id, workflow_v2_plan, status, trigger_source,
+        configuration_snapshot, context_document, final_report, started_at,
+        finished_at, last_error
+      ) values (
+        $1, $2, $3::jsonb, $4, $5, $6::jsonb, $7, $8, $9, $10, $11
+      )`,
       [
         runId,
         workflowId,
         jsonParameter(run.workflowV2Plan),
         asString(run.status),
+        isWorkflowTriggerSource(run.triggerSource) ? run.triggerSource : "manual",
+        jsonParameter(run.configurationSnapshot),
         asString(run.contextDocument),
         asOptionalString(run.finalReport) ?? null,
         new Date(asNumber(run.startedAt)),
@@ -300,8 +313,11 @@ async function insertProgress(
   await database.query(
     `insert into agent_recall.${table} (
       ${ownerColumn}, node_id, title, status, detail, task_id, input_request,
-      intervention, messages, sequence
-    ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10)`,
+      input_summary, intervention, messages, outputs, telemetry, sequence
+    ) values (
+      $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb,
+      $10::jsonb, $11::jsonb, $12::jsonb, $13
+    )`,
     [
       ownerId,
       asString(item.nodeId),
@@ -310,8 +326,11 @@ async function insertProgress(
       asOptionalString(item.detail) ?? null,
       asOptionalString(item.taskId) ?? null,
       jsonParameter(item.inputRequest),
+      jsonParameter(item.inputSummary),
       jsonParameter(item.intervention),
       jsonParameter(item.messages),
+      jsonParameter(item.outputs),
+      jsonParameter(item.telemetry),
       sequence,
     ],
   );
@@ -342,8 +361,11 @@ function mapProgress(rows: RecordValue[]): RecordValue[] {
     optional(item, "detail", row.detail);
     optional(item, "taskId", row.task_id);
     optional(item, "inputRequest", postgresJson(row.input_request));
+    optional(item, "inputSummary", postgresJson(row.input_summary));
     optional(item, "intervention", postgresJson(row.intervention));
     optional(item, "messages", postgresJson(row.messages));
+    optional(item, "outputs", postgresJson(row.outputs));
+    optional(item, "telemetry", postgresJson(row.telemetry));
     return item;
   });
 }
@@ -353,6 +375,7 @@ function mapEvent(row: RecordValue, artifactRows: RecordValue[]): RecordValue {
     type: row.type,
     nodeId: row.node_id,
     at: postgresTime(row.occurred_at),
+    sequence: asNumber(row.sequence),
   };
   optional(event, "attempt", row.attempt);
   optional(event, "taskId", row.task_id);
@@ -376,4 +399,14 @@ function mapEvent(row: RecordValue, artifactRows: RecordValue[]): RecordValue {
 function optionalDate(value: unknown): Date | null {
   const number = asOptionalNumber(value);
   return number === undefined ? null : new Date(number);
+}
+
+function isWorkflowTriggerSource(
+  value: unknown,
+): value is "manual" | "scheduled" | "mcp" | "recovery" | "rerun" {
+  return value === "manual"
+    || value === "scheduled"
+    || value === "mcp"
+    || value === "recovery"
+    || value === "rerun";
 }

@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../../../shared/types";
+import { normalizeAnthropicUsage } from "../../../../../shared/runtime/usage";
 
 export interface ClaudeStreamState {
   lastText: string;
@@ -70,7 +71,9 @@ function normalizeClaudeToolEvents(message: unknown, state?: ClaudeStreamState):
       events.push({
         type: "tool_call",
         name,
-        content: truncate(formatToolInput(block.input), 600),
+        content: name.toLowerCase().includes("workflow_node_complete")
+          ? formatToolInput(block.input)
+          : truncate(formatToolInput(block.input), 600),
         ...(id ? { metadata: { id } } : {}),
       });
     } else if (blockType === "tool_result" || blockType === "mcp_tool_result" || blockType === "custom_tool_result") {
@@ -127,6 +130,23 @@ function consumeTextDelta(text: string, state: ClaudeStreamState): string {
   return text;
 }
 
+function normalizeClaudeUsage(record: Record<string, unknown>): ReturnType<typeof normalizeAnthropicUsage> {
+  const usage = normalizeAnthropicUsage(record.usage);
+  const modelUsage = record.modelUsage && typeof record.modelUsage === "object" ? record.modelUsage as Record<string, unknown> : undefined;
+  const estimatedCost: number | undefined = modelUsage
+    ? Object.values(modelUsage).reduce<number>((total, value) => {
+        if (!value || typeof value !== "object") return total;
+        const cost = (value as Record<string, unknown>).costUSD;
+        return total + (typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : 0);
+      }, 0)
+    : undefined;
+  if (!usage && estimatedCost === undefined) return undefined;
+  return {
+    ...(usage ?? { provider: "anthropic" }),
+    ...(estimatedCost !== undefined ? { estimatedCost } : {}),
+  };
+}
+
 export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamState): AgentEvent[] {
   if (!raw || typeof raw !== "object") return [];
   const record = raw as Record<string, unknown>;
@@ -158,6 +178,8 @@ export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamSta
 
   if (type === "result") {
     const events: AgentEvent[] = [];
+    const usage = normalizeClaudeUsage(record);
+    if (usage) events.push({ type: "usage", usage });
     const sessionId = asString(record.session_id);
     if (sessionId) {
       events.push({

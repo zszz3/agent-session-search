@@ -10,6 +10,7 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         id text PRIMARY KEY,
         kind text NOT NULL,
         label text NOT NULL,
+        wsl_distribution text,
         host_alias text,
         host text,
         "user" text,
@@ -272,6 +273,26 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         updated_at timestamptz NOT NULL
       );
 
+      CREATE TABLE agent_recall.saved_searches (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        name text NOT NULL UNIQUE,
+        options jsonb NOT NULL,
+        created_at timestamptz NOT NULL,
+        last_used_at timestamptz,
+        use_count integer NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE agent_recall.search_history (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        query text NOT NULL,
+        result_count integer NOT NULL DEFAULT 0,
+        searched_at timestamptz NOT NULL,
+        options jsonb
+      );
+
+      CREATE INDEX search_history_time_idx
+        ON agent_recall.search_history (searched_at DESC, id DESC);
+
       CREATE TABLE agent_recall.automation_chats (
         id text PRIMARY KEY,
         title text NOT NULL,
@@ -362,8 +383,11 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         detail text,
         task_id text,
         input_request jsonb,
+        input_summary jsonb,
         intervention jsonb,
         messages jsonb,
+        outputs jsonb,
+        telemetry jsonb,
         sequence integer NOT NULL,
         PRIMARY KEY (workflow_id, node_id)
       );
@@ -373,6 +397,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         workflow_id text NOT NULL REFERENCES agent_recall.workflows(id) ON DELETE CASCADE,
         workflow_v2_plan jsonb,
         status text NOT NULL,
+        trigger_source text NOT NULL DEFAULT 'manual',
+        configuration_snapshot jsonb,
         context_document text NOT NULL,
         final_report text,
         started_at timestamptz NOT NULL,
@@ -395,8 +421,11 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         detail text,
         task_id text,
         input_request jsonb,
+        input_summary jsonb,
         intervention jsonb,
         messages jsonb,
+        outputs jsonb,
+        telemetry jsonb,
         sequence integer NOT NULL,
         PRIMARY KEY (run_id, node_id)
       );
@@ -681,6 +710,54 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
       )
       VALUES ('local', 'local', 'Local', 'none', true, 'idle', now(), now())
       ON CONFLICT (id) DO NOTHING
+    `,
+  ],
+}, {
+  version: 2,
+  name: "add discovery, WSL, and Workflow run telemetry",
+  statements: [
+    `
+      ALTER TABLE agent_recall.environments
+        ADD COLUMN IF NOT EXISTS wsl_distribution text;
+
+      ALTER TABLE agent_recall.workflow_runs
+        ADD COLUMN IF NOT EXISTS trigger_source text NOT NULL DEFAULT 'manual';
+      ALTER TABLE agent_recall.workflow_runs
+        ADD COLUMN IF NOT EXISTS configuration_snapshot jsonb;
+
+      ALTER TABLE agent_recall.workflow_run_progress
+        ADD COLUMN IF NOT EXISTS input_summary jsonb;
+      ALTER TABLE agent_recall.workflow_run_progress
+        ADD COLUMN IF NOT EXISTS outputs jsonb;
+      ALTER TABLE agent_recall.workflow_run_progress
+        ADD COLUMN IF NOT EXISTS telemetry jsonb;
+
+      ALTER TABLE agent_recall.workflow_run_nodes
+        ADD COLUMN IF NOT EXISTS input_summary jsonb;
+      ALTER TABLE agent_recall.workflow_run_nodes
+        ADD COLUMN IF NOT EXISTS outputs jsonb;
+      ALTER TABLE agent_recall.workflow_run_nodes
+        ADD COLUMN IF NOT EXISTS telemetry jsonb;
+
+      CREATE TABLE IF NOT EXISTS agent_recall.saved_searches (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        name text NOT NULL UNIQUE,
+        options jsonb NOT NULL,
+        created_at timestamptz NOT NULL,
+        last_used_at timestamptz,
+        use_count integer NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_recall.search_history (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        query text NOT NULL,
+        result_count integer NOT NULL DEFAULT 0,
+        searched_at timestamptz NOT NULL,
+        options jsonb
+      );
+
+      CREATE INDEX IF NOT EXISTS search_history_time_idx
+        ON agent_recall.search_history (searched_at DESC, id DESC);
     `,
   ],
 }];

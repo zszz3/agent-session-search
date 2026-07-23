@@ -1,4 +1,5 @@
 import type {
+  EnvironmentKind,
   IndexedSession,
   ProjectQueryOptions,
   ProjectSummary,
@@ -15,6 +16,9 @@ import type {
   SessionStatsOptions,
   SessionStatsPeriod,
   SessionStatsSummary,
+  SessionStatsTrend,
+  SessionStatsTrendBucket,
+  SessionStatsTrendGranularity,
   SessionTraceEvent,
   SessionTraceSpan,
   SessionTurnDetail,
@@ -44,7 +48,7 @@ interface SessionRow extends Record<string, unknown> {
   raw_id: string;
   source: SessionSource;
   environment_id: string;
-  environment_kind: "local" | "ssh";
+  environment_kind: EnvironmentKind;
   environment_label: string;
   project_path: string;
   file_path: string;
@@ -272,14 +276,254 @@ function projectParentLabel(projectPath: string): string {
   return parts.length >= 2 ? `${parts.at(-2)}/${parts.at(-1)}` : projectBasename(projectPath);
 }
 
+type ProjectSummaryDraft = ProjectSummary & {
+  taskWorkspaceDate: string | null;
+  rootStartedAt: number;
+  taskBasenameApplied: boolean;
+};
+
+function validIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+function codexTaskWorkspaceDate(projectPath: string): string | null {
+  const parts = projectParts(projectPath);
+  if (parts.length < 3) return null;
+  const codexSegment = parts.at(-3) || "";
+  const dateSegment = parts.at(-2) || "";
+  const taskSegment = parts.at(-1) || "";
+  return codexSegment.toLocaleLowerCase() === "codex"
+    && taskSegment
+    && validIsoDate(dateSegment)
+    ? dateSegment
+    : null;
+}
+
+function rootProjectTitle(row: {
+  root_custom_title: string | null;
+  root_original_title: string | null;
+  root_first_question: string | null;
+}): string | null {
+  const customTitle = row.root_custom_title?.trim();
+  if (customTitle) return customTitle;
+  const originalTitle = row.root_original_title?.trim();
+  if (originalTitle && originalTitle !== "Untitled Session") return originalTitle;
+  return row.root_first_question?.trim() || null;
+}
+
+function appendLabelSuffix(current: string | null, next: string | null): string | null {
+  if (!next) return current;
+  return current ? `${current} · ${next}` : next;
+}
+
+function formatMonthDayTime(timestamp: number | null): string | null {
+  if (!timestamp || !Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatClock(timestamp: number): string | null {
+  if (!timestamp || !Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function compareProjectText(left: string, right: string): number {
+  const localized = left.localeCompare(right);
+  if (localized !== 0 || left === right) return localized;
+  return left < right ? -1 : 1;
+}
+
+function visibleTaskLabelVariants(summary: ProjectSummaryDraft): string[] {
+  const suffix = summary.labelSuffix ? ` · ${summary.labelSuffix}` : "";
+  const bases = summary.labelKind === "codex-task-untitled"
+    ? ["Untitled session", "未命名会话"]
+    : [summary.label];
+  return bases.map((base) => `${base}${suffix}`);
+}
+
+function compareTaskIdentity(
+  left: ProjectSummaryDraft,
+  right: ProjectSummaryDraft,
+): number {
+  return compareProjectText(left.environmentId, right.environmentId)
+    || compareProjectText(left.path, right.path);
+}
+
+function visibleTaskCollisionGroups(
+  summaries: ProjectSummaryDraft[],
+): ProjectSummaryDraft[][] {
+  const parents = new Map<ProjectSummaryDraft, ProjectSummaryDraft>();
+  const collided = new Set<ProjectSummaryDraft>();
+  const owners = new Map<string, ProjectSummaryDraft>();
+  const findRoot = (summary: ProjectSummaryDraft): ProjectSummaryDraft => {
+    const parent = parents.get(summary) ?? summary;
+    if (parent === summary) return summary;
+    const root = findRoot(parent);
+    parents.set(summary, root);
+    return root;
+  };
+  const union = (left: ProjectSummaryDraft, right: ProjectSummaryDraft): void => {
+    const leftRoot = findRoot(left);
+    const rightRoot = findRoot(right);
+    if (leftRoot !== rightRoot) parents.set(rightRoot, leftRoot);
+  };
+
+  for (const summary of summaries) {
+    if (!summary.labelKind.startsWith("codex-task")) continue;
+    parents.set(summary, summary);
+    for (const visibleLabel of visibleTaskLabelVariants(summary)) {
+      const key = `${summary.environmentId}\0${visibleLabel}`;
+      const owner = owners.get(key);
+      if (owner) {
+        union(owner, summary);
+        collided.add(owner);
+        collided.add(summary);
+      } else {
+        owners.set(key, summary);
+      }
+    }
+  }
+
+  const groupsByRoot = new Map<ProjectSummaryDraft, ProjectSummaryDraft[]>();
+  for (const summary of collided) {
+    const root = findRoot(summary);
+    const group = groupsByRoot.get(root) ?? [];
+    group.push(summary);
+    groupsByRoot.set(root, group);
+  }
+  const groups = [...groupsByRoot.values()];
+  for (const group of groups) group.sort(compareTaskIdentity);
+  return groups.sort((left, right) => compareTaskIdentity(left[0], right[0]));
+}
+
+function stableTaskIdentityDiscriminator(summary: ProjectSummaryDraft): string {
+  const identity = `${summary.environmentId}\0${summary.path}`;
+  let encoded = "";
+  for (let index = 0; index < identity.length; index += 1) {
+    encoded += identity.charCodeAt(index).toString(16).padStart(4, "0");
+  }
+  return `id:${encoded}`;
+}
+
+function disambiguateTaskLabels(
+  summaries: ProjectSummaryDraft[],
+): ProjectSummaryDraft[] {
+  const titleGroups = new Map<string, ProjectSummaryDraft[]>();
+  for (const summary of summaries) {
+    if (summary.labelKind !== "codex-task-title") continue;
+    const key = `${summary.environmentId}\0${summary.label.trim().toLocaleLowerCase()}`;
+    const group = titleGroups.get(key) ?? [];
+    group.push(summary);
+    titleGroups.set(key, group);
+  }
+
+  const resolved = summaries.map((summary) => ({ ...summary }));
+  const byIdentity = new Map(
+    resolved.map((summary) => [`${summary.environmentId}\0${summary.path}`, summary]),
+  );
+  for (const group of titleGroups.values()) {
+    if (group.length < 2) continue;
+    const dateCounts = new Map<string, number>();
+    for (const summary of group) {
+      const date = summary.taskWorkspaceDate || "";
+      dateCounts.set(date, (dateCounts.get(date) ?? 0) + 1);
+    }
+    for (const summary of group) {
+      const target = byIdentity.get(`${summary.environmentId}\0${summary.path}`)!;
+      const date = summary.taskWorkspaceDate;
+      const clock = formatClock(summary.rootStartedAt);
+      const suffix = date
+        ? (dateCounts.get(date) ?? 0) > 1 && clock
+          ? `${date.slice(5)} ${clock}`
+          : date.slice(5)
+        : projectBasename(summary.path);
+      target.labelSuffix = appendLabelSuffix(target.labelSuffix, suffix);
+    }
+  }
+
+  for (const group of visibleTaskCollisionGroups(resolved)) {
+    for (const summary of group) {
+      if (summary.taskBasenameApplied) continue;
+      summary.labelSuffix = appendLabelSuffix(
+        summary.labelSuffix,
+        projectBasename(summary.path),
+      );
+      summary.taskBasenameApplied = true;
+    }
+  }
+
+  for (const group of visibleTaskCollisionGroups(resolved)) {
+    const partsBySummary = group.map((summary) => projectParts(summary.path));
+    const maxParentDepth = Math.max(...partsBySummary.map((parts) => parts.length - 1));
+    let uniqueFragments: string[] | null = null;
+    for (let depth = 1; depth <= maxParentDepth; depth += 1) {
+      const fragments = partsBySummary.map((parts) => parts.at(-1 - depth) || "");
+      if (fragments.every(Boolean) && new Set(fragments).size === group.length) {
+        uniqueFragments = fragments;
+        break;
+      }
+    }
+    group.forEach((summary, index) => {
+      summary.labelSuffix = appendLabelSuffix(
+        summary.labelSuffix,
+        uniqueFragments?.[index] || summary.path,
+      );
+    });
+  }
+
+  for (const group of visibleTaskCollisionGroups(resolved)) {
+    for (const summary of group) {
+      summary.labelSuffix = appendLabelSuffix(
+        summary.labelSuffix,
+        stableTaskIdentityDiscriminator(summary),
+      );
+    }
+  }
+  return resolved;
+}
+
+function publicProjectSummary(draft: ProjectSummaryDraft): ProjectSummary {
+  return {
+    path: draft.path,
+    label: draft.label,
+    labelKind: draft.labelKind,
+    labelSuffix: draft.labelSuffix,
+    sessionCount: draft.sessionCount,
+    environmentId: draft.environmentId,
+    environmentLabel: draft.environmentLabel,
+    createdAt: draft.createdAt,
+    lastActivityAt: draft.lastActivityAt,
+  };
+}
+
 interface StatsRange {
   period: SessionStatsPeriod;
   since: number | null;
   until: number;
 }
 
+interface StatsTrendWindow {
+  since: number;
+  until: number;
+  granularity: SessionStatsTrendGranularity;
+  buckets: SessionStatsTrendBucket[];
+}
+
 function resolveStatsRange(options: SessionStatsOptions, now: number): StatsRange {
-  const period = options.period ?? "allTime";
+  const period = options.period ?? "today";
   if (period === "allTime") return { period, since: null, until: now };
   if (period === "today") {
     const date = new Date(now);
@@ -288,6 +532,89 @@ function resolveStatsRange(options: SessionStatsOptions, now: number): StatsRang
   }
   const days = period === "thirtyDay" ? 30 : 7;
   return { period, since: now - days * 24 * 60 * 60 * 1000, until: now };
+}
+
+function resolvePreviousStatsRange(range: StatsRange): StatsRange | null {
+  if (range.period === "allTime" || range.since === null) return null;
+  if (range.period === "today") {
+    return {
+      period: range.period,
+      since: range.since - 24 * 60 * 60 * 1000,
+      until: range.since,
+    };
+  }
+  const windowMs = range.until - range.since;
+  return {
+    period: range.period,
+    since: range.since - windowMs,
+    until: range.since,
+  };
+}
+
+function resolveStatsTrendWindow(
+  period: SessionStatsPeriod,
+  now: number,
+): StatsTrendWindow | null {
+  if (period === "allTime") return null;
+  const granularity: SessionStatsTrendGranularity = period === "today"
+    ? "day"
+    : period === "sevenDay"
+      ? "week"
+      : "month";
+  const currentStart = startOfTrendBucket(now, granularity);
+  const firstStart = addTrendBuckets(currentStart, granularity, -29);
+  const buckets = Array.from({ length: 30 }, (_, index) => {
+    const start = addTrendBuckets(firstStart, granularity, index);
+    return {
+      start,
+      end: addTrendBuckets(start, granularity, 1) - 1,
+      label: formatTrendBucketLabel(start, granularity),
+      totalTokens: 0,
+    };
+  });
+  return {
+    since: buckets[0]?.start ?? currentStart,
+    until: now,
+    granularity,
+    buckets,
+  };
+}
+
+function startOfTrendBucket(
+  timestamp: number,
+  granularity: SessionStatsTrendGranularity,
+): number {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  if (granularity === "week") {
+    const day = date.getDay();
+    date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day));
+  } else if (granularity === "month") {
+    date.setDate(1);
+  }
+  return date.getTime();
+}
+
+function addTrendBuckets(
+  timestamp: number,
+  granularity: SessionStatsTrendGranularity,
+  amount: number,
+): number {
+  const date = new Date(timestamp);
+  if (granularity === "day") date.setDate(date.getDate() + amount);
+  else if (granularity === "week") date.setDate(date.getDate() + amount * 7);
+  else date.setMonth(date.getMonth() + amount);
+  return date.getTime();
+}
+
+function formatTrendBucketLabel(
+  timestamp: number,
+  granularity: SessionStatsTrendGranularity,
+): string {
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  if (granularity === "month") return `${date.getFullYear()}-${month}`;
+  return `${month}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function dailyRanges(now: number): Array<Pick<SessionDailyTokenUsage, "dayStart" | "dayEndExclusive">> {
@@ -1084,6 +1411,12 @@ export class PostgresSessionRepository {
       session_count: number | string;
       created_at: Date | string;
       last_activity_at: Date | string;
+      root_count: number | string;
+      root_source: SessionSource | null;
+      root_custom_title: string | null;
+      root_original_title: string | null;
+      root_first_question: string | null;
+      root_started_at: Date | string | null;
     }>(
       `
         select
@@ -1092,7 +1425,19 @@ export class PostgresSessionRepository {
           environments.label as environment_label,
           count(*) as session_count,
           max(sessions.started_at) as created_at,
-          max(${SESSION_ACTIVITY_SQL}) as last_activity_at
+          max(${SESSION_ACTIVITY_SQL}) as last_activity_at,
+          sum(case when sessions.is_subagent = false then 1 else 0 end) as root_count,
+          max(case when sessions.is_subagent = false then sessions.source end) as root_source,
+          max(case when sessions.is_subagent = false then sessions.custom_title end) as root_custom_title,
+          max(case when sessions.is_subagent = false then sessions.original_title end) as root_original_title,
+          max(case when sessions.is_subagent = false then sessions.first_question end) as root_first_question,
+          max(
+            case when sessions.is_subagent = false then (
+              select min(events.occurred_at)
+              from agent_recall.session_message_events events
+              where events.session_key = sessions.session_key
+            ) end
+          ) as root_started_at
         from agent_recall.sessions sessions
         join agent_recall.environments environments on environments.id = sessions.environment_id
         where ${conditions.join(" and ")}
@@ -1100,39 +1445,80 @@ export class PostgresSessionRepository {
       `,
       values,
     );
-    const summaries = result.rows.map<ProjectSummary>((row) => ({
-      path: row.project_path,
-      label: projectBasename(row.project_path),
-      sessionCount: numberValue(row.session_count),
-      environmentId: row.environment_id,
-      environmentLabel: row.environment_label,
-      createdAt: timeValue(row.created_at),
-      lastActivityAt: timeValue(row.last_activity_at),
-    }));
+    const summaries = result.rows.map<ProjectSummaryDraft>((row) => {
+      const taskDate = numberValue(row.root_count) === 1 && row.root_source === "codex-app"
+        ? codexTaskWorkspaceDate(row.project_path)
+        : null;
+      const rootTitle = rootProjectTitle(row);
+      const taskWorkspace = taskDate !== null;
+      return {
+        path: row.project_path,
+        label: taskWorkspace ? (rootTitle || "Untitled session") : projectBasename(row.project_path),
+        labelKind: taskWorkspace
+          ? rootTitle
+            ? "codex-task-title"
+            : "codex-task-untitled"
+          : "path",
+        labelSuffix: null,
+        sessionCount: numberValue(row.session_count),
+        environmentId: row.environment_id,
+        environmentLabel: row.environment_label,
+        createdAt: timeValue(row.created_at),
+        lastActivityAt: timeValue(row.last_activity_at),
+        taskWorkspaceDate: taskDate,
+        rootStartedAt: row.root_started_at ? timeValue(row.root_started_at) : 0,
+        taskBasenameApplied: false,
+      };
+    });
     const basenameCounts = new Map<string, number>();
     const environmentsByPath = new Map<string, Set<string>>();
     for (const summary of summaries) {
-      const basename = projectBasename(summary.path);
-      basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
+      if (summary.labelKind === "path") {
+        const basename = projectBasename(summary.path);
+        basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
+      }
       const environments = environmentsByPath.get(summary.path) ?? new Set<string>();
       environments.add(summary.environmentId);
       environmentsByPath.set(summary.path, environments);
     }
-    return summaries
-      .map((summary) => ({
-        ...summary,
-        label:
-          (environmentsByPath.get(summary.path)?.size ?? 0) > 1
-            ? `${summary.label} · ${summary.environmentLabel}`
-            : (basenameCounts.get(projectBasename(summary.path)) ?? 0) > 1
+    return disambiguateTaskLabels(summaries
+      .map((summary) => {
+        const repeatedAcrossEnvironments =
+          (environmentsByPath.get(summary.path)?.size ?? 0) > 1;
+        return {
+          ...summary,
+          label:
+            summary.labelKind === "path"
+              && !repeatedAcrossEnvironments
+              && (basenameCounts.get(projectBasename(summary.path)) ?? 0) > 1
               ? projectParentLabel(summary.path)
               : summary.label,
+          labelSuffix: repeatedAcrossEnvironments
+            ? appendLabelSuffix(summary.labelSuffix, summary.environmentLabel)
+            : summary.labelSuffix,
+        };
+      })
+      .map((summary) => {
+        if (summary.labelKind !== "codex-task-untitled") return summary;
+        const startedAtSuffix = formatMonthDayTime(summary.rootStartedAt);
+        return {
+          ...summary,
+          labelSuffix: appendLabelSuffix(
+            summary.labelSuffix,
+            startedAtSuffix || projectBasename(summary.path),
+          ),
+          taskBasenameApplied: summary.taskBasenameApplied || !startedAtSuffix,
+        };
       }))
+      .map(publicProjectSummary)
       .sort(
         (left, right) =>
           (left.environmentId === "local" ? 0 : 1) - (right.environmentId === "local" ? 0 : 1)
           || right.lastActivityAt - left.lastActivityAt
-          || left.label.localeCompare(right.label),
+          || compareProjectText(left.label, right.label)
+          || compareProjectText(left.labelSuffix ?? "", right.labelSuffix ?? "")
+          || compareProjectText(left.path, right.path)
+          || compareProjectText(left.environmentId, right.environmentId),
       );
   }
 
@@ -1543,7 +1929,11 @@ export class PostgresSessionRepository {
     });
   }
 
-  async getStats(options: SessionStatsOptions = {}, now = Date.now()): Promise<SessionStats> {
+  async getStats(
+    options: SessionStatsOptions = {},
+    now = Date.now(),
+    includePrevious = true,
+  ): Promise<SessionStats> {
     const range = resolveStatsRange(options, now);
     const subagentPredicate = options.excludeSubagents ? "and sessions.is_subagent = false" : "";
     const rangeValues = range.since === null
@@ -1763,7 +2153,88 @@ export class PostgresSessionRepository {
       return { ...day, ...usage };
     });
 
-    return { total, bySource, dailyTokenUsage, range };
+    const previousRange = resolvePreviousStatsRange(range);
+    const previousTotal = includePrevious && previousRange
+      ? (
+          await this.getStats(
+            { ...options, period: previousRange.period },
+            previousRange.until - 1,
+            false,
+          )
+        ).total
+      : null;
+
+    return { total, bySource, dailyTokenUsage, range, previousTotal };
+  }
+
+  async getStatsTrend(
+    options: SessionStatsOptions = {},
+    now = Date.now(),
+  ): Promise<SessionStatsTrend> {
+    const period = options.period ?? "today";
+    const window = resolveStatsTrendWindow(period, now);
+    if (!window) return { period, granularity: null, buckets: [] };
+
+    const result = await this.database.query<{
+      occurred_at: Date | string;
+      total_tokens: number | string;
+    }>(
+      `
+        with ranked as (
+          select
+            events.occurred_at,
+            events.total_tokens,
+            row_number() over (
+              partition by events.dedupe_key
+              order by
+                events.total_tokens desc,
+                case sessions.source
+                  when 'codex-cli' then 1
+                  when 'claude-cli' then 1
+                  when 'codex-app' then 2
+                  when 'claude-app' then 2
+                  else 9
+                end,
+                events.occurred_at
+            ) as row_rank
+          from agent_recall.token_events events
+          join agent_recall.sessions sessions on sessions.session_key = events.session_key
+          where events.occurred_at >= $1
+            and events.occurred_at <= $2
+            ${options.excludeSubagents ? "and sessions.is_subagent = false" : ""}
+        )
+        select occurred_at, total_tokens
+        from ranked
+        where row_rank = 1
+      `,
+      [
+        new Date(window.since).toISOString(),
+        new Date(window.until).toISOString(),
+      ],
+    );
+
+    const totals = new Map<number, number>();
+    for (const row of result.rows) {
+      const bucketStart = startOfTrendBucket(
+        timeValue(row.occurred_at),
+        window.granularity,
+      );
+      totals.set(
+        bucketStart,
+        (totals.get(bucketStart) ?? 0) + numberValue(row.total_tokens),
+      );
+    }
+
+    const buckets = window.buckets.map((bucket) => ({
+      ...bucket,
+      totalTokens: totals.get(bucket.start) ?? 0,
+    }));
+    const firstNonZero = buckets.findIndex((bucket) => bucket.totalTokens > 0);
+    return {
+      period,
+      granularity: window.granularity,
+      buckets: firstNonZero === -1 ? [] : buckets.slice(firstNonZero),
+    };
   }
 
   async searchSessions(options: SearchOptions = {}): Promise<SessionSearchResult[]> {

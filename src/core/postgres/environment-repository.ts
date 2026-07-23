@@ -10,6 +10,7 @@ interface EnvironmentRow extends Record<string, unknown> {
   id: string;
   kind: EnvironmentKind;
   label: string;
+  wsl_distribution: string | null;
   host_alias: string | null;
   host: string | null;
   user_name: string | null;
@@ -35,6 +36,7 @@ function hydrateEnvironment(row: EnvironmentRow): SessionEnvironment {
     id: row.id,
     kind: row.kind,
     label: row.label,
+    wslDistribution: row.wsl_distribution,
     hostAlias: row.host_alias,
     host: row.host,
     user: row.user_name,
@@ -76,7 +78,7 @@ function formatBytes(bytes: number): string {
 }
 
 const ENVIRONMENT_COLUMNS = `
-  id, kind, label, host_alias, host, "user" as user_name, port, auth_mode,
+  id, kind, label, wsl_distribution, host_alias, host, "user" as user_name, port, auth_mode,
   identity_file, enabled, sync_state, last_synced_at, last_error, created_at, updated_at
 `;
 
@@ -99,8 +101,18 @@ export class PostgresEnvironmentRepository {
   }
 
   async upsertEnvironment(input: EnvironmentUpsertInput): Promise<SessionEnvironment> {
-    const aliasId = input.id ? null : await this.findEnvironmentIdByHostAlias(input);
-    const id = input.id || aliasId || await this.createUniqueEnvironmentId(input.label);
+    const normalizedWslDistribution = input.kind === "wsl"
+      ? input.wslDistribution?.trim() || null
+      : null;
+    if (input.kind === "wsl" && !normalizedWslDistribution) {
+      throw new Error("WSL distribution is required.");
+    }
+    const matchingId = input.id
+      ? null
+      : input.kind === "wsl"
+        ? await this.findEnvironmentIdByWslDistribution(normalizedWslDistribution)
+        : await this.findEnvironmentIdByHostAlias(input);
+    const id = input.id || matchingId || await this.createUniqueEnvironmentId(input.label);
     const existing = await this.getEnvironment(id);
     const now = Date.now();
 
@@ -109,16 +121,17 @@ export class PostgresEnvironmentRepository {
       await this.database.query(
         `
           insert into agent_recall.environments (
-            id, kind, label, host_alias, host, "user", port, auth_mode, identity_file,
+            id, kind, label, wsl_distribution, host_alias, host, "user", port, auth_mode, identity_file,
             enabled, sync_state, last_synced_at, last_error, created_at, updated_at
           )
           values (
-            'local', 'local', 'Local', null, null, null, null, 'none', null,
+            'local', 'local', 'Local', null, null, null, null, null, 'none', null,
             true, $1, $2, $3, $4, $5
           )
           on conflict (id) do update set
             kind = 'local',
             label = 'Local',
+            wsl_distribution = null,
             host_alias = null,
             host = null,
             "user" = null,
@@ -143,12 +156,13 @@ export class PostgresEnvironmentRepository {
       id,
       kind: input.kind,
       label: input.label,
-      hostAlias: input.hostAlias ?? null,
-      host: input.host ?? null,
-      user: input.user ?? null,
-      port: input.port ?? null,
-      authMode: input.authMode ?? "none",
-      identityFile: input.identityFile ?? null,
+      wslDistribution: normalizedWslDistribution,
+      hostAlias: input.kind === "wsl" ? null : input.hostAlias ?? null,
+      host: input.kind === "wsl" ? null : input.host ?? null,
+      user: input.kind === "wsl" ? null : input.user ?? null,
+      port: input.kind === "wsl" ? null : input.port ?? null,
+      authMode: input.kind === "wsl" ? "none" : input.authMode ?? "none",
+      identityFile: input.kind === "wsl" ? null : input.identityFile ?? null,
       enabled: input.enabled ?? true,
       syncState: existing?.syncState ?? "idle",
       lastSyncedAt: existing?.lastSyncedAt ?? null,
@@ -159,16 +173,17 @@ export class PostgresEnvironmentRepository {
     await this.database.query(
       `
         insert into agent_recall.environments (
-          id, kind, label, host_alias, host, "user", port, auth_mode, identity_file,
+          id, kind, label, wsl_distribution, host_alias, host, "user", port, auth_mode, identity_file,
           enabled, sync_state, last_synced_at, last_error, created_at, updated_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16
         )
         on conflict (id) do update set
           kind = excluded.kind,
           label = excluded.label,
+          wsl_distribution = excluded.wsl_distribution,
           host_alias = excluded.host_alias,
           host = excluded.host,
           "user" = excluded."user",
@@ -182,6 +197,7 @@ export class PostgresEnvironmentRepository {
         environment.id,
         environment.kind,
         environment.label,
+        environment.wslDistribution,
         environment.hostAlias,
         environment.host,
         environment.user,
@@ -256,6 +272,21 @@ export class PostgresEnvironmentRepository {
         limit 1
       `,
       [input.hostAlias],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  private async findEnvironmentIdByWslDistribution(distribution: string | null): Promise<string | null> {
+    if (!distribution) return null;
+    const result = await this.database.query<{ id: string }>(
+      `
+        select id
+        from agent_recall.environments
+        where kind = 'wsl' and wsl_distribution = $1
+        order by created_at, id
+        limit 1
+      `,
+      [distribution],
     );
     return result.rows[0]?.id ?? null;
   }

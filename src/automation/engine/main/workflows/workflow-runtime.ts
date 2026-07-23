@@ -691,7 +691,7 @@ export class WorkflowRuntime {
     this.runRegistry.register({ workflowId: input.workflowId, runId: input.runId, pausedNodeIds: new Set(), pausedTaskIds: new Set(), gatedNodeIds: new Set(), taskIdByNodeId: new Map(), manualPauseReasonByNodeId: new Map(), abortControllerByNodeId: new Map() });
     this.deps.updateWorkflowRunState({ workflowId: input.workflowId, runId: input.runId, status: "running", progress: run.progress.map((item) => {
       if (item.nodeId !== input.nodeId) return item;
-      const next = { ...item, status: "running" as const, detail: "Script input submitted" };
+      const next = { ...item, status: "running" as const, detail: "Script input submitted", inputSummary: structuredClone(resolved.auditValues) };
       delete next.inputRequest;
       return next;
     }), appendEvents: [{ type: "gate_answered", nodeId: input.nodeId, at: submittedAt, answer: JSON.stringify(resolved.auditValues) }], contextDocument: run.contextDocument });

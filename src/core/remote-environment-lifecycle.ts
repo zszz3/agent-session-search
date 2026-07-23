@@ -65,7 +65,7 @@ export class RemoteEnvironmentLifecycle {
     this.deletedEnvironmentIds.delete(environment.id);
     this.bumpGeneration(environment.id);
     this.watchManager.stop(environment.id);
-    if (isEnabledSshEnvironment(environment)) {
+    if (isEnabledRemoteEnvironment(environment)) {
       void this.requestSync(environment).catch(() => undefined);
     }
     await this.emitEnvironmentsUpdated();
@@ -84,14 +84,14 @@ export class RemoteEnvironmentLifecycle {
 
   async refreshEnvironment(environmentId: string): Promise<void> {
     const environment = await this.store.getEnvironment(environmentId);
-    if (!environment || !isEnabledSshEnvironment(environment)) return;
+    if (!environment || !isEnabledRemoteEnvironment(environment)) return;
     await this.requestSync(environment, { propagateErrors: true });
     await this.waitForIdleOrThrow(environmentId);
   }
 
   async startEnabledEnvironments(): Promise<void> {
     for (const environment of await this.store.listEnvironments()) {
-      if (isEnabledSshEnvironment(environment)) void this.requestSync(environment).catch(() => undefined);
+      if (isEnabledRemoteEnvironment(environment)) void this.requestSync(environment).catch(() => undefined);
     }
   }
 
@@ -112,7 +112,7 @@ export class RemoteEnvironmentLifecycle {
   }
 
   private async requestSync(environment: SessionEnvironment, options: RequestSyncOptions = {}): Promise<void> {
-    if (!isEnabledSshEnvironment(environment)) return;
+    if (!isEnabledRemoteEnvironment(environment)) return;
     const current = await this.store.getEnvironment(environment.id);
     if (!current || this.deletedEnvironmentIds.has(environment.id)) return;
     if (!sameEnvironmentConfig(current, environment)) return this.requestSync(current, options);
@@ -179,7 +179,7 @@ export class RemoteEnvironmentLifecycle {
     if (reconcile.syncLatest || this.pendingLatestSyncs.has(environmentId)) {
       this.pendingLatestSyncs.delete(environmentId);
       const latest = await this.store.getEnvironment(environmentId);
-      if (latest && isEnabledSshEnvironment(latest) && !this.deletedEnvironmentIds.has(environmentId)) {
+      if (latest && isEnabledRemoteEnvironment(latest) && !this.deletedEnvironmentIds.has(environmentId)) {
         await this.requestSync(latest);
       }
     }
@@ -199,7 +199,7 @@ export class RemoteEnvironmentLifecycle {
       return { handledStaleCompletion: true, syncLatest: false, dropPending: true };
     }
 
-    if (current.kind === "ssh" && !current.enabled) {
+    if (isRemoteEnvironment(current) && !current.enabled) {
       await this.store.updateEnvironmentSyncState(environmentId, "idle", { lastError: null });
       await this.emitEnvironmentsUpdated();
       return { handledStaleCompletion: true, syncLatest: false, dropPending: true };
@@ -249,8 +249,20 @@ export class RemoteEnvironmentLifecycle {
   }
 }
 
+function isRemoteEnvironment(environment: SessionEnvironment): boolean {
+  return isSshEnvironment(environment) || environment.kind === "wsl";
+}
+
+function isEnabledRemoteEnvironment(environment: SessionEnvironment): boolean {
+  return isEnabledSshEnvironment(environment) || (environment.kind === "wsl" && environment.enabled);
+}
+
+function isSshEnvironment(environment: SessionEnvironment): boolean {
+  return environment.kind === "ssh";
+}
+
 function isEnabledSshEnvironment(environment: SessionEnvironment): boolean {
-  return environment.kind === "ssh" && environment.enabled;
+  return isSshEnvironment(environment) && environment.enabled;
 }
 
 function sameEnvironmentConfig(a: SessionEnvironment, b: SessionEnvironment): boolean {
@@ -258,6 +270,7 @@ function sameEnvironmentConfig(a: SessionEnvironment, b: SessionEnvironment): bo
     a.id === b.id &&
     a.kind === b.kind &&
     a.label === b.label &&
+    a.wslDistribution === b.wslDistribution &&
     a.hostAlias === b.hostAlias &&
     a.host === b.host &&
     a.user === b.user &&
@@ -272,6 +285,7 @@ function sameRemoteConnectionConfig(a: SessionEnvironment, b: SessionEnvironment
   return (
     a.id === b.id &&
     a.kind === b.kind &&
+    a.wslDistribution === b.wslDistribution &&
     a.hostAlias === b.hostAlias &&
     a.host === b.host &&
     a.user === b.user &&

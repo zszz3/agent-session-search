@@ -12,6 +12,8 @@ import {
   type ApiProviderKeyTarget,
   type SessionSyncBinding,
 } from "./postgres/metadata-repository";
+import { SavedSearchStore, type SavedSearch } from "./store/saved-searches";
+import { SearchHistoryStore, type SearchHistoryEntry } from "./store/search-history-store";
 import {
   PostgresSessionRepository,
   type TraceEventQueryOptions,
@@ -20,6 +22,7 @@ import {
   PostgresSkillRepository,
   type SkillSyncBinding,
 } from "./postgres/skill-repository";
+import { findRelatedSessions, type RelatedSession } from "./related-sessions";
 import type {
   EnvironmentSyncState,
   EnvironmentUpsertInput,
@@ -37,6 +40,7 @@ import type {
   SessionSource,
   SessionStats,
   SessionStatsOptions,
+  SessionStatsTrend,
   SessionTraceEvent,
   SessionTurnDetail,
   SessionTurnSummary,
@@ -49,6 +53,9 @@ export type {
   SessionSyncBinding,
   SessionSyncDirection,
 } from "./postgres/metadata-repository";
+export type { SavedSearch } from "./store/saved-searches";
+export type { SearchHistoryEntry } from "./store/search-history-store";
+export type { RelatedSession } from "./related-sessions";
 export type { TraceEventQueryOptions } from "./postgres/session-repository";
 export type {
   SkillSyncBinding,
@@ -60,6 +67,8 @@ export class SessionStore {
   private readonly environments: PostgresEnvironmentRepository;
   private readonly metadata: PostgresMetadataRepository;
   private readonly skills: PostgresSkillRepository;
+  private readonly savedSearches: SavedSearchStore;
+  private readonly historyStore: SearchHistoryStore;
 
   constructor(
     private readonly database: PostgresDatabase,
@@ -69,6 +78,8 @@ export class SessionStore {
     this.environments = new PostgresEnvironmentRepository(database);
     this.metadata = new PostgresMetadataRepository(database);
     this.skills = new PostgresSkillRepository(database);
+    this.savedSearches = new SavedSearchStore(database);
+    this.historyStore = new SearchHistoryStore(database);
   }
 
   async close(): Promise<void> {
@@ -408,6 +419,11 @@ export class SessionStore {
     return this.sessions.getStats(options, now);
   }
 
+  async getStatsTrend(options: SessionStatsOptions = {}, now = Date.now()): Promise<SessionStatsTrend> {
+    await this.ready;
+    return this.sessions.getStatsTrend(options, now);
+  }
+
   async searchSessions(options: SearchOptions = {}): Promise<SessionSearchResult[]> {
     await this.ready;
     return this.sessions.searchSessions(options);
@@ -426,6 +442,51 @@ export class SessionStore {
   async deleteSessionsBySource(sources: readonly SessionSource[]): Promise<void> {
     await this.ready;
     await this.sessions.deleteSessionsBySource(sources);
+  }
+
+  async listSavedSearches(): Promise<SavedSearch[]> {
+    await this.ready;
+    return this.savedSearches.listSavedSearches();
+  }
+
+  async createSavedSearch(name: string, options: SearchOptions): Promise<SavedSearch> {
+    await this.ready;
+    return this.savedSearches.createSavedSearch(name, options);
+  }
+
+  async deleteSavedSearch(id: number): Promise<boolean> {
+    await this.ready;
+    return this.savedSearches.deleteSavedSearch(id);
+  }
+
+  async touchSavedSearch(id: number): Promise<void> {
+    await this.ready;
+    await this.savedSearches.touchSavedSearch(id);
+  }
+
+  async recordSearch(query: string, resultCount: number, options?: SearchOptions): Promise<void> {
+    await this.ready;
+    await this.historyStore.recordSearch(query, resultCount, options);
+  }
+
+  async listRecentSearches(limit = 20): Promise<SearchHistoryEntry[]> {
+    await this.ready;
+    return this.historyStore.listRecentSearches(limit);
+  }
+
+  async searchHistory(query: string, limit = 20): Promise<SearchHistoryEntry[]> {
+    await this.ready;
+    return this.historyStore.searchHistory(query, limit);
+  }
+
+  async clearSearchHistory(): Promise<void> {
+    await this.ready;
+    await this.historyStore.clearHistory();
+  }
+
+  async getRelatedSessions(sessionKey: string, limit = 8): Promise<RelatedSession[]> {
+    await this.ready;
+    return findRelatedSessions(this.database, sessionKey, limit);
   }
 }
 

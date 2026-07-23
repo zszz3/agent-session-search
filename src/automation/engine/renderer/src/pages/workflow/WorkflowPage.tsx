@@ -77,6 +77,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const runProgress = source.runProgress ?? [];
   const activeRunId = source.activeRunId;
   const artifacts = source.artifacts ?? [];
+  const runHistoryArtifacts = source.runHistoryArtifacts ?? [];
   const contextDocument = source.contextDocument ?? "";
   const finalReport = source.finalReport ?? "";
   const nodeConversations = source.nodeConversations ?? [];
@@ -360,6 +361,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
       <WorkflowRunCenter
         runs={runs}
         conversations={runHistoryConversations}
+        artifacts={runHistoryArtifacts}
         open={runCenterOpen}
         {...(selectedHistoryRunId ? { selectedRunId: selectedHistoryRunId } : {})}
         language={language}

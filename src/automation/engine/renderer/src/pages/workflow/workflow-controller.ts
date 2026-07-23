@@ -76,6 +76,7 @@ export interface WorkflowController {
   activeRunId?: string | undefined;
   activeRunStatus?: WorkflowStatus;
   artifacts?: RegisteredArtifact[];
+  runHistoryArtifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
   nodeConversations?: WorkflowNodeConversation[];

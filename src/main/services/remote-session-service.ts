@@ -23,7 +23,10 @@ import {
   type SessionSyncHookStatus,
   type SessionSyncQueueEvent,
 } from "../../core/session-sync-queue";
-import { AUTO_SESSION_SYNC_QUEUE_INTERVAL_MS } from "../../core/refresh-policy";
+import {
+  AUTO_SESSION_SYNC_QUEUE_INTERVAL_MS,
+  STALE_SESSION_SYNC_EVENT_AGE_MS,
+} from "../../core/refresh-policy";
 import { isLocalSessionEnvironment } from "../../core/session-environment";
 import type {
   MigrationAgent,
@@ -191,6 +194,10 @@ export class RemoteSessionService {
   async upload(sessionKey: string, force = false): Promise<RemoteSessionUploadResult> {
     const client = this.createClient();
     const store = this.dependencies.getStore();
+    const session = await store.getSession(sessionKey);
+    if (!session) throw new Error("Session not found.");
+    if (session.source === "zcode-cli") throw new Error("ZCode sessions cannot be saved remotely yet.");
+    if (session.environmentKind === "wsl") throw new Error("WSL sessions cannot be saved to cloud yet.");
     await this.dependencies.ensureSessionDetails(sessionKey);
     const binding = await store.getSessionSyncBindingForLocalKey(sessionKey);
     const { payload, detailJson, portableJson } = await this.operations.buildUpload(
@@ -237,6 +244,7 @@ export class RemoteSessionService {
     const remotes = remoteCandidates.filter((_, index) => remoteSessions[index]?.isSubagent !== true);
     const locals: Array<{ session: SessionSearchResult; revision: string }> = [];
     await this.runBounded(await store.searchSessions({ limit: 100_000, excludeSubagents: true }), 4, async (session) => {
+      if (session.environmentKind === "wsl") return;
       if (!migrationAgentForSource(session.source) || !session.projectPath.trim()) return;
       try {
         await this.dependencies.ensureSessionDetails(session.sessionKey);
@@ -360,7 +368,12 @@ export class RemoteSessionService {
       migrationAgentForSource(candidate.source) === event.agent
       && ((event.transcriptPath && path.resolve(candidate.filePath) === path.resolve(event.transcriptPath))
         || candidate.rawId === event.sessionId));
-    if (!session) return;
+    if (!session) {
+      if (this.dependencies.now() - Date.parse(event.queuedAt) >= STALE_SESSION_SYNC_EVENT_AGE_MS) {
+        this.operations.removeQueueFiles([event.filePath]);
+      }
+      return;
+    }
     if (session.isSubagent) {
       this.operations.removeQueueFiles([event.filePath]);
       return;

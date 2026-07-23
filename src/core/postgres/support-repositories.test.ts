@@ -87,6 +87,36 @@ describe("PostgreSQL support repositories", () => {
     );
   });
 
+  it("reuses WSL environments by distribution and clears SSH-only fields", async () => {
+    const repository = new PostgresEnvironmentRepository(database);
+    const created = await repository.upsertEnvironment({
+      kind: "wsl",
+      label: "WSL · Ubuntu",
+      wslDistribution: "Ubuntu",
+    });
+    const updated = await repository.upsertEnvironment({
+      kind: "wsl",
+      label: "Ubuntu workspace",
+      wslDistribution: "Ubuntu",
+      host: "ignored.example.com",
+      hostAlias: "ignored",
+    });
+
+    expect(updated.id).toBe(created.id);
+    expect(updated).toMatchObject({
+      kind: "wsl",
+      label: "Ubuntu workspace",
+      wslDistribution: "Ubuntu",
+      host: null,
+      hostAlias: null,
+      authMode: "none",
+    });
+    await expect(repository.upsertEnvironment({
+      kind: "wsl",
+      label: "Missing distribution",
+    })).rejects.toThrow("WSL distribution is required");
+  });
+
   it("aggregates Skill usage and moves unique remote bindings to the latest local path", async () => {
     const repository = new PostgresSkillRepository(database);
     const source = {

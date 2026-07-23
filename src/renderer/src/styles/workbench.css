@@ -529,6 +529,7 @@
 .workbench-source-row[data-source="claude"] i { background: var(--claude); }
 .workbench-source-row[data-source="codebuddy"] i { background: var(--codebuddy); }
 .workbench-source-row[data-source="codewiz"] i { background: var(--codewiz); }
+.workbench-source-row[data-source="zcode"] i { background: var(--zcode); }
 
 .workbench-source-row strong {
   flex: 0 0 auto;
@@ -935,6 +936,7 @@
 .workbench-session-row[data-source="claude"] .session-trajectory { background: var(--claude); }
 .workbench-session-row[data-source="codebuddy"] .session-trajectory { background: var(--codebuddy); }
 .workbench-session-row[data-source="codewiz"] .session-trajectory { background: var(--codewiz); }
+.workbench-session-row[data-source="zcode"] .session-trajectory { background: var(--zcode); }
 
 .workbench-session-row.live .session-trajectory {
   animation: workbench-live-pulse 2.4s ease-in-out infinite;

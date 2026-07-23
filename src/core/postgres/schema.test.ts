@@ -24,6 +24,8 @@ describe("AgentRecall PostgreSQL schema", () => {
       "turn_messages",
       "session_raw_events",
       "session_message_events",
+      "saved_searches",
+      "search_history",
       "trace_spans",
       "token_events",
       "skill_usage_events",
@@ -39,7 +41,7 @@ describe("AgentRecall PostgreSQL schema", () => {
       "chat_rooms",
       "chat_messages",
     ]));
-    expect(names).toHaveLength(48);
+    expect(names).toHaveLength(50);
     await database.close();
   });
 

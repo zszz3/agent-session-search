@@ -696,6 +696,11 @@
   color: var(--codewiz-badge-text);
 }
 
+.source-badge.zcode {
+  background: var(--zcode-badge-bg);
+  color: var(--zcode-badge-text);
+}
+
 .source-badge.other {
   background: var(--panel-subtle);
   color: var(--text-muted);

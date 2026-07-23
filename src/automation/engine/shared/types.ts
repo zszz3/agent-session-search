@@ -15,6 +15,7 @@ import type { WorkflowV2HumanIntervention, WorkflowV2InterventionAction } from "
 import type { RuntimeId } from "./runtime-catalog";
 import type { ResourceSourceType } from "./resource";
 import type { RuntimeConversation } from "./runtime/conversation";
+import type { RuntimeUsage } from "../../../shared/runtime/usage";
 import type { WorkflowNodeConversation } from "./workflow-v2/conversation";
 import type { ConfiguredAgent } from "./agent/types";
 import type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
@@ -37,6 +38,7 @@ export {
 } from "./workflow/run";
 export type { ResourceSourceType } from "./resource";
 export type { RuntimeConversation } from "./runtime/conversation";
+export type { RuntimeUsage } from "../../../shared/runtime/usage";
 export type { AgentRevision, AgentType, ConfiguredAgent } from "./agent/types";
 export type { AgentMcpBinding, McpServerDefinition, McpToolDefinition, McpTransport } from "./mcp/types";
 export type { EvaluationCaseResult, EvaluationDataset, EvaluationDatasetItem, EvaluationEvaluator, EvaluationExperiment, EvaluationRun, EvaluationRunPage, EvaluationRunSummary, EvaluationScore, EvaluatorKind, ListEvaluationRunsRequest } from "./evaluation/types";
@@ -316,6 +318,9 @@ export interface RuntimeRequest {
   continuationPolicy: RuntimeContinuationPolicy;
   runtimeConfig: RuntimeConfig;
   runtimeConversation?: RuntimeConversation;
+  planningWorkflowId?: string;
+  workflowRunId?: string;
+  workflowNodeId?: string;
 }
 
 export interface RuntimeResumeCapabilities {
@@ -346,6 +351,7 @@ export interface ChatRuntimeSessionState {
 
 export type AgentEvent =
   | { type: "runtime_conversation"; runtimeConversation: RuntimeConversation }
+  | { type: "usage"; usage: RuntimeUsage }
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
   | { type: "system"; content: string; metadata?: Record<string, unknown> }
@@ -429,6 +435,7 @@ export interface TaskRun {
   progress: TaskProgress;
   running: boolean;
   runtimeConversation?: RuntimeConversation;
+  usage?: RuntimeUsage;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;
   lastError: string | undefined;
@@ -445,6 +452,9 @@ export interface RunTaskRequest {
   workDir?: string;
   continuationPolicy?: RuntimeContinuationPolicy;
   runtimeConversation?: RuntimeConversation;
+  planningWorkflowId?: string;
+  workflowRunId?: string;
+  workflowNodeId?: string;
 }
 
 export interface WorkflowAgentRequest extends RuntimeRequest {
