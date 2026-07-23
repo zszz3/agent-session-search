@@ -18,27 +18,12 @@ import type {
 } from "../../shared/team-chat";
 import {
   PostgresTeamChatStore,
-  type TeamChatDispatchUpdate,
 } from "./postgres-team-chat-store";
 import { buildTeamChatPrompt, resolveTeamChatRoute, resolveTeamChatTargets } from "./team-chat-routing";
+import type { TeamChatStore } from "./team-chat-store";
 
 const MAX_AGENT_EXECUTIONS_PER_TURN = 8;
 const CONTEXT_MESSAGE_LIMIT = 40;
-
-export interface TeamChatStore {
-  initialize(): Promise<void>;
-  close(): Promise<void>;
-  listRooms(): Promise<TeamChatRoomSummary[]>;
-  getRoom(roomId: string): Promise<TeamChatRoom | undefined>;
-  createRoom(room: TeamChatRoom): Promise<TeamChatRoom>;
-  updateRoom(room: TeamChatRoom): Promise<TeamChatRoom>;
-  archiveRoom(roomId: string, updatedAt: string): Promise<void>;
-  listMessages(request: ListTeamChatMessagesRequest): Promise<TeamChatMessagePage>;
-  insertMessage(message: TeamChatMessage): Promise<TeamChatMessage>;
-  insertDispatch(dispatch: TeamChatDispatch): Promise<TeamChatDispatch>;
-  updateDispatch(dispatchId: string, patch: TeamChatDispatchUpdate): Promise<void>;
-  markRunningDispatchesInterrupted(updatedAt: string): Promise<void>;
-}
 
 interface TeamChatServiceDependencies {
   readConnectionUrl: () => string;

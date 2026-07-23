@@ -103,6 +103,7 @@ describe("PostgresTeamChatStore", () => {
     expect(sql).toContain("pg_advisory_lock");
     expect(sql).toContain("CREATE SCHEMA IF NOT EXISTS agent_recall");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS agent_recall.chat_rooms");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS agent_recall.chat_agent_sessions");
     expect(sql).toContain("UPDATE agent_recall.chat_dispatches");
     expect(sql).toContain("status = 'interrupted'");
     expect(sql).toContain("pg_advisory_unlock");
@@ -203,8 +204,84 @@ describe("PostgresTeamChatStore", () => {
     expect(pool.client.queries[0]?.text).toBe("BEGIN");
     expect(sql).toContain("UPDATE agent_recall.chat_rooms");
     expect(sql).toContain("DELETE FROM agent_recall.chat_room_agents");
+    expect(sql).toContain("DELETE FROM agent_recall.chat_agent_sessions");
     expect(pool.client.queries.filter((query) => query.text.includes("INSERT INTO agent_recall.chat_room_agents"))).toHaveLength(1);
+    expect(pool.client.queries.find((query) => query.text.includes("DELETE FROM agent_recall.chat_agent_sessions"))?.values)
+      .toEqual([room.id, ["reviewer"]]);
     expect(pool.client.queries.at(-1)?.text).toBe("COMMIT");
+  });
+
+  it("persists and returns opaque room Agent conversations", async () => {
+    const pool = new FakePool();
+    const store = new PostgresTeamChatStore("postgresql://localhost/agent_recall_test", { pool });
+    const room = roomFixture();
+    const session = {
+      roomId: room.id,
+      agentId: "builder",
+      runtimeId: "codex",
+      channelId: "codex-main",
+      modelId: "gpt-5",
+      runtimeConversation: {
+        runtimeId: "codex" as const,
+        codecVersion: "1",
+        payload: { native: { threadId: "thread-1" } },
+      },
+      lastContextMessageId: "019c0000-0000-7000-8000-000000000010",
+      updatedAt: "2026-07-23T08:10:00.000Z",
+    };
+
+    await store.upsertAgentSession(session);
+    pool.nextRows = [{
+      room_id: session.roomId,
+      agent_id: session.agentId,
+      runtime_id: session.runtimeId,
+      channel_id: session.channelId,
+      model_id: session.modelId,
+      runtime_conversation: session.runtimeConversation,
+      last_context_message_id: session.lastContextMessageId,
+      updated_at: session.updatedAt,
+    }];
+
+    await expect(store.listAgentSessions(room.id)).resolves.toEqual([session]);
+    expect(pool.queries[0]?.text).toContain("INSERT INTO agent_recall.chat_agent_sessions");
+    expect(pool.queries[0]?.text).toContain("ON CONFLICT (room_id, agent_id)");
+    expect(pool.queries[0]?.values).toEqual([
+      session.roomId,
+      session.agentId,
+      session.runtimeId,
+      session.channelId,
+      session.modelId,
+      JSON.stringify(session.runtimeConversation),
+      session.lastContextMessageId,
+      session.updatedAt,
+    ]);
+  });
+
+  it("returns only the latest messages after a context marker in chronological order", async () => {
+    const pool = new FakePool();
+    pool.nextRows = [
+      messageRow("019c0000-0000-7000-8000-000000000014", "fourth", "2026-07-23T08:04:00.000Z"),
+      messageRow("019c0000-0000-7000-8000-000000000013", "third", "2026-07-23T08:03:00.000Z"),
+      messageRow("019c0000-0000-7000-8000-000000000012", "second", "2026-07-23T08:02:00.000Z"),
+    ];
+    const store = new PostgresTeamChatStore("postgresql://localhost/agent_recall_test", { pool });
+
+    const page = await store.listMessagesAfter(
+      roomFixture().id,
+      "019c0000-0000-7000-8000-000000000011",
+      2,
+    );
+
+    expect(page).toMatchObject({
+      messages: [{ content: "third" }, { content: "fourth" }],
+      truncated: true,
+    });
+    expect(pool.queries[0]?.text).toContain("(created_at, id) >");
+    expect(pool.queries[0]?.values).toEqual([
+      roomFixture().id,
+      "019c0000-0000-7000-8000-000000000011",
+      3,
+    ]);
   });
 
   it("persists a message and bumps room ordering in one transaction", async () => {

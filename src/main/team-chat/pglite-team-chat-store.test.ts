@@ -45,25 +45,73 @@ describe("PGliteTeamChatStore", () => {
     const first = new PGliteTeamChatStore(directory);
     await first.initialize();
     await first.createRoom(room);
-    await first.insertMessage({
+    const firstMessage = {
       id: "019c0000-0000-7000-8000-000000000002",
       roomId: room.id,
-      senderType: "human",
+      senderType: "human" as const,
       senderName: "You",
       content: "Persist this",
       rootMessageId: "019c0000-0000-7000-8000-000000000002",
       hop: 0,
-      status: "final",
+      status: "final" as const,
       createdAt,
       updatedAt: createdAt,
+    };
+    await first.insertMessage(firstMessage);
+    await first.upsertAgentSession({
+      roomId: room.id,
+      agentId: "builder",
+      runtimeId: "codex",
+      channelId: "codex-main",
+      modelId: "gpt-5",
+      runtimeConversation: {
+        runtimeId: "codex",
+        codecVersion: "1",
+        payload: { native: { threadId: "thread-1" } },
+      },
+      lastContextMessageId: firstMessage.id,
+      updatedAt: "2026-07-23T10:00:00.000Z",
     });
+    for (const [index, content] of ["second", "third", "fourth"].entries()) {
+      const timestamp = `2026-07-23T08:0${index + 1}:00.000Z`;
+      await first.insertMessage({
+        ...firstMessage,
+        id: `019c0000-0000-7000-8000-00000000000${index + 3}`,
+        content,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
     await first.close();
 
     const reopened = new PGliteTeamChatStore(directory);
     await reopened.initialize();
     await expect(reopened.listRooms()).resolves.toMatchObject([{ id: room.id, name: "Local room" }]);
     await expect(reopened.listMessages({ roomId: room.id })).resolves.toMatchObject({
-      messages: [{ content: "Persist this" }],
+      messages: [
+        { content: "Persist this" },
+        { content: "second" },
+        { content: "third" },
+        { content: "fourth" },
+      ],
+    });
+    await expect(reopened.listAgentSessions(room.id)).resolves.toEqual([{
+      roomId: room.id,
+      agentId: "builder",
+      runtimeId: "codex",
+      channelId: "codex-main",
+      modelId: "gpt-5",
+      runtimeConversation: {
+        runtimeId: "codex",
+        codecVersion: "1",
+        payload: { native: { threadId: "thread-1" } },
+      },
+      lastContextMessageId: firstMessage.id,
+      updatedAt: "2026-07-23T10:00:00.000Z",
+    }]);
+    await expect(reopened.listMessagesAfter(room.id, firstMessage.id, 2)).resolves.toMatchObject({
+      messages: [{ content: "third" }, { content: "fourth" }],
+      truncated: true,
     });
     await reopened.close();
   });

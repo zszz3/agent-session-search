@@ -9,13 +9,14 @@ import type {
   TeamChatRoom,
   TeamChatRoomSummary,
 } from "../../shared/team-chat";
-import type { TeamChatDispatchUpdate } from "./postgres-team-chat-store";
-import { TeamChatService, type TeamChatStore } from "./team-chat-service";
+import { TeamChatService } from "./team-chat-service";
+import type { TeamChatAgentSession, TeamChatDispatchUpdate, TeamChatStore } from "./team-chat-store";
 
 class MemoryTeamChatStore implements TeamChatStore {
   readonly rooms: TeamChatRoom[] = [];
   readonly messages: TeamChatMessage[] = [];
   readonly dispatches: TeamChatDispatch[] = [];
+  readonly sessions: TeamChatAgentSession[] = [];
   initialized = false;
   closed = false;
 
@@ -48,6 +49,12 @@ class MemoryTeamChatStore implements TeamChatStore {
     const limit = request.limit ?? 100;
     return { messages: this.messages.filter((message) => message.roomId === request.roomId).slice(-limit) };
   }
+  async listMessagesAfter(roomId: string, afterMessageId: string, limit: number) {
+    const roomMessages = this.messages.filter((message) => message.roomId === roomId);
+    const marker = roomMessages.findIndex((message) => message.id === afterMessageId);
+    const messages = marker >= 0 ? roomMessages.slice(marker + 1) : [];
+    return { messages: messages.slice(-limit), truncated: messages.length > limit };
+  }
   async insertMessage(message: TeamChatMessage): Promise<TeamChatMessage> {
     this.messages.push(message);
     return message;
@@ -66,6 +73,20 @@ class MemoryTeamChatStore implements TeamChatStore {
         Object.assign(dispatch, { status: "interrupted", finishedAt: updatedAt, updatedAt });
       }
     }
+  }
+  async listAgentSessions(roomId: string): Promise<TeamChatAgentSession[]> {
+    return this.sessions.filter((session) => session.roomId === roomId).map((session) => structuredClone(session));
+  }
+  async upsertAgentSession(session: TeamChatAgentSession): Promise<void> {
+    const index = this.sessions.findIndex((item) =>
+      item.roomId === session.roomId && item.agentId === session.agentId);
+    if (index >= 0) this.sessions[index] = structuredClone(session);
+    else this.sessions.push(structuredClone(session));
+  }
+  async deleteAgentSession(roomId: string, agentId: string): Promise<void> {
+    const index = this.sessions.findIndex((session) =>
+      session.roomId === roomId && session.agentId === agentId);
+    if (index >= 0) this.sessions.splice(index, 1);
   }
 }
 

@@ -8,6 +8,12 @@ import type {
   TeamChatRoomAgent,
   TeamChatRoomSummary,
 } from "../../shared/team-chat";
+import type {
+  TeamChatAgentSession,
+  TeamChatContextPage,
+  TeamChatDispatchUpdate,
+  TeamChatStore,
+} from "./team-chat-store";
 
 export interface TeamChatQueryResult<Row extends Record<string, unknown> = Record<string, unknown>> {
   rows: Row[];
@@ -69,6 +75,17 @@ const SCHEMA_STATEMENTS = [
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS agent_recall.chat_agent_sessions (
+    room_id uuid NOT NULL REFERENCES agent_recall.chat_rooms(id) ON DELETE CASCADE,
+    agent_id text NOT NULL,
+    runtime_id varchar(80) NOT NULL,
+    channel_id varchar(160) NOT NULL,
+    model_id varchar(240) NOT NULL,
+    runtime_conversation jsonb NOT NULL,
+    last_context_message_id uuid REFERENCES agent_recall.chat_messages(id) ON DELETE SET NULL,
+    updated_at timestamptz NOT NULL,
+    PRIMARY KEY (room_id, agent_id)
+  )`,
   `CREATE TABLE IF NOT EXISTS agent_recall.chat_dispatches (
     id uuid PRIMARY KEY,
     room_id uuid NOT NULL REFERENCES agent_recall.chat_rooms(id) ON DELETE CASCADE,
@@ -93,15 +110,7 @@ interface PostgresTeamChatStoreOptions {
   migrationLock?: boolean;
 }
 
-export interface TeamChatDispatchUpdate {
-  status: TeamChatDispatch["status"];
-  error?: string;
-  startedAt?: string;
-  finishedAt?: string;
-  updatedAt: string;
-}
-
-export class PostgresTeamChatStore {
+export class PostgresTeamChatStore implements TeamChatStore {
   private readonly pool: TeamChatPoolLike;
   private readonly migrationLock: boolean;
 
@@ -224,6 +233,11 @@ export class PostgresTeamChatStore {
       );
       await client.query("DELETE FROM agent_recall.chat_room_agents WHERE room_id = $1", [room.id]);
       for (const agent of room.agents) await this.insertRoomAgent(client, agent);
+      await client.query(
+        `DELETE FROM agent_recall.chat_agent_sessions
+         WHERE room_id = $1 AND NOT (agent_id = ANY($2::text[]))`,
+        [room.id, room.agents.map((agent) => agent.agentId)],
+      );
       await client.query("COMMIT");
       return room;
     } catch (error) {
@@ -260,6 +274,32 @@ export class PostgresTeamChatStore {
     return {
       messages: selected.map(mapMessageRow).reverse(),
       ...(hasMore && selected.length > 0 ? { nextBefore: String(selected.at(-1)!.id) } : {}),
+    };
+  }
+
+  async listMessagesAfter(
+    roomId: string,
+    afterMessageId: string,
+    limit: number,
+  ): Promise<TeamChatContextPage> {
+    const result = await this.pool.query<MessageRow>(
+      `SELECT id, room_id, sender_type, sender_agent_id, sender_name, content,
+              root_message_id, source_message_id, hop, status, created_at, updated_at
+       FROM agent_recall.chat_messages
+       WHERE room_id = $1
+         AND (created_at, id) > (
+           SELECT created_at, id
+           FROM agent_recall.chat_messages
+           WHERE room_id = $1 AND id = $2::uuid
+         )
+       ORDER BY created_at DESC, id DESC
+       LIMIT $3`,
+      [roomId, afterMessageId, limit + 1],
+    );
+    const truncated = result.rows.length > limit;
+    return {
+      messages: result.rows.slice(0, limit).map(mapMessageRow).reverse(),
+      truncated,
     };
   }
 
@@ -350,6 +390,51 @@ export class PostgresTeamChatStore {
     );
   }
 
+  async listAgentSessions(roomId: string): Promise<TeamChatAgentSession[]> {
+    const result = await this.pool.query<AgentSessionRow>(
+      `SELECT room_id, agent_id, runtime_id, channel_id, model_id,
+              runtime_conversation, last_context_message_id, updated_at
+       FROM agent_recall.chat_agent_sessions
+       WHERE room_id = $1
+       ORDER BY agent_id`,
+      [roomId],
+    );
+    return result.rows.map(mapAgentSessionRow);
+  }
+
+  async upsertAgentSession(session: TeamChatAgentSession): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO agent_recall.chat_agent_sessions
+        (room_id, agent_id, runtime_id, channel_id, model_id,
+         runtime_conversation, last_context_message_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+       ON CONFLICT (room_id, agent_id) DO UPDATE SET
+         runtime_id = EXCLUDED.runtime_id,
+         channel_id = EXCLUDED.channel_id,
+         model_id = EXCLUDED.model_id,
+         runtime_conversation = EXCLUDED.runtime_conversation,
+         last_context_message_id = EXCLUDED.last_context_message_id,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        session.roomId,
+        session.agentId,
+        session.runtimeId,
+        session.channelId,
+        session.modelId,
+        JSON.stringify(session.runtimeConversation),
+        session.lastContextMessageId ?? null,
+        session.updatedAt,
+      ],
+    );
+  }
+
+  async deleteAgentSession(roomId: string, agentId: string): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM agent_recall.chat_agent_sessions WHERE room_id = $1 AND agent_id = $2",
+      [roomId, agentId],
+    );
+  }
+
   private async insertRoomAgent(client: TeamChatClientLike, agent: TeamChatRoomAgent): Promise<void> {
     await client.query(
       `INSERT INTO agent_recall.chat_room_agents
@@ -412,6 +497,17 @@ type MessageRow = Record<string, unknown> & {
   updated_at: unknown;
 };
 
+type AgentSessionRow = Record<string, unknown> & {
+  room_id: unknown;
+  agent_id: unknown;
+  runtime_id: unknown;
+  channel_id: unknown;
+  model_id: unknown;
+  runtime_conversation: unknown;
+  last_context_message_id: unknown;
+  updated_at: unknown;
+};
+
 function mapRoomSummaryRow(row: RoomSummaryRow): TeamChatRoomSummary {
   const lastMessage = nullableString(row.last_message);
   const lastMessageAt = row.last_message_at === null || row.last_message_at === undefined
@@ -460,6 +556,35 @@ function mapMessageRow(row: MessageRow): TeamChatMessage {
     status: row.status as TeamChatMessage["status"],
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at),
+  };
+}
+
+function mapAgentSessionRow(row: AgentSessionRow): TeamChatAgentSession {
+  const runtimeConversation = parseRuntimeConversation(row.runtime_conversation);
+  const lastContextMessageId = nullableString(row.last_context_message_id);
+  return {
+    roomId: String(row.room_id),
+    agentId: String(row.agent_id),
+    runtimeId: String(row.runtime_id),
+    channelId: String(row.channel_id),
+    modelId: String(row.model_id),
+    runtimeConversation,
+    ...(lastContextMessageId ? { lastContextMessageId } : {}),
+    updatedAt: toIsoString(row.updated_at),
+  };
+}
+
+function parseRuntimeConversation(value: unknown): TeamChatAgentSession["runtimeConversation"] {
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!parsed || typeof parsed !== "object") throw new Error("Stored Agent conversation is invalid.");
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.runtimeId !== "string" || typeof record.codecVersion !== "string" || !("payload" in record)) {
+    throw new Error("Stored Agent conversation is invalid.");
+  }
+  return {
+    runtimeId: record.runtimeId as TeamChatAgentSession["runtimeConversation"]["runtimeId"],
+    codecVersion: record.codecVersion,
+    payload: structuredClone(record.payload),
   };
 }
 
