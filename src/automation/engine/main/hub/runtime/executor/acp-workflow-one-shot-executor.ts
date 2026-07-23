@@ -5,6 +5,7 @@ import {
 } from "../../../agents/acp/acp-interactive-client";
 import type { AgentExecutionContext, AgentExecutor } from "./agent-executor-types";
 import { promptWithDeveloperInstructions } from "./runtime-instructions";
+import { workflowMcpScopeForContext } from "../../../../shared/workflow-mcp-policy";
 
 interface AcpOneShotClient {
   attach(): Promise<string>;
@@ -41,6 +42,7 @@ export class AcpWorkflowOneShotExecutor implements AgentExecutor {
       mcpServers: this.options.mcpServers,
       onEvent: this.context.emit,
       approvalOwnerId: this.context.runId,
+      ...(workflowMcpScopeForContext(this.context) ? { workflowMcpScope: workflowMcpScopeForContext(this.context) } : {}),
       ...(this.options.requestApproval ? { requestApproval: this.options.requestApproval } : {}),
     });
     this.client = client;

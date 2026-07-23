@@ -22,6 +22,7 @@ import { runCodexChannelTest } from "./codex-test";
 import { runCodexWorkflow } from "./codex-workflow";
 import { codexWorkflowMcpConfig } from "./codex-workflow-mcp";
 import { codexMcpLaunchConfig } from "../runtime-mcp";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
@@ -68,7 +69,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 emit: onEvent,
                 request: options.requestApproval,
                 cwd: sessionContext.workDir,
-              } : undefined);
+              } : undefined, workflowMcpScopeForContext(sessionContext));
             },
             onExit,
           });

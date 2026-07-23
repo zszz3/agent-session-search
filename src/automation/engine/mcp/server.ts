@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { RUNTIME_IDS } from "../shared/runtime-catalog";
+import { workflowMcpScopeFromEnvironment, workflowMcpToolsForScope } from "../shared/workflow-mcp-policy";
 
 interface McpToolDefinition {
   name: string;
@@ -375,7 +376,9 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
       }, ["nodeId", "summary", "outputs", "proposals"]),
     });
   }
-  return managed ? tools : tools.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name));
+  if (!managed) return tools.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name));
+  const allowed = new Set(workflowMcpToolsForScope(workflowMcpScopeFromEnvironment(process.env)));
+  return tools.filter((tool) => allowed.has(tool.name));
 }
 
 export function resolveBridgeDiscoveryPath(): string {

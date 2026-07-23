@@ -14,6 +14,7 @@ import { OpenCodeInteractiveSession } from "./opencode-session";
 import { runOpenCodeChannelTest, runOpenCodeWorkflow } from "./opencode-workflow";
 import { acpMcpServers, acpWorkflowMcpServers } from "../runtime-mcp";
 import { AcpWorkflowOneShotExecutor } from "../acp-workflow-one-shot-executor";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export function createOpenCodeDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
@@ -53,6 +54,7 @@ export function createOpenCodeDriver(options: RuntimeAgentExecutorFactoryOptions
             onEvent,
             onExit,
             approvalOwnerId: interactiveContext.chatId,
+            ...(workflowMcpScopeForContext(interactiveContext) ? { workflowMcpScope: workflowMcpScopeForContext(interactiveContext) } : {}),
             ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),

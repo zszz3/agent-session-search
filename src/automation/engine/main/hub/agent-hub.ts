@@ -1904,6 +1904,16 @@ export class AgentHub {
             onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
             return;
           }
+          if (event.type === "tool_call" || event.type === "tool_result") {
+            onEvent?.({
+              requestId: input.requestId,
+              type: event.type,
+              content: event.content,
+              ...(event.name ? { name: event.name } : {}),
+              ...(event.metadata ? { metadata: structuredClone(event.metadata) } : {}),
+            });
+            return;
+          }
           if (event.type === "completed") {
             const finalContent = (content || event.content || "").trim();
             settle(() => resolve({
@@ -2213,6 +2223,12 @@ export class AgentHub {
     if (reduced.type === "delta") {
       this.workflowStore.workflows.set(workflowId, reduced.workflow);
       this.emitStreaming();
+      return;
+    }
+
+    if (reduced.type === "event") {
+      this.workflowStore.workflows.set(workflowId, reduced.workflow);
+      this.emit();
       return;
     }
 

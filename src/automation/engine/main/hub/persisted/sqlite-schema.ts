@@ -114,6 +114,7 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       workflow_id text not null references workflows(id) on delete cascade,
       role text not null,
       content text not null,
+      events_json text,
       sequence integer not null
     );
     create table if not exists workflow_run_progress (
@@ -199,6 +200,7 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   ensureColumn(db, "workflows", "topology_locked", "integer not null default 0");
   ensureColumn(db, "workflows", "definition_json", "text");
   ensureColumn(db, "workflows", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_draft_messages", "events_json", "text");
   ensureColumn(db, "workflow_runs", "workflow_v2_plan_json", "text");
   ensureColumn(db, "workflow_runs", "trigger_source", "text not null default 'manual'");
   ensureColumn(db, "workflow_runs", "configuration_snapshot_json", "text");

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { AppSnapshot } from "../../automation/engine/shared/types";
 import type { AgentHub } from "../../automation/engine/main/hub/agent-hub";
 import type { McpRegistryStore } from "../../automation/engine/main/mcp-registry-store";
@@ -11,7 +12,7 @@ function snapshot(workDir = "/repo"): AppSnapshot {
   return { workDir } as AppSnapshot;
 }
 
-function fixture() {
+function fixture(injectAgents = true) {
   const calls: string[] = [];
   let current = snapshot();
   let listener: ((value: AppSnapshot) => void) | undefined;
@@ -61,7 +62,7 @@ function fixture() {
       registry,
       evaluations,
       teamChats,
-      agents,
+      ...(injectAgents ? { agents } : {}),
       loadBundledWorkflows: vi.fn(async () => [{ workflowId: "wf", title: "One", objective: "One", definition: {} as never }]),
       startRouter: vi.fn(async () => ({ host: "127.0.0.1", port: 1, baseUrl: "http://127.0.0.1:1", stop: async () => { calls.push("router-stop"); } })),
       setRouterBaseUrl: vi.fn(),
@@ -79,6 +80,21 @@ function fixture() {
 }
 
 describe("NativeAutomationService", () => {
+  it("reports planning write tools without reading child-only environment variables", async () => {
+    const previous = process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN;
+    delete process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN;
+    try {
+      const { service } = fixture(false);
+      await service.initialize();
+      expect(service.mcpAgents().status()).toMatchObject({
+        bridgeRunning: true,
+        workflowCreateAvailable: true,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN;
+      else process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN = previous;
+    }
+  });
   it("keeps the managed MCP write token inside the native runtime", async () => {
     const { service, hub } = fixture();
 
@@ -94,8 +110,8 @@ describe("NativeAutomationService", () => {
 
     expect(calls).toEqual(["channels", "database", "mcp", "bundled", "discovery", "managed-token", "runtime", "team-chat-start"]);
     expect(teamChats.connect).toHaveBeenCalledTimes(1);
-    expect(hub.loadModelChannels).toHaveBeenCalledWith("/user-data/runtime-channels.json");
-    expect(hub.loadPersistedState).toHaveBeenCalledWith("/user-data/automation.db");
+    expect(hub.loadModelChannels).toHaveBeenCalledWith(path.join("/user-data", "runtime-channels.json"));
+    expect(hub.loadPersistedState).toHaveBeenCalledWith(path.join("/user-data", "automation.db"));
     expect(hub.setWorkflowMcpManagedToken).toHaveBeenCalledWith("test-token");
     expect(service.health()).toEqual({ state: "ready" });
   });

@@ -65,6 +65,26 @@ describe("normalizeCodexNotification", () => {
     ).toEqual([{ type: "tool_result", name: "shell_command", content: "Exit code: 0\nOutput:\nApp.tsx" }]);
   });
 
+  test("emits failed MCP calls from current app-server item notifications", () => {
+    const state = createCodexStreamState();
+    expect(normalizeCodexNotification("item/started", {
+      item: { id: "mcp-1", type: "mcpToolCall", server: "agent_recall", tool: "workflow_update", arguments: { workflowId: "wf-1" }, status: "inProgress" },
+    }, state)).toEqual([{
+      type: "tool_call",
+      name: "workflow_update",
+      content: JSON.stringify({ workflowId: "wf-1" }, null, 2),
+      metadata: { id: "mcp-1", serverName: "agent_recall", status: "in_progress" },
+    }]);
+    expect(normalizeCodexNotification("item/completed", {
+      item: { id: "mcp-1", type: "mcpToolCall", server: "agent_recall", tool: "workflow_update", status: "failed", error: { message: "user cancelled MCP tool call" } },
+    }, state)).toEqual([{
+      type: "tool_result",
+      name: "workflow_update",
+      content: "user cancelled MCP tool call",
+      metadata: { id: "mcp-1", serverName: "agent_recall", status: "failed" },
+    }]);
+  });
+
   test("maps turn completion to completed event", () => {
     const state = createCodexStreamState();
 

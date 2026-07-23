@@ -14,6 +14,7 @@ import { HermesInteractiveSession } from "./hermes-session";
 import { runHermesChannelTest, runHermesWorkflow } from "./hermes-workflow";
 import { acpMcpServers, acpWorkflowMcpServers } from "../runtime-mcp";
 import { AcpWorkflowOneShotExecutor } from "../acp-workflow-one-shot-executor";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export function createHermesDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
@@ -53,6 +54,7 @@ export function createHermesDriver(options: RuntimeAgentExecutorFactoryOptions):
             onEvent,
             onExit,
             approvalOwnerId: interactiveContext.chatId,
+            ...(workflowMcpScopeForContext(interactiveContext) ? { workflowMcpScope: workflowMcpScopeForContext(interactiveContext) } : {}),
             ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),

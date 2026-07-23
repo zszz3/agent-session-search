@@ -20,6 +20,7 @@ describe("workflowMcpLaunchConfig", () => {
       env: {
         AGENT_RECALL_WORKFLOW_MCP_BRIDGE: "C:/app/mcp-bridge.json",
         AGENT_RECALL_WORKFLOW_ID: "wf-1",
+        AGENT_RECALL_WORKFLOW_MCP_SCOPE: "planning",
         ELECTRON_RUN_AS_NODE: "1",
       },
     });
@@ -56,6 +57,7 @@ describe("workflowMcpLaunchConfig", () => {
       AGENT_RECALL_WORKFLOW_RUN_ID: "run-1",
       AGENT_RECALL_WORKFLOW_NODE_ID: "node-1",
       AGENT_RECALL_WORKFLOW_MCP_TOKEN: "managed-token",
+      AGENT_RECALL_WORKFLOW_MCP_SCOPE: "node_execution",
     });
   });
 });

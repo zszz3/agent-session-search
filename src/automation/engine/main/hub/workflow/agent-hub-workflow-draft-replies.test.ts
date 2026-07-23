@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dispatchWorkflowDraftReply } from "./agent-hub-workflow-draft-replies";
+import { dispatchWorkflowDraftReply, reduceWorkflowDraftReplyEvent } from "./agent-hub-workflow-draft-replies";
 import type { WorkflowDraftState } from "../../../shared/types";
 import { beginWorkflowDraftReply, createWorkflowDraftInteractiveRequest } from "./agent-hub-workflow-draft-reply-state";
 
@@ -30,5 +30,35 @@ describe("dispatchWorkflowDraftReply", () => {
     expect(request.prompt).toContain("workflow_create");
     expect(request.prompt).toContain('"graphVersion": 2');
     expect(request.prompt).toContain("Make it concise");
+  });
+
+  it("attaches failed MCP tool results to the active assistant message", () => {
+    const started = beginWorkflowDraftReply({ workflow, reply: "Update it", thinkingMessage: "thinking", cloneDraft: structuredClone, now: 2 });
+    const reduced = reduceWorkflowDraftReplyEvent({
+      workflow: started.next,
+      activeRequest: started.request,
+      event: {
+        requestId: started.request.requestId,
+        type: "tool_result",
+        name: "workflow_update",
+        content: "Permission rejected by runtime host.",
+        metadata: { status: "failed", serverName: "agent_recall" },
+      },
+      thinkingMessage: "thinking",
+      cloneDraft: structuredClone,
+      replaceMessage: (messages) => messages,
+      now: 3,
+    });
+
+    expect(reduced.type).toBe("event");
+    if (reduced.type !== "event") throw new Error("Expected event reduction");
+    expect(reduced.workflow.messages.at(-1)?.events).toEqual([
+      expect.objectContaining({
+        type: "tool_result",
+        name: "workflow_update",
+        content: "Permission rejected by runtime host.",
+        metadata: { status: "failed", serverName: "agent_recall" },
+      }),
+    ]);
   });
 });

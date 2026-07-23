@@ -13,6 +13,7 @@ import {
 } from "../workflow/agent-executor-workflow-shared";
 import { claudeWorkflowMcpServers } from "./claude-workflow-mcp";
 import { claudeMcpServers } from "../runtime-mcp";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export async function runClaudeWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -48,6 +49,8 @@ export async function runClaudeWorkflow(
       developerInstructions: developerInstructionsForWorkflowRequest(input),
       ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       abortController,
+      approvalOwnerId: `workflow-draft:${input.planningWorkflowId ?? input.requestId}`,
+      ...(workflowMcpScopeForContext(input) ? { workflowMcpScope: workflowMcpScopeForContext(input) } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {

@@ -9,6 +9,16 @@ export interface WorkflowGrillMessage {
   id: string;
   role: "assistant" | "user";
   content: string;
+  events?: WorkflowGrillEvent[];
+}
+
+export interface WorkflowGrillEvent {
+  id: string;
+  type: "tool_call" | "tool_result";
+  content: string;
+  timestamp: number;
+  name?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface WorkflowDraftState {

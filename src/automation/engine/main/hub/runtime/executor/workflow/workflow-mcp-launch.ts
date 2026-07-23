@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { WorkflowMcpScope } from "../../../../../shared/workflow-mcp-policy";
 
 export interface WorkflowMcpLaunchConfig {
   command: string;
@@ -14,6 +15,7 @@ export interface WorkflowMcpBinding {
   runId?: string;
   nodeId?: string;
   managedToken?: string;
+  scope?: WorkflowMcpScope;
 }
 
 interface WorkflowMcpLaunchOptions {
@@ -28,6 +30,8 @@ export function workflowMcpLaunchConfig(
 ): WorkflowMcpLaunchConfig | undefined {
   const { discoveryPath, workflowId } = binding;
   if (!discoveryPath || !workflowId) return undefined;
+  const scope: WorkflowMcpScope = binding.scope
+    ?? (binding.runId && binding.nodeId ? "node_execution" : "planning");
   const mainBundlePath = options.mainBundlePath ?? fileURLToPath(import.meta.url);
   const compiledServer = [
     process.env.AGENT_RECALL_WORKFLOW_MCP_SERVER,
@@ -41,6 +45,7 @@ export function workflowMcpLaunchConfig(
       env: {
         AGENT_RECALL_WORKFLOW_MCP_BRIDGE: discoveryPath,
         AGENT_RECALL_WORKFLOW_ID: workflowId,
+        AGENT_RECALL_WORKFLOW_MCP_SCOPE: scope,
         ...(binding.runId ? { AGENT_RECALL_WORKFLOW_RUN_ID: binding.runId } : {}),
         ...(binding.nodeId ? { AGENT_RECALL_WORKFLOW_NODE_ID: binding.nodeId } : {}),
         ...(binding.managedToken ? { AGENT_RECALL_WORKFLOW_MCP_TOKEN: binding.managedToken } : {}),
@@ -62,6 +67,7 @@ export function workflowMcpLaunchConfig(
     env: {
       AGENT_RECALL_WORKFLOW_MCP_BRIDGE: discoveryPath,
       AGENT_RECALL_WORKFLOW_ID: workflowId,
+      AGENT_RECALL_WORKFLOW_MCP_SCOPE: scope,
       ...(binding.runId ? { AGENT_RECALL_WORKFLOW_RUN_ID: binding.runId } : {}),
       ...(binding.nodeId ? { AGENT_RECALL_WORKFLOW_NODE_ID: binding.nodeId } : {}),
       ...(binding.managedToken ? { AGENT_RECALL_WORKFLOW_MCP_TOKEN: binding.managedToken } : {}),

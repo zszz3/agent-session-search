@@ -430,6 +430,18 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <div className={`cli-markdown ${running && message.content === WORKFLOW_THINKING_MESSAGE ? "is-streaming" : ""}`}>
                   <Markdown text={workflowAssistantDisplayContent(message.content)} />
                   {running && message.content === WORKFLOW_THINKING_MESSAGE ? <span className="stream-cursor" aria-hidden="true" /> : null}
+                  {message.events?.map((event) => {
+                    const status = typeof event.metadata?.status === "string" ? event.metadata.status : event.type === "tool_call" ? "in_progress" : "completed";
+                    return (
+                      <details key={event.id} className={`workflow-tool-event ${status}`} open={status === "failed"}>
+                        <summary>
+                          <code>{event.name || "MCP tool"}</code>
+                          <span>{status}</span>
+                        </summary>
+                        <pre>{event.content}</pre>
+                      </details>
+                    );
+                  })}
                 </div>
               )}
             </div>

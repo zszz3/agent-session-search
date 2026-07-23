@@ -20,6 +20,7 @@ import { reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 import { codexWorkflowMcpConfig } from "./codex-workflow-mcp";
 import { codexMcpLaunchConfig } from "../runtime-mcp";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export async function runCodexWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -101,7 +102,7 @@ export async function runCodexWorkflow(
       },
       onRequest: (id, method, params) => {
         if (client) {
-          respondToCodexRuntimeServerRequest(client, id, method, params);
+          respondToCodexRuntimeServerRequest(client, id, method, params, undefined, workflowMcpScopeForContext(input));
         }
       },
       onExit: (_code, _signal, stderr) => {

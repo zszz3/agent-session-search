@@ -75,8 +75,8 @@ export class SqliteWorkflowRepository {
       );
       asArray(workflow.messages).forEach((message, sequence) => {
         db.prepare(
-          "insert into workflow_draft_messages (id, workflow_id, role, content, sequence) values (?, ?, ?, ?, ?)",
-        ).run(asString(message.id), workflowId, asString(message.role), asString(message.content), sequence);
+          "insert into workflow_draft_messages (id, workflow_id, role, content, events_json, sequence) values (?, ?, ?, ?, ?, ?)",
+        ).run(asString(message.id), workflowId, asString(message.role), asString(message.content), json(message.events), sequence);
       });
       asArray(workflow.runProgress).forEach((item, sequence) => {
         db.prepare(
@@ -223,11 +223,16 @@ export class SqliteWorkflowRepository {
       modelId: row.model_id,
       objective: row.objective,
       messages: db
-        .prepare("select id, role, content from workflow_draft_messages where workflow_id = ? order by sequence")
+        .prepare("select id, role, content, events_json from workflow_draft_messages where workflow_id = ? order by sequence")
         .all(workflowId)
         .map((message) => {
           const item = asRecord(message);
-          return { id: item.id, role: item.role, content: item.content };
+          return {
+            id: item.id,
+            role: item.role,
+            content: item.content,
+            ...(item.events_json ? { events: parseJson(item.events_json) } : {}),
+          };
         }),
       reply: row.reply,
       runProgress: this.loadProgress(db, "workflow_run_progress", "workflow_id", workflowId),

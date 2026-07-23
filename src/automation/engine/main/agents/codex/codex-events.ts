@@ -46,6 +46,16 @@ function formatArguments(value: unknown): string {
   return raw;
 }
 
+function formatValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function extractToolOutput(item: Record<string, unknown>): string {
   const output = asString(item.output);
   if (output) return output.trim();
@@ -86,6 +96,50 @@ function normalizeToolItem(item: Record<string, unknown> | undefined, state: Cod
   }
 
   return [];
+}
+
+function normalizeMcpToolItem(
+  method: string,
+  item: Record<string, unknown> | undefined,
+  state: CodexStreamState,
+): AgentEvent[] {
+  if (!item) return [];
+  const itemType = asString(item.type).replaceAll("_", "").toLowerCase();
+  if (itemType !== "mcptoolcall") return [];
+  const id = asString(item.id) || asString(item.callId) || asString(item.call_id);
+  const name = asString(item.tool) || asString(item.toolName) || asString(item.name)
+    || (id && state.toolNames.get(id)) || "MCP tool";
+  const serverName = asString(item.server) || asString(item.serverName);
+  if (id) state.toolNames.set(id, name);
+  if (method === "item/started") {
+    return [{
+      type: "tool_call",
+      name,
+      content: truncate(formatValue(item.arguments ?? item.input), 600),
+      metadata: {
+        ...(id ? { id } : {}),
+        ...(serverName ? { serverName } : {}),
+        status: "in_progress",
+      },
+    }];
+  }
+  const error = item.error && typeof item.error === "object"
+    ? asString((item.error as Record<string, unknown>).message)
+    : asString(item.error);
+  const result = item.result && typeof item.result === "object"
+    ? extractToolOutput(item.result as Record<string, unknown>) || formatValue(item.result)
+    : formatValue(item.result ?? item.output);
+  const status = asString(item.status).toLowerCase() === "failed" || error ? "failed" : "completed";
+  return [{
+    type: "tool_result",
+    name,
+    content: truncate(error || result),
+    metadata: {
+      ...(id ? { id } : {}),
+      ...(serverName ? { serverName } : {}),
+      status,
+    },
+  }];
 }
 
 function extractItemText(item: Record<string, unknown> | undefined): string {
@@ -133,6 +187,10 @@ export function normalizeCodexNotification(
   params: Record<string, unknown>,
   state: CodexStreamState,
 ): AgentEvent[] {
+  if (method === "item/started" || method === "item/completed") {
+    const mcpEvents = normalizeMcpToolItem(method, params.item as Record<string, unknown> | undefined, state);
+    if (mcpEvents.length > 0) return mcpEvents;
+  }
   if (method === "item/agentMessage/delta") {
     const delta = asString(params.delta);
     if (!delta) return [];

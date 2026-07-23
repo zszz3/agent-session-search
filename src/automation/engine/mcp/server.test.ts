@@ -10,6 +10,7 @@ const originalEnv = process.env.AGENT_RECALL_WORKFLOW_MCP_BRIDGE;
 const originalManagedToken = process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN;
 const originalRunId = process.env.AGENT_RECALL_WORKFLOW_RUN_ID;
 const originalNodeId = process.env.AGENT_RECALL_WORKFLOW_NODE_ID;
+const originalScope = process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE;
 describe("MCP server tools", () => {
   afterEach(() => {
     if (originalEnv === undefined) delete process.env.AGENT_RECALL_WORKFLOW_MCP_BRIDGE;
@@ -20,6 +21,8 @@ describe("MCP server tools", () => {
     else process.env.AGENT_RECALL_WORKFLOW_RUN_ID = originalRunId;
     if (originalNodeId === undefined) delete process.env.AGENT_RECALL_WORKFLOW_NODE_ID;
     else process.env.AGENT_RECALL_WORKFLOW_NODE_ID = originalNodeId;
+    if (originalScope === undefined) delete process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE;
+    else process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE = originalScope;
     vi.restoreAllMocks();
   });
 
@@ -42,6 +45,7 @@ describe("MCP server tools", () => {
 
   test("exposes lifecycle writes only to managed MCP sessions", () => {
     process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN = "managed-token";
+    process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE = "planning";
 
     expect(mcpToolDefinitions().map((tool) => tool.name)).toEqual(expect.arrayContaining([
       "workflow_create",
@@ -53,8 +57,22 @@ describe("MCP server tools", () => {
     ]));
   });
 
+  test("limits managed node sessions to node execution tools", () => {
+    process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN = "managed-token";
+    process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE = "node_execution";
+    process.env.AGENT_RECALL_WORKFLOW_RUN_ID = "run-1";
+    process.env.AGENT_RECALL_WORKFLOW_NODE_ID = "node-1";
+
+    const names = mcpToolDefinitions().map((tool) => tool.name);
+    expect(names).toContain("workflow_node_complete");
+    expect(names).toContain("workflow_run_get");
+    expect(names).not.toContain("workflow_update");
+    expect(names).not.toContain("workflow_stop");
+  });
+
   test("publishes strict lifecycle filter and completion schemas", () => {
     process.env.AGENT_RECALL_WORKFLOW_MCP_TOKEN = "managed-token";
+    process.env.AGENT_RECALL_WORKFLOW_MCP_SCOPE = "node_execution";
     process.env.AGENT_RECALL_WORKFLOW_RUN_ID = "run-1";
     process.env.AGENT_RECALL_WORKFLOW_NODE_ID = "node-1";
     const tools = mcpToolDefinitions();

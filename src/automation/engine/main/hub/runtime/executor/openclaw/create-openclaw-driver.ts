@@ -13,6 +13,7 @@ import { OpenClawInteractiveSession } from "./openclaw-session";
 import { runOpenClawChannelTest, runOpenClawWorkflow } from "./openclaw-workflow";
 import { acpMcpServers, acpWorkflowMcpServers } from "../runtime-mcp";
 import { AcpWorkflowOneShotExecutor } from "../acp-workflow-one-shot-executor";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   return createInteractiveRuntimeDriver({
@@ -50,6 +51,7 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
             onEvent,
             onExit,
             approvalOwnerId: interactiveContext.chatId,
+            ...(workflowMcpScopeForContext(interactiveContext) ? { workflowMcpScope: workflowMcpScopeForContext(interactiveContext) } : {}),
             ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),

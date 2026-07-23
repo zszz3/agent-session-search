@@ -17,7 +17,7 @@ import {
   loadBundledWorkflows,
   type BundledWorkflowDefinition,
 } from "../../automation/engine/main/workflows/bundled-workflows";
-import { mcpToolDefinitions } from "../../automation/engine/mcp/server";
+import { workflowMcpToolDecision } from "../../automation/engine/shared/workflow-mcp-policy";
 import type { AutomationHealth } from "../../shared/ipc/automation";
 import { resolveAutomationPaths, type AutomationPaths } from "./automation-paths";
 import { EvaluationService } from "./evaluation-service";
@@ -108,7 +108,7 @@ export class NativeAutomationService {
       serverPath: () => options.workflowMcpServerPath,
       bridgePath: () => this.bridge?.discoveryPath ?? this.paths.discoveryPath,
       bridgeRunning: () => Boolean(this.bridge),
-      workflowCreateAvailable: () => mcpToolDefinitions().some((tool) => tool.name === "workflow_create"),
+      workflowCreateAvailable: () => workflowMcpToolDecision("planning", "workflow_create") === "allow",
       runtimeForAgent: (agentId) => this.hubInstance.snapshot().configuredAgents
         .find((agent) => agent.id === agentId)?.runtimeAgentId,
     });

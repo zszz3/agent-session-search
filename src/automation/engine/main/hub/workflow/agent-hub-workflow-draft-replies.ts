@@ -17,6 +17,14 @@ export interface ActiveWorkflowDraftRequest {
   content: string;
 }
 
+function safeWorkflowToolEventContent(content: string): string {
+  const redacted = content
+    .replace(/(\bauthorization\s*:\s*)[^\r\n]+/gi, "$1[REDACTED]")
+    .replace(/(\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY)[A-Z0-9_]*\b\s*=\s*)[^\s\r\n]+/gi, "$1[REDACTED]")
+    .replace(/("(?:authorization|[^"\r\n]*(?:token|secret|password|api_key)[^"\r\n]*)"\s*:\s*")[^"]*(")/gi, "$1[REDACTED]$2");
+  return redacted.length <= 4_000 ? redacted : `${redacted.slice(0, 4_000).trimEnd()}\n...`;
+}
+
 export async function dispatchWorkflowDraftReply(input: {
   workflow: WorkflowDraftState | undefined;
   reply: string;
@@ -80,6 +88,7 @@ export function reduceWorkflowDraftReplyEvent(input: {
 }):
   | { type: "ignored" }
   | { type: "delta"; workflow: WorkflowDraftState }
+  | { type: "event"; workflow: WorkflowDraftState }
   | { type: "completed"; requestId: string; content: string; runtimeConversation: RuntimeConversation | undefined }
   | { type: "error"; requestId: string; error: string } {
   if (!input.activeRequest || input.activeRequest.requestId !== input.event.requestId) return { type: "ignored" };
@@ -97,6 +106,37 @@ export function reduceWorkflowDraftReplyEvent(input: {
           input.activeRequest.assistantMessageId,
           input.activeRequest.content || input.thinkingMessage,
         ),
+        updatedAt: input.now ?? Date.now(),
+      }),
+    };
+  }
+
+  if (input.event.type === "tool_call" || input.event.type === "tool_result") {
+    if (!input.workflow) return { type: "ignored" };
+    const toolEvent = input.event;
+    const timestamp = input.now ?? Date.now();
+    const messages = input.workflow.messages.map((message) => message.id === input.activeRequest!.assistantMessageId
+      ? {
+          ...message,
+          events: [
+            ...(message.events ?? []),
+            {
+              id: `workflow-tool-${toolEvent.requestId}-${timestamp}-${message.events?.length ?? 0}`,
+              type: toolEvent.type,
+              content: safeWorkflowToolEventContent(toolEvent.content),
+              timestamp,
+              ...(toolEvent.name ? { name: toolEvent.name } : {}),
+              ...(toolEvent.metadata ? { metadata: structuredClone(toolEvent.metadata) } : {}),
+            },
+          ],
+        }
+      : message);
+    return {
+      type: "event",
+      workflow: input.cloneDraft({
+        ...input.workflow,
+        revision: input.workflow.revision + 1,
+        messages,
         updatedAt: input.now ?? Date.now(),
       }),
     };

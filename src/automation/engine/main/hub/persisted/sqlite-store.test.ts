@@ -122,7 +122,12 @@ function sampleState() {
           objective: "ship safely",
           definition,
           workDir: "/tmp/project",
-          messages: [{ id: "grill-1", role: "user", content: "go" }],
+          messages: [{
+            id: "grill-1",
+            role: "user",
+            content: "go",
+            events: [{ id: "workflow-tool-1", type: "tool_result", name: "workflow_update", content: "denied", timestamp: 12, metadata: { status: "failed" } }],
+          }],
           reply: "ready",
           error: undefined,
           runProgress: [{

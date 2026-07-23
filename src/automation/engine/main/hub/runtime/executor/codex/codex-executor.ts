@@ -13,6 +13,7 @@ import { modelFromRuntimeConfig, reasoningEffortFromRuntimeConfig } from "../age
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 import { codexMcpLaunchConfig } from "../runtime-mcp";
 import { codexWorkflowMcpConfig } from "./codex-workflow-mcp";
+import { workflowMcpScopeForContext } from "../../../../../shared/workflow-mcp-policy";
 
 export class CodexAgentExecutor implements AgentExecutor {
   private client: CodexRpcClient | undefined;
@@ -58,7 +59,7 @@ export class CodexAgentExecutor implements AgentExecutor {
           emit: this.context.emit,
           request: this.options.requestApproval,
           cwd: this.context.workDir,
-        } : undefined);
+        } : undefined, workflowMcpScopeForContext(this.context));
       },
       onExit: (code) => {
         this.context.onExit(code);
