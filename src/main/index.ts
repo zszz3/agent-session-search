@@ -210,6 +210,7 @@ app.setAppUserModelId("dev.zszz3.agent-recall");
 migrateLegacyUserData();
 
 let mainWindow: BrowserWindow | null = null;
+let quickSearchWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, skipped: 0, total: 0, lastIndexedAt: null, error: null };
@@ -728,6 +729,62 @@ function createWindow(): void {
   }
 }
 
+function createQuickSearchWindow(): BrowserWindow {
+  const preloadPath = path.join(__dirname, "../preload/index.mjs");
+  const window = new BrowserWindow({
+    width: 560,
+    height: 430,
+    minWidth: 560,
+    minHeight: 430,
+    maxWidth: 560,
+    maxHeight: 430,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: preloadPath,
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.on("blur", () => window.hide());
+  window.on("closed", () => {
+    if (quickSearchWindow === window) quickSearchWindow = null;
+  });
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void window.loadURL(new URL("quick-search.html", process.env.ELECTRON_RENDERER_URL).toString());
+  } else {
+    void window.loadFile(path.join(__dirname, "../renderer/quick-search.html"));
+  }
+  return window;
+}
+
+function showQuickSearch(): void {
+  if (!quickSearchWindow || quickSearchWindow.isDestroyed()) {
+    quickSearchWindow = createQuickSearchWindow();
+  }
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const bounds = quickSearchWindow.getBounds();
+  quickSearchWindow.setPosition(
+    Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
+    Math.round(display.workArea.y + Math.min(72, display.workArea.height * 0.08)),
+  );
+  quickSearchWindow.show();
+  quickSearchWindow.focus();
+}
+
+function applyDockVisibility(showInDock: boolean): void {
+  if (process.platform !== "darwin" || !app.dock) return;
+  if (showInDock) app.dock.show();
+  else app.dock.hide();
+}
+
 async function ensureWslResumePreflight(session: SessionSearchResult): Promise<void> {
   const environment = requireWslEnvironment(session);
   const report = await preflightRemoteSessionResume(environment, session);
@@ -798,6 +855,7 @@ function createTray(): void {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${PRODUCT_NAME}`, click: showWindow },
+      { label: "快速搜索会话…", click: showQuickSearch },
       { label: "Refresh Now", click: () => void runIndexSync() },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
@@ -1571,6 +1629,14 @@ function registerIpc(): void {
   });
   ipcMain.handle("index:refresh", () => runIndexSync());
   ipcMain.handle("index:status", () => indexStatus);
+  ipcMain.handle("quick-search:open-session", (_event, sessionKey: string) => {
+    const session = store.getSession(sessionKey);
+    if (!session) throw new Error("Session was not found.");
+    store.markOpened(sessionKey);
+    quickSearchWindow?.hide();
+    showWindow();
+    mainWindow?.webContents.send("open-session", sessionKey);
+  });
   registerAppUpdateIpc(ipcMain, appUpdateService);
   registerQuotaIpc(ipcMain, quotaService);
   ipcMain.handle("settings:get", () => providerService.hydrateSettings());
@@ -1589,6 +1655,7 @@ function registerIpc(): void {
     providerService.persistKeysFromUpdate(settings, next);
     settingsStore.set(providerService.removeStoredKeys(next));
     if ("autoCheckUpdates" in settings) await appUpdateService.setAutoCheckEnabled(next.autoCheckUpdates);
+    if ("showInDock" in settings) applyDockVisibility(next.showInDock);
     pruneDisabledOptionalSources(next);
     return providerService.addStoredKeys(next);
   });
@@ -1784,6 +1851,7 @@ app.whenReady().then(() => {
   createApplicationMenu();
   createWindow();
   createTray();
+  applyDockVisibility(getSettings().showInDock);
   void appUpdateService.showPreviousUpdateResult();
   const shortcut = getSettings().globalShortcut;
   if (!registerAppGlobalShortcut(shortcut)) {

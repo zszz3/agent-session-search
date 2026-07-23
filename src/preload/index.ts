@@ -132,6 +132,13 @@ const api = {
     ipcRenderer.on("focus-search", listener);
     return () => ipcRenderer.removeListener("focus-search", listener);
   },
+  openQuickSearchSession: (sessionKey: string): Promise<void> =>
+    ipcRenderer.invoke("quick-search:open-session", sessionKey),
+  onOpenSession: (callback: (sessionKey: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, sessionKey: string) => callback(sessionKey);
+    ipcRenderer.on("open-session", listener);
+    return () => ipcRenderer.removeListener("open-session", listener);
+  },
   onOpenSettings: (callback: () => void): (() => void) => {
     const listener = () => callback();
     ipcRenderer.on("open-settings", listener);

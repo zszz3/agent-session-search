@@ -1116,6 +1116,26 @@ export function SettingsDialog({
                     </button>
                   </div>
                 </div>
+                {platform === "darwin" ? (
+                  <label className="settings-field settings-toggle">
+                    <div className="settings-field-text">
+                      <span className="settings-field-title">{l("Keep in Dock", "保留在程序坞")}</span>
+                      <span className="settings-field-sub">
+                        {l(
+                          "Turn this off to use AgentRecall only from the menu bar. Enabled by default.",
+                          "关闭后仅从顶部菜单栏使用 AgentRecall，默认开启。",
+                        )}
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="switch"
+                      checked={settings?.showInDock !== false}
+                      disabled={!settings || saving}
+                      onChange={(event) => onSettingsChange({ showInDock: event.currentTarget.checked })}
+                    />
+                  </label>
+                ) : null}
               </section>
             ) : null}
             {activeSection === "about" ? (

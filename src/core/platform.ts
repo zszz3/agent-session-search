@@ -94,6 +94,7 @@ export interface AppSettings {
   hideClaudeQuota: boolean;
   hideSubagentSessions: boolean;
   autoCheckUpdates: boolean;
+  showInDock: boolean;
   summaryAutoBackfill: boolean;
   summaryMaxAgeDays: number;
   compressionConcurrency: number;
@@ -154,6 +155,7 @@ export const defaultSettings: AppSettings = {
   hideClaudeQuota: false,
   hideSubagentSessions: true,
   autoCheckUpdates: true,
+  showInDock: true,
   summaryAutoBackfill: false,
   summaryMaxAgeDays: 30,
   compressionConcurrency: 8,
@@ -179,6 +181,7 @@ export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpda
     summaryMaxAgeDays: normalizeSummaryMaxAgeDays(merged.summaryMaxAgeDays),
     compressionConcurrency: normalizeCompressionConcurrency(merged.compressionConcurrency),
     autoCheckUpdates: Boolean(merged.autoCheckUpdates),
+    showInDock: merged.showInDock !== false,
     summarySource: merged.summarySource === "claude" || merged.summarySource === "custom" ? merged.summarySource : "codex",
     skillSyncEnabled: Boolean(merged.skillSyncEnabled),
     skillSyncSupabaseUrl: normalizeSupabaseSettingUrl(merged.skillSyncSupabaseUrl),

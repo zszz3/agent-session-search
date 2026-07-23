@@ -86,13 +86,16 @@ describe("platform application resolution", () => {
   it("hides subagent sessions by default and preserves the default for older saved settings", () => {
     expect(defaultSettings.hideSubagentSessions).toBe(true);
     expect(defaultSettings.autoCheckUpdates).toBe(true);
+    expect(defaultSettings.showInDock).toBe(true);
     const {
       hideSubagentSessions: _missingSubagentsInOlderSettings,
       autoCheckUpdates: _missingUpdatesInOlderSettings,
+      showInDock: _missingDockSetting,
       ...olderSettings
     } = defaultSettings;
     expect(mergeAppSettings(defaultSettings, olderSettings).hideSubagentSessions).toBe(true);
     expect(mergeAppSettings(defaultSettings, olderSettings).autoCheckUpdates).toBe(true);
+    expect(mergeAppSettings(defaultSettings, olderSettings).showInDock).toBe(true);
   });
 
   it("starts fresh installs with only Claude Code and Codex sources enabled", () => {

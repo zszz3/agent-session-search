@@ -1034,6 +1034,7 @@ export function App(): ReactElement {
     });
     const offAppUpdate = window.sessionSearch.onAppUpdateStatus(setAppUpdateStatus);
     const offAppUpdateProgress = window.sessionSearch.onAppUpdateProgress(setAppUpdateProgress);
+    const offOpenSession = window.sessionSearch.onOpenSession((sessionKey) => setSelectedKey(sessionKey));
     const offEnvironments = window.sessionSearch.onEnvironmentsUpdated((nextEnvironments) => {
       setEnvironments(nextEnvironments);
       setEnvironmentId((current) =>
@@ -1054,6 +1055,7 @@ export function App(): ReactElement {
       offOpenSettings();
       offAppUpdate();
       offAppUpdateProgress();
+      offOpenSession();
       offEnvironments();
     };
   }, [load, loadSidebarMetadata, loadStats]);
