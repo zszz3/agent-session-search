@@ -162,6 +162,21 @@ describe("detail panel actions", () => {
     expect(openDetail).not.toContain("const [fresh, loadedTraceEvents] = await Promise.all");
   });
 
+  it("exposes lazy Turn summaries and details through hydrated Session IPC", () => {
+    expect(preloadSource).toContain("listSessionTurns");
+    expect(preloadSource).toContain("getSessionTurn");
+    expect(preloadSource).toContain('"session:turns"');
+    expect(preloadSource).toContain('"session:turn"');
+
+    const turnsHandler = mainHandlerSource("session:turns");
+    expect(turnsHandler).toContain("ensureRemoteSessionDetailsLoaded(sessionKey)");
+    expect(turnsHandler).toContain("store.listSessionTurns(sessionKey)");
+
+    const turnHandler = mainHandlerSource("session:turn");
+    expect(turnHandler).toContain("ensureRemoteSessionDetailsLoaded(sessionKey)");
+    expect(turnHandler).toContain("store.getSessionTurn(sessionKey, turnId)");
+  });
+
   it("keeps title rename icon but removes the duplicate rename action from the detail toolbar", () => {
     const detailActions = detailPanelSource.slice(detailPanelSource.indexOf('<div className="detail-actions">'), detailPanelSource.indexOf('<div className="detail-tags">'));
 

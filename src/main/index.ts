@@ -1172,6 +1172,14 @@ function registerIpc(): void {
     await store.markOpened(sessionKey);
     return store.getSession(sessionKey);
   });
+  ipcMain.handle("session:turns", async (_event, sessionKey: string) => {
+    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    return store.listSessionTurns(sessionKey);
+  });
+  ipcMain.handle("session:turn", async (_event, sessionKey: string, turnId: string) => {
+    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    return store.getSessionTurn(sessionKey, turnId);
+  });
   ipcMain.handle("session:messages", async (_event, sessionKey: string, offset?: number, limit?: number) => {
     const pageOffset = offset ?? 0;
     const pageLimit = limit ?? 120;
