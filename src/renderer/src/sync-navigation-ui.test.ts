@@ -11,7 +11,7 @@ describe("sync overlay navigation and progress", () => {
   it("keeps the remote session list mounted underneath its preview", () => {
     const openRemoteDetail = appSource.slice(
       appSource.indexOf("function openRemoteDetail"),
-      appSource.indexOf("async function loadMoreMessages"),
+      appSource.indexOf("function closeRemoteDetail"),
     );
 
     expect(openRemoteDetail).not.toContain("setRemoteSessionsOpen(false)");
