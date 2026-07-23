@@ -103,7 +103,10 @@ function timestampMs(timestamp: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function buildTurnTimeline(detail: SessionTurnDetail): TurnTimelineItem[] {
+export function buildTurnTimeline(
+  detail: SessionTurnDetail,
+  showTools = true,
+): TurnTimelineItem[] {
   const items: TurnTimelineItem[] = [
     ...detail.messages.map((message) => ({
       kind: "message" as const,
@@ -112,13 +115,15 @@ export function buildTurnTimeline(detail: SessionTurnDetail): TurnTimelineItem[]
       order: message.messageIndex * 2,
       message,
     })),
-    ...detail.spans.map((span) => ({
-      kind: "span" as const,
-      key: `span:${span.id}`,
-      timestampMs: timestampMs(span.startedAt),
-      order: span.spanIndex * 2 + 1,
-      span,
-    })),
+    ...(showTools
+      ? detail.spans.map((span) => ({
+          kind: "span" as const,
+          key: `span:${span.id}`,
+          timestampMs: timestampMs(span.startedAt),
+          order: span.spanIndex * 2 + 1,
+          span,
+        }))
+      : []),
   ];
 
   return items.sort((left, right) => {
@@ -266,14 +271,16 @@ function TurnSpanBlock({
 
 function TurnDetailTimeline({
   detail,
+  showTools,
   query,
   language,
 }: {
   detail: SessionTurnDetail;
+  showTools: boolean;
   query: string;
   language: LanguageMode;
 }): ReactElement {
-  const timeline = useMemo(() => buildTurnTimeline(detail), [detail]);
+  const timeline = useMemo(() => buildTurnTimeline(detail, showTools), [detail, showTools]);
   return (
     <div className="turn-timeline">
       {timeline.map((item) => (
@@ -295,6 +302,7 @@ export function TurnAccordion({
   turns,
   loading,
   matchedTurnId,
+  showTools,
   query,
   language,
   onLoadTurn,
@@ -303,6 +311,7 @@ export function TurnAccordion({
   turns: SessionTurnSummary[];
   loading: boolean;
   matchedTurnId: string | null;
+  showTools: boolean;
   query: string;
   language: LanguageMode;
   onLoadTurn: (turnId: string) => Promise<SessionTurnDetail | null>;
@@ -446,7 +455,12 @@ export function TurnAccordion({
                     </button>
                   </div>
                 ) : detail ? (
-                  <TurnDetailTimeline detail={detail} query={query} language={language} />
+                  <TurnDetailTimeline
+                    detail={detail}
+                    showTools={showTools}
+                    query={query}
+                    language={language}
+                  />
                 ) : null}
               </div>
             ) : null}

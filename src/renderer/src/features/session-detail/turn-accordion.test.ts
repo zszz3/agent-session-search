@@ -118,6 +118,17 @@ describe("TurnAccordion", () => {
     ]);
   });
 
+  it("omits tool spans when tool calls are hidden", async () => {
+    const feature = await loadTurnAccordion();
+    expect(feature).not.toBeNull();
+    if (!feature) return;
+
+    expect(feature.buildTurnTimeline(detail, false).map((item: { key: string }) => item.key)).toEqual([
+      "message:0",
+      "message:1",
+    ]);
+  });
+
   it("renders every Turn collapsed by default", async () => {
     const feature = await loadTurnAccordion();
     expect(feature).not.toBeNull();

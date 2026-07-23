@@ -157,6 +157,17 @@ describe("detail panel actions", () => {
     expect(detailPanelSource).toContain("setShowTools");
   });
 
+  it("reuses the persisted Tools toggle for Turn trajectories", () => {
+    const turnConversation = detailPanelSource.slice(
+      detailPanelSource.indexOf('{turns !== null ? ('),
+      detailPanelSource.indexOf('          ) : (', detailPanelSource.indexOf('{turns !== null ? (')),
+    );
+
+    expect(turnConversation).toContain("conversation-tools-toggle");
+    expect(turnConversation).toContain("aria-pressed={showTools}");
+    expect(turnConversation).toContain("showTools={showTools}");
+  });
+
   it("loads the latest Session metadata before its derived Turns", () => {
     const openDetail = appSource.slice(appSource.indexOf("async function openDetail"), appSource.indexOf("function closeDetail"));
     const freshIndex = openDetail.indexOf("const fresh = await window.sessionSearch.getSession(sessionKey)");

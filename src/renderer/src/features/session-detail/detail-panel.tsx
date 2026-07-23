@@ -523,15 +523,26 @@ export function DetailPanel({
             <section className="conversation turn-conversation">
               <div className="conversation-header">
                 <h3>{l("Turns", "对话轮次")}</h3>
-                {!turnsLoading ? (
-                  <span className="turn-count">{l(`${turns.length} Turns`, `${turns.length} 轮`)}</span>
-                ) : null}
+                <div className="conversation-filters">
+                  {!turnsLoading ? (
+                    <span className="turn-count">{l(`${turns.length} Turns`, `${turns.length} 轮`)}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`conversation-tools-toggle ${showTools ? "active" : ""}`}
+                    onClick={toggleTools}
+                    aria-pressed={showTools}
+                  >
+                    {l("Tools", "工具")}
+                  </button>
+                </div>
               </div>
               <TurnAccordion
                 sessionKey={session.sessionKey}
                 turns={turns}
                 loading={turnsLoading}
                 matchedTurnId={matchedTurnId}
+                showTools={showTools}
                 query={query}
                 language={language}
                 onLoadTurn={onLoadTurn}
