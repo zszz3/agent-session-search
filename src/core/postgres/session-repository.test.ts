@@ -171,6 +171,82 @@ describe("PostgresSessionRepository", () => {
     })).resolves.toEqual([traces[1]]);
   });
 
+  it("lists lightweight Turn summaries in conversation order", async () => {
+    await repository.upsertIndexedSession(session(), messages, tokens, traces);
+
+    await expect(repository.listSessionTurns("codex:session-a")).resolves.toMatchObject([
+      {
+        turnIndex: 0,
+        sourceMessageIndex: 0,
+        synthetic: false,
+        status: "failed",
+        userPreview: "Find the login failure",
+        assistantPreview: "The cache key is stale.",
+        totalTokens: 165,
+        errorCount: 1,
+        toolNames: ["shell"],
+        messageCount: 2,
+        spanCount: 1,
+      },
+      {
+        turnIndex: 1,
+        sourceMessageIndex: 2,
+        synthetic: false,
+        status: "completed",
+        userPreview: "Fix the cache and retry",
+        assistantPreview: "",
+        totalTokens: 0,
+        errorCount: 0,
+        toolNames: [],
+        messageCount: 1,
+        spanCount: 0,
+      },
+    ]);
+  });
+
+  it("loads one Turn trajectory and rejects a mismatched Session", async () => {
+    await repository.upsertIndexedSession(session(), messages, tokens, traces);
+    const [turn] = await repository.listSessionTurns("codex:session-a");
+
+    await expect(repository.getSessionTurn("codex:session-a", turn.id)).resolves.toMatchObject({
+      id: turn.id,
+      turnIndex: 0,
+      messages: [
+        {
+          messageIndex: 0,
+          sourceMessageIndex: 0,
+          role: "user",
+          content: "Find the login failure",
+          timestamp: "2026-07-20T08:00:00.000Z",
+        },
+        {
+          messageIndex: 1,
+          sourceMessageIndex: 1,
+          role: "assistant",
+          content: "The cache key is stale.",
+          timestamp: "2026-07-20T08:00:01.000Z",
+        },
+      ],
+      spans: [
+        {
+          parentSpanId: null,
+          spanIndex: 0,
+          kind: "tool",
+          name: "shell",
+          status: "failed",
+          startedAt: "2026-07-20T08:00:02.000Z",
+          endedAt: "2026-07-20T08:00:03.000Z",
+          callId: "call-1",
+          input: { text: "{\"command\":\"npm test\"}" },
+          output: { text: "login test failed" },
+          error: "login test failed",
+        },
+      ],
+    });
+    await expect(repository.getSessionTurn("codex:another-session", turn.id)).resolves.toBeNull();
+    await expect(repository.getSessionTurn("codex:session-a", "missing-turn")).resolves.toBeNull();
+  });
+
   it("checks index freshness and lists indexed files without reading source files", async () => {
     await repository.upsertIndexedSession(session(), messages, tokens, traces);
 

@@ -38,6 +38,8 @@ import type {
   SessionStats,
   SessionStatsOptions,
   SessionTraceEvent,
+  SessionTurnDetail,
+  SessionTurnSummary,
   TagListOptions,
   TokenUsageEvent,
 } from "./types";
@@ -275,6 +277,16 @@ export class SessionStore {
   async getAllMessages(sessionKey: string): Promise<SessionMessage[]> {
     await this.ready;
     return this.sessions.getAllMessages(sessionKey);
+  }
+
+  async listSessionTurns(sessionKey: string): Promise<SessionTurnSummary[]> {
+    await this.ready;
+    return this.sessions.listSessionTurns(sessionKey);
+  }
+
+  async getSessionTurn(sessionKey: string, turnId: string): Promise<SessionTurnDetail | null> {
+    await this.ready;
+    return this.sessions.getSessionTurn(sessionKey, turnId);
   }
 
   async getTraceEvents(

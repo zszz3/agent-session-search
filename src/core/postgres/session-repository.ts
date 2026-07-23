@@ -16,7 +16,12 @@ import type {
   SessionStatsPeriod,
   SessionStatsSummary,
   SessionTraceEvent,
+  SessionTraceSpan,
+  SessionTurnDetail,
   SessionTurnMatch,
+  SessionTurnMessage,
+  SessionTurnStatus,
+  SessionTurnSummary,
   TagListOptions,
   TokenUsage,
   TokenUsageEvent,
@@ -79,6 +84,58 @@ interface SessionRow extends Record<string, unknown> {
   turn_match_count?: number | string | null;
 }
 
+interface SessionTurnSummaryRow extends Record<string, unknown> {
+  id: string;
+  turn_index: number | string;
+  source_message_index: number | string | null;
+  synthetic: boolean;
+  status: SessionTurnStatus;
+  started_at: Date | string | null;
+  ended_at: Date | string | null;
+  user_preview: string;
+  assistant_preview: string;
+  input_tokens: number | string;
+  output_tokens: number | string;
+  cached_input_tokens: number | string;
+  reasoning_output_tokens: number | string;
+  total_tokens: number | string;
+  error_count: number | string;
+  tool_names: string[] | null;
+  message_count: number | string;
+  span_count: number | string;
+}
+
+const SESSION_TURN_SUMMARY_SQL = `
+  select
+    turns.id,
+    turns.turn_index,
+    turns.source_message_index,
+    turns.synthetic,
+    turns.status,
+    turns.started_at,
+    turns.ended_at,
+    left(turns.user_text, 320) as user_preview,
+    left(turns.assistant_text, 180) as assistant_preview,
+    turns.input_tokens,
+    turns.output_tokens,
+    turns.cached_input_tokens,
+    turns.reasoning_output_tokens,
+    turns.total_tokens,
+    turns.error_count,
+    turns.tool_names,
+    (
+      select count(*)::int
+      from agent_recall.turn_messages messages
+      where messages.turn_id = turns.id
+    ) as message_count,
+    (
+      select count(*)::int
+      from agent_recall.trace_spans spans
+      where spans.turn_id = turns.id
+    ) as span_count
+  from agent_recall.session_turns turns
+`;
+
 const SESSION_ACTIVITY_SQL = `
   coalesce(
     (
@@ -133,6 +190,34 @@ function timeValue(value: unknown): number {
 function isoValue(value: unknown): string {
   const timestamp = timeValue(value);
   return timestamp > 0 ? new Date(timestamp).toISOString() : "";
+}
+
+function nullableIsoValue(value: unknown): string | null {
+  const timestamp = isoValue(value);
+  return timestamp || null;
+}
+
+function sessionTurnSummaryFromRow(row: SessionTurnSummaryRow): SessionTurnSummary {
+  return {
+    id: row.id,
+    turnIndex: numberValue(row.turn_index),
+    sourceMessageIndex: row.source_message_index === null ? null : numberValue(row.source_message_index),
+    synthetic: row.synthetic,
+    status: row.status,
+    startedAt: nullableIsoValue(row.started_at),
+    endedAt: nullableIsoValue(row.ended_at),
+    userPreview: row.user_preview || "",
+    assistantPreview: row.assistant_preview || "",
+    inputTokens: numberValue(row.input_tokens),
+    outputTokens: numberValue(row.output_tokens),
+    cachedInputTokens: numberValue(row.cached_input_tokens),
+    reasoningOutputTokens: numberValue(row.reasoning_output_tokens),
+    totalTokens: numberValue(row.total_tokens),
+    errorCount: numberValue(row.error_count),
+    toolNames: row.tool_names ?? [],
+    messageCount: numberValue(row.message_count),
+    spanCount: numberValue(row.span_count),
+  };
 }
 
 function normalizedTokenUsage(usage?: TokenUsage): TokenUsage {
@@ -244,6 +329,10 @@ function jsonValue(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function nullableJsonValue(value: unknown): Record<string, unknown> | null {
+  return value === null || value === undefined ? null : jsonValue(value);
 }
 
 function parseSearchClauses(query: string): string[] {
@@ -1282,6 +1371,99 @@ export class PostgresSessionRepository {
       [sessionKey],
     );
     return numberValue(result.rows[0]?.message_count);
+  }
+
+  async listSessionTurns(sessionKey: string): Promise<SessionTurnSummary[]> {
+    const result = await this.database.query<SessionTurnSummaryRow>(
+      `
+        ${SESSION_TURN_SUMMARY_SQL}
+        where turns.session_key = $1
+        order by turns.turn_index
+      `,
+      [sessionKey],
+    );
+    return result.rows.map(sessionTurnSummaryFromRow);
+  }
+
+  async getSessionTurn(sessionKey: string, turnId: string): Promise<SessionTurnDetail | null> {
+    const summaryResult = await this.database.query<SessionTurnSummaryRow>(
+      `
+        ${SESSION_TURN_SUMMARY_SQL}
+        where turns.session_key = $1 and turns.id = $2
+      `,
+      [sessionKey, turnId],
+    );
+    const summaryRow = summaryResult.rows[0];
+    if (!summaryRow) return null;
+
+    const [messageResult, spanResult] = await Promise.all([
+      this.database.query<{
+        message_index: number | string;
+        source_message_index: number | string | null;
+        role: SessionTurnMessage["role"];
+        content: string;
+        occurred_at: Date | string | null;
+      }>(
+        `
+          select message_index, source_message_index, role, content, occurred_at
+          from agent_recall.turn_messages
+          where turn_id = $1
+          order by message_index
+        `,
+        [turnId],
+      ),
+      this.database.query<{
+        id: string;
+        parent_span_id: string | null;
+        span_index: number | string;
+        kind: SessionTraceSpan["kind"];
+        name: string;
+        status: SessionTraceSpan["status"];
+        started_at: Date | string | null;
+        ended_at: Date | string | null;
+        call_id: string | null;
+        input: Record<string, unknown> | string | null;
+        output: Record<string, unknown> | string | null;
+        error: string | null;
+        attributes: Record<string, unknown> | string;
+      }>(
+        `
+          select
+            id, parent_span_id, span_index, kind, name, status,
+            started_at, ended_at, call_id, input, output, error, attributes
+          from agent_recall.trace_spans
+          where turn_id = $1
+          order by span_index
+        `,
+        [turnId],
+      ),
+    ]);
+
+    return {
+      ...sessionTurnSummaryFromRow(summaryRow),
+      messages: messageResult.rows.map((row) => ({
+        messageIndex: numberValue(row.message_index),
+        sourceMessageIndex: row.source_message_index === null ? null : numberValue(row.source_message_index),
+        role: row.role,
+        content: row.content,
+        timestamp: isoValue(row.occurred_at),
+      })),
+      spans: spanResult.rows.map((row) => ({
+        id: row.id,
+        parentSpanId: row.parent_span_id,
+        spanIndex: numberValue(row.span_index),
+        kind: row.kind,
+        name: row.name,
+        status: row.status,
+        startedAt: nullableIsoValue(row.started_at),
+        endedAt: nullableIsoValue(row.ended_at),
+        callId: row.call_id,
+        input: nullableJsonValue(row.input),
+        output: nullableJsonValue(row.output),
+        error: row.error,
+        attributes: jsonValue(row.attributes),
+      })),
+    };
   }
 
   async getMessages(sessionKey: string, offset = 0, limit = 120): Promise<SessionMessage[]> {
