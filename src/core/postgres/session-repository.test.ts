@@ -161,6 +161,14 @@ describe("PostgresSessionRepository", () => {
     });
   });
 
+  it("lists distinct tags in case-insensitive order", async () => {
+    await repository.upsertIndexedSession(session({ gitBranch: null }), messages, tokens, traces);
+    await repository.addTag("codex:session-a", "zebra");
+    await repository.addTag("codex:session-a", "Alpha");
+
+    await expect(repository.listTags()).resolves.toEqual(["Alpha", "zebra"]);
+  });
+
   it("paginates messages and reconstructs the original trace events", async () => {
     await repository.upsertIndexedSession(session(), messages, tokens, traces);
 

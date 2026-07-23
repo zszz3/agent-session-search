@@ -1019,12 +1019,15 @@ export class PostgresSessionRepository {
     if (options.excludeSubagents) conditions.push("sessions.is_subagent = false");
     const result = await this.database.query<{ name: string }>(
       `
-        select distinct tags.name
-        from agent_recall.tags
-        join agent_recall.session_tags on session_tags.tag_id = tags.id
-        join agent_recall.sessions sessions on sessions.session_key = session_tags.session_key
-        ${conditions.length > 0 ? `where ${conditions.join(" and ")}` : ""}
-        order by lower(tags.name)
+        select name
+        from (
+          select distinct tags.name
+          from agent_recall.tags
+          join agent_recall.session_tags on session_tags.tag_id = tags.id
+          join agent_recall.sessions sessions on sessions.session_key = session_tags.session_key
+          ${conditions.length > 0 ? `where ${conditions.join(" and ")}` : ""}
+        ) distinct_tags
+        order by lower(name), name
       `,
       values,
     );
