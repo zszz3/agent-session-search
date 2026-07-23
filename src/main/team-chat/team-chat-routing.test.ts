@@ -89,6 +89,76 @@ describe("buildTeamChatPrompt", () => {
     expect(prompt).toContain("Remaining Agent executions: 7");
     expect(prompt).not.toContain("message-0 ");
     expect(prompt.indexOf("message-30 ")).toBeLessThan(prompt.indexOf("message-49 "));
+    expect(prompt.match(/message-49 /g)).toHaveLength(1);
     expect(prompt.length).toBeLessThanOrEqual(50_500);
+  });
+
+  it("sends only unseen peer updates when continuing a room Agent conversation", () => {
+    const room: TeamChatRoom = {
+      id: "room-1",
+      name: "Release room",
+      workDir: "/synthetic/repo",
+      archived: false,
+      agents: members,
+      createdAt: joinedAt,
+      updatedAt: joinedAt,
+    };
+    const messages: TeamChatMessage[] = [
+      {
+        id: "message-own",
+        roomId: room.id,
+        senderType: "agent",
+        senderAgentId: "builder",
+        senderName: "Builder",
+        content: "my old result",
+        rootMessageId: "message-root",
+        hop: 1,
+        status: "final",
+        createdAt: joinedAt,
+        updatedAt: joinedAt,
+      },
+      {
+        id: "message-peer",
+        roomId: room.id,
+        senderType: "agent",
+        senderAgentId: "reviewer",
+        senderName: "Reviewer",
+        content: "peer result",
+        rootMessageId: "message-root",
+        hop: 1,
+        status: "final",
+        createdAt: "2026-07-23T08:01:00.000Z",
+        updatedAt: "2026-07-23T08:01:00.000Z",
+      },
+      {
+        id: "message-current",
+        roomId: room.id,
+        senderType: "human",
+        senderName: "You",
+        content: "current request",
+        rootMessageId: "message-current",
+        hop: 0,
+        status: "final",
+        createdAt: "2026-07-23T08:02:00.000Z",
+        updatedAt: "2026-07-23T08:02:00.000Z",
+      },
+    ];
+
+    const prompt = buildTeamChatPrompt({
+      room,
+      target: members[0]!,
+      messages,
+      triggerMessage: messages[2]!,
+      executedAgentIds: ["builder"],
+      remainingExecutions: 7,
+      continuing: true,
+      contextTruncated: true,
+    });
+
+    expect(prompt).toContain("Room updates since your previous turn:");
+    expect(prompt).toContain("Reviewer: peer result");
+    expect(prompt).not.toContain("Builder: my old result");
+    expect(prompt.match(/current request/g)).toHaveLength(1);
+    expect(prompt).toContain("Earlier room updates were omitted");
   });
 });
