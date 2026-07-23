@@ -29,9 +29,10 @@ try {
     shell: process.platform === "win32",
     maxBuffer: 8 * 1024 * 1024,
   });
-  const json = stdout.match(/(\[\s*\{[\s\S]*\}\s*\])\s*$/)?.[1];
-  if (!json) throw new Error("npm pack did not emit a trailing JSON result.");
-  const [packed] = JSON.parse(json);
+  const jsonStart = stdout.split("\n").findIndex((line) => line === "[" || line === "{");
+  if (jsonStart === -1) throw new Error("npm pack did not emit a JSON result.");
+  const result = JSON.parse(stdout.split("\n").slice(jsonStart).join("\n"));
+  const packed = Array.isArray(result) ? result[0] : Object.values(result)[0];
   if (!packed?.filename) throw new Error("npm pack did not return an archive name.");
   const archive = path.join(packDir, packed.filename);
   await execFileAsync(npm, ["install", "--global", archive, "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund"], {
