@@ -92,11 +92,9 @@ import { SessionMigrationDialog, SessionMigrationLaunchFailedDialog } from "./co
 import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./components/session-dialogs";
 import { SkillsDialog } from "./features/skills/skills-dialog";
 import { DigitalAssetsDialog } from "./features/digital-assets/digital-assets-dialog";
-import { RelatedSessions } from "./features/session-detail/related-sessions";
 import { DEFAULT_QUERY_BUILDER_STATE, countActiveFilters, toSearchOptionsPatch, type QueryBuilderState } from "./features/search/query-builder-types";
 import type { GroupMode } from "./features/search/group-logic";
 import type { SavedSearch } from "../../core/store/saved-searches";
-import type { RelatedSession } from "../../core/related-sessions";
 import type { RulesSyncSnapshot } from "../../core/rules-sync";
 import type { MemoriesSyncSnapshot } from "../../core/memories-sync";
 import { AiAssistantDialog } from "./components/ai-assistant-dialog";
@@ -335,7 +333,6 @@ export function App(): ReactElement {
   const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
-  const [relatedSessions, setRelatedSessions] = useState<RelatedSession[]>([]);
   const [sessionFamily, setSessionFamily] = useState<SessionFamily>(EMPTY_SESSION_FAMILY);
   const [rulesSnapshot, setRulesSnapshot] = useState<RulesSyncSnapshot | null>(null);
   const [memoriesSnapshot, setMemoriesSnapshot] = useState<MemoriesSyncSnapshot | null>(null);
@@ -800,19 +797,12 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (!detail) {
-      setRelatedSessions([]);
       setSessionFamily(EMPTY_SESSION_FAMILY);
       return;
     }
     let cancelled = false;
-    void Promise.all([
-      window.sessionSearch.getRelatedSessions(detail.sessionKey).catch(() => []),
-      window.sessionSearch.getSessionFamily(detail.sessionKey).catch(() => EMPTY_SESSION_FAMILY),
-    ]).then(([related, family]) => {
-      if (!cancelled) {
-        setRelatedSessions(related);
-        setSessionFamily(family);
-      }
+    void window.sessionSearch.getSessionFamily(detail.sessionKey).catch(() => EMPTY_SESSION_FAMILY).then((family) => {
+      if (!cancelled) setSessionFamily(family);
     });
     return () => {
       cancelled = true;
@@ -1810,7 +1800,7 @@ export function App(): ReactElement {
   );
   const handleRowRename = useCallback((session: SessionSearchResult) => rowHandlersRef.current.beginRename(session), []);
   const handleRowFavorite = useCallback((session: SessionSearchResult) => void rowHandlersRef.current.toggleFavorite(session), []);
-  const openRelatedSession = useCallback((sessionKey: string) => {
+  const openFamilySession = useCallback((sessionKey: string) => {
     void window.sessionSearch.getSession(sessionKey).then((session) => {
       if (session) void rowHandlersRef.current.openDetail(session);
     });
@@ -2005,8 +1995,7 @@ export function App(): ReactElement {
           showItermAction={IS_MAC && detail.source !== "codex-app"}
           onClose={closeDetail}
           sessionFamily={sessionFamily}
-          relatedSessions={relatedSessions}
-          onOpenRelatedSession={openRelatedSession}
+          onOpenFamilySession={openFamilySession}
           onShowMore={() => void loadMoreMessages()}
           onRename={() => beginRename(detail)}
           onAddTag={() => beginAddTag(detail)}

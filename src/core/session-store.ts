@@ -24,7 +24,6 @@ import {
   SkillStore,
   type SkillSyncBinding,
 } from "./store/skills";
-import { findRelatedSessions, type RelatedSession } from "./related-sessions";
 import {
   findSessionFamily,
   type SessionFamily,
@@ -59,7 +58,6 @@ export type {
 } from "./store/metadata";
 export type { SavedSearch } from "./store/saved-searches";
 export type { SearchHistoryEntry } from "./store/search-history-store";
-export type { RelatedSession } from "./related-sessions";
 export type {
   SessionFamily,
   SubagentSessionNode,
@@ -384,10 +382,6 @@ export class SessionStore {
 
   clearSearchHistory(): void {
     this.historyStore.clearHistory();
-  }
-
-  getRelatedSessions(sessionKey: string, limit = 8): RelatedSession[] {
-    return findRelatedSessions(this.db, sessionKey, limit);
   }
 
   getSessionFamily(sessionKey: string): SessionFamily {

@@ -108,6 +108,37 @@ describe("session store schema", () => {
     }
   });
 
+  it("invalidates session relation and branch metadata exactly once", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      migrateSessionStore(db);
+      db.prepare("DELETE FROM data_migrations WHERE id = 'session-relation-branch-metadata-v1'").run();
+      const insert = db.prepare(`
+        INSERT INTO sessions (
+          session_key, raw_id, source, environment_id, storage_environment_id, project_path, file_path,
+          original_title, first_question, timestamp, file_mtime_ms, file_size
+        ) VALUES (?, ?, ?, ?, ?, '/repo', ?, 'Title', 'Question', 1, ?, 10)
+      `);
+      insert.run("codex:local", "local", "codex-app", "local", "local", "/tmp/codex.jsonl", 123);
+      insert.run("ssh:dev:codex-cli:remote", "remote", "codex-cli", "ssh-dev", "ssh-dev", "/tmp/remote.jsonl", 456);
+      db.prepare("INSERT INTO tags (name) VALUES ('branch:stale')").run();
+      const tag = db.prepare("SELECT id FROM tags WHERE name = 'branch:stale'").get() as { id: number };
+      db.prepare("INSERT INTO session_tags (session_key, tag_id) VALUES ('codex:local', ?)").run(tag.id);
+
+      migrateSessionStore(db);
+
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'codex:local'").get()).toEqual({ file_mtime_ms: 0 });
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'ssh:dev:codex-cli:remote'").get()).toEqual({ file_mtime_ms: 456 });
+      expect(db.prepare("SELECT name FROM tags WHERE name = 'branch:stale'").get()).toBeUndefined();
+
+      db.prepare("UPDATE sessions SET file_mtime_ms = 789 WHERE session_key = 'codex:local'").run();
+      migrateSessionStore(db);
+      expect(db.prepare("SELECT file_mtime_ms FROM sessions WHERE session_key = 'codex:local'").get()).toEqual({ file_mtime_ms: 789 });
+    } finally {
+      db.close();
+    }
+  });
+
   it("invalidates CodeBuddy sessions once so corrected token counts are reparsed", () => {
     const db = new DatabaseSync(":memory:");
     try {

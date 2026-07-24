@@ -1,4 +1,3 @@
-import type { RelatedSession } from "../../core/related-sessions";
 import type { SessionFamily } from "../../core/session-family";
 import type { SavedSearch } from "../../core/store/saved-searches";
 import type { SearchHistoryEntry } from "../../core/store/search-history-store";
@@ -15,7 +14,6 @@ export interface DiscoveryIpcService {
   searchHistory(query: string, limit?: number): SearchHistoryEntry[];
   clearSearchHistory(): void;
   recordSearch(query: string, resultCount: number, options?: SearchOptions): void;
-  getRelatedSessions(sessionKey: string, limit?: number): RelatedSession[];
   getSessionFamily(sessionKey: string): SessionFamily;
 }
 
@@ -32,9 +30,6 @@ export function registerDiscoveryIpc(ipc: IpcMainRegistrar, service: DiscoveryIp
     registerIpcHandler(ipc, DISCOVERY_IPC.clearSearchHistory, () => service.clearSearchHistory()),
     registerIpcHandler(ipc, DISCOVERY_IPC.recordSearch, (_event, query, resultCount, options) =>
       service.recordSearch(query, resultCount, options ?? undefined),
-    ),
-    registerIpcHandler(ipc, DISCOVERY_IPC.getRelatedSessions, (_event, sessionKey, limit) =>
-      service.getRelatedSessions(sessionKey, limit),
     ),
     registerIpcHandler(ipc, DISCOVERY_IPC.getSessionFamily, (_event, sessionKey) =>
       service.getSessionFamily(sessionKey),

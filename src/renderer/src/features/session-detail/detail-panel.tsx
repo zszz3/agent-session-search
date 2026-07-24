@@ -22,9 +22,7 @@ import {
   sourceUiFamily,
 } from "../../session-ui";
 import { readInitialToolEventsVisibility, storeToolEventsVisibility } from "../../tool-events-visibility";
-import type { RelatedSession } from "../../../../core/related-sessions";
 import type { SessionFamily } from "../../../../core/session-family";
-import { RelatedSessions } from "./related-sessions";
 import { SubagentSessionTree } from "./subagent-session-tree";
 
 export type ConversationTimelineItem =
@@ -148,8 +146,7 @@ export function DetailPanel({
   readOnly = false,
   backdropClassName = "",
   sessionFamily,
-  relatedSessions = [],
-  onOpenRelatedSession,
+  onOpenFamilySession,
 }: {
   session: SessionSearchResult;
   messages: SessionMessage[];
@@ -191,8 +188,7 @@ export function DetailPanel({
   readOnly?: boolean;
   backdropClassName?: string;
   sessionFamily: SessionFamily;
-  relatedSessions?: RelatedSession[];
-  onOpenRelatedSession?: (sessionKey: string) => void;
+  onOpenFamilySession?: (sessionKey: string) => void;
 }): ReactElement {
   const context = matchedContextMessages;
   const actionRunning = actionStatus?.kind === "running";
@@ -628,16 +624,13 @@ export function DetailPanel({
               )
             ))}
           </section>
-          {onOpenRelatedSession ? (
+          {onOpenFamilySession ? (
             <SubagentSessionTree
               key={session.sessionKey}
               family={sessionFamily}
               language={language}
-              onOpen={onOpenRelatedSession}
+              onOpen={onOpenFamilySession}
             />
-          ) : null}
-          {onOpenRelatedSession ? (
-            <RelatedSessions related={relatedSessions} language={language} onOpen={onOpenRelatedSession} />
           ) : null}
         </div>
       </aside>

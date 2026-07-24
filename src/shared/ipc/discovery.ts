@@ -8,7 +8,6 @@ const nameInput = z.string().trim().min(1).max(200);
 const searchOptionsInput = z.record(z.string(), z.unknown());
 const createInput = z.tuple([nameInput, searchOptionsInput]);
 const queryWithLimit = z.tuple([z.string(), limitInput]);
-const relatedInput = z.tuple([z.string().trim().min(1), z.number().int().min(1).max(50)]);
 const sessionKeyInput = z.tuple([z.string().trim().min(1).max(2_000)]);
 const recordSearchInput = z.tuple([z.string(), numericInput, searchOptionsInput.nullable()]);
 
@@ -21,6 +20,5 @@ export const DISCOVERY_IPC = {
   searchHistory: defineIpcRequest("discovery:history-search", queryWithLimit),
   clearSearchHistory: defineIpcRequest("discovery:history-clear", noInput),
   recordSearch: defineIpcRequest("discovery:history-record", recordSearchInput),
-  getRelatedSessions: defineIpcRequest("discovery:related-sessions", relatedInput),
   getSessionFamily: defineIpcRequest("discovery:session-family", sessionKeyInput),
 } as const;

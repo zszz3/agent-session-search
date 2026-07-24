@@ -1506,6 +1506,16 @@ describe("SessionStore", () => {
     expect(store.searchSessions({ tag: "branch:feat/session-tags" }).map((session) => session.sessionKey)).toEqual(["codex:abc"]);
   });
 
+  it("replaces a stale automatic branch tag when metadata changes", () => {
+    const store = createInMemoryStore();
+
+    store.upsertIndexedSession(sampleSession({ gitBranch: "feat/old" }), messages);
+    store.upsertIndexedSession(sampleSession({ gitBranch: "feat/current" }), messages);
+
+    expect(store.getSession("codex:abc")?.tags).toEqual(["branch:feat/current"]);
+    expect(store.listTags()).toEqual(["branch:feat/current"]);
+  });
+
   it("lists projects with counts and disambiguates duplicate folder names", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(

@@ -92,7 +92,6 @@ export interface AppSettings {
   memoriesSyncEnabled: boolean;
   hideCodexQuota: boolean;
   hideClaudeQuota: boolean;
-  hideSubagentSessions: boolean;
   autoCheckUpdates: boolean;
   showInDock: boolean;
   summaryAutoBackfill: boolean;
@@ -154,7 +153,6 @@ export const defaultSettings: AppSettings = {
   memoriesSyncEnabled: false,
   hideCodexQuota: false,
   hideClaudeQuota: false,
-  hideSubagentSessions: true,
   autoCheckUpdates: true,
   showInDock: true,
   summaryAutoBackfill: false,
@@ -175,7 +173,10 @@ export const defaultSettings: AppSettings = {
 };
 
 export function mergeAppSettings(previous: AppSettings, updates: AppSettingsUpdate): AppSettings {
-  const merged = { ...previous, ...updates };
+  const {
+    hideSubagentSessions: _legacySubagentVisibility,
+    ...merged
+  } = { ...previous, ...updates } as AppSettings & { hideSubagentSessions?: unknown };
   return {
     ...merged,
     defaultTerminal: normalizeTerminal(merged.defaultTerminal),

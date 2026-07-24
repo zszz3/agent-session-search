@@ -281,6 +281,7 @@ export function migrateSessionStore(db: SessionStoreDatabase): void {
   }
   runSessionStorageEnvironmentMigration(db);
   runCodexDesktopOriginatorMigration(db);
+  runSessionRelationBranchMetadataMigration(db);
   runCodeBuddyTokenEventsMigration(db);
   runCursorComposerMetadataMigration(db);
   runCursorRuntimeEnvironmentMigration(db);
@@ -337,6 +338,61 @@ function runCodexDesktopOriginatorMigration(db: SessionStoreDatabase): void {
     const applied = db.prepare("SELECT 1 FROM data_migrations WHERE id = ?").get(migrationId);
     if (!applied) {
       db.prepare("UPDATE sessions SET file_mtime_ms = 0 WHERE source = 'codex-cli' AND environment_id = 'local'").run();
+      db.prepare("INSERT INTO data_migrations (id, applied_at) VALUES (?, ?)").run(migrationId, Date.now());
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function runSessionRelationBranchMetadataMigration(db: SessionStoreDatabase): void {
+  const migrationId = "session-relation-branch-metadata-v1";
+  const reparsedSources = [
+    "claude-cli",
+    "claude-app",
+    "claude-internal",
+    "tclaude-cli",
+    "codex-cli",
+    "codex-app",
+    "codex-internal",
+    "tcodex-cli",
+  ];
+  const placeholders = reparsedSources.map(() => "?").join(", ");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const applied = db.prepare("SELECT 1 FROM data_migrations WHERE id = ?").get(migrationId);
+    if (!applied) {
+      db
+        .prepare(
+          `
+          DELETE FROM session_tags
+          WHERE session_key IN (
+            SELECT session_key
+            FROM sessions
+            WHERE storage_environment_id = 'local'
+              AND source IN (${placeholders})
+          )
+            AND tag_id IN (
+              SELECT id
+              FROM tags
+              WHERE substr(name, 1, 7) = 'branch:'
+            )
+        `,
+        )
+        .run(...reparsedSources);
+      db.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM session_tags WHERE session_tags.tag_id = tags.id)").run();
+      db
+        .prepare(
+          `
+          UPDATE sessions
+          SET file_mtime_ms = 0
+          WHERE storage_environment_id = 'local'
+            AND source IN (${placeholders})
+        `,
+        )
+        .run(...reparsedSources);
       db.prepare("INSERT INTO data_migrations (id, applied_at) VALUES (?, ?)").run(migrationId, Date.now());
     }
     db.exec("COMMIT");

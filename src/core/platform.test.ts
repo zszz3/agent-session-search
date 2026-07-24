@@ -83,18 +83,20 @@ function decodeEncodedCmdPowerShell(command: string): string {
 }
 
 describe("platform application resolution", () => {
-  it("hides subagent sessions by default and preserves the default for older saved settings", () => {
-    expect(defaultSettings.hideSubagentSessions).toBe(true);
+  it("does not expose a setting that can count subagents as top-level sessions", () => {
+    expect("hideSubagentSessions" in defaultSettings).toBe(false);
+    expect("hideSubagentSessions" in mergeAppSettings(
+      defaultSettings,
+      { hideSubagentSessions: false } as never,
+    )).toBe(false);
     expect(defaultSettings.autoCheckUpdates).toBe(true);
     expect(defaultSettings.showInDock).toBe(true);
     expect(defaultSettings.syncSessionAttachments).toBe(true);
     const {
-      hideSubagentSessions: _missingSubagentsInOlderSettings,
       autoCheckUpdates: _missingUpdatesInOlderSettings,
       showInDock: _missingDockSetting,
       ...olderSettings
     } = defaultSettings;
-    expect(mergeAppSettings(defaultSettings, olderSettings).hideSubagentSessions).toBe(true);
     expect(mergeAppSettings(defaultSettings, olderSettings).autoCheckUpdates).toBe(true);
     expect(mergeAppSettings(defaultSettings, olderSettings).showInDock).toBe(true);
   });
@@ -120,7 +122,6 @@ describe("platform application resolution", () => {
       includeCodeWizCli: true,
       includeCodeBuddyCli: true,
       includeTrae: true,
-      hideSubagentSessions: false,
       autoCheckUpdates: false,
       defaultTerminal: "iTerm" as const,
     };
