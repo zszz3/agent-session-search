@@ -66,6 +66,23 @@ describe("indexer", () => {
     expect(await store.searchSessions({ query: "should not replace unchanged content", limit: 10 })).toHaveLength(0);
   });
 
+  it("continues indexing after one malformed session fails", async () => {
+    const store = createInMemoryStore();
+    const malformed = session(1);
+    malformed.session.sessionKey = "codex:invalid\u0000session";
+
+    const status = await syncLoadedSessionsInBatches(store, [malformed, session(2)], { batchSize: 1 });
+
+    expect(status).toMatchObject({
+      running: false,
+      indexed: 1,
+      skipped: 1,
+      total: 2,
+      error: "1 session could not be indexed; the remaining sessions were processed.",
+    });
+    expect(await store.searchSessions({ query: "Question 2", limit: 10 })).toHaveLength(1);
+  });
+
   it("skips unchanged default session files before reading them", async () => {
     const store = createInMemoryStore();
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-recall-default-skip-"));

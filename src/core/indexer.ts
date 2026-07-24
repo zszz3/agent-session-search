@@ -51,6 +51,11 @@ export interface BatchIndexOptions {
   yieldToEventLoop?: () => Promise<void>;
 }
 
+function indexFailureMessage(failed: number): string | null {
+  if (failed === 0) return null;
+  return `${failed} session${failed === 1 ? "" : "s"} could not be indexed; the remaining sessions were processed.`;
+}
+
 export async function syncLoadedSessionsInBatches(
   store: SessionStore,
   loaded: Iterable<LoadedSession>,
@@ -60,29 +65,49 @@ export async function syncLoadedSessionsInBatches(
   const yieldToEventLoop = options.yieldToEventLoop ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
   let indexed = 0;
   let skipped = 0;
+  let failed = 0;
   let total = 0;
   let pendingInBatch = 0;
 
   for (const item of loaded) {
-    if (await store.isIndexedSessionFresh(item.session)) {
-      await store.touchIndexedAtIfMissing(item.session.sessionKey);
+    try {
+      if (await store.isIndexedSessionFresh(item.session)) {
+        await store.touchIndexedAtIfMissing(item.session.sessionKey);
+        skipped++;
+      } else {
+        await store.upsertIndexedSession(item.session, item.messages, item.tokenEvents, item.traceEvents);
+        indexed++;
+      }
+    } catch {
       skipped++;
-    } else {
-      await store.upsertIndexedSession(item.session, item.messages, item.tokenEvents, item.traceEvents);
-      indexed++;
+      failed++;
     }
     total++;
     pendingInBatch++;
 
     if (pendingInBatch >= batchSize) {
       pendingInBatch = 0;
-      options.onProgress?.({ running: true, indexed, skipped, total, lastIndexedAt: null, error: null });
+      options.onProgress?.({
+        running: true,
+        indexed,
+        skipped,
+        total,
+        lastIndexedAt: null,
+        error: indexFailureMessage(failed),
+      });
       await yieldToEventLoop();
     }
   }
 
   if (pendingInBatch > 0 || indexed === 0) {
-    options.onProgress?.({ running: true, indexed, skipped, total, lastIndexedAt: null, error: null });
+    options.onProgress?.({
+      running: true,
+      indexed,
+      skipped,
+      total,
+      lastIndexedAt: null,
+      error: indexFailureMessage(failed),
+    });
     await yieldToEventLoop();
   }
 
@@ -92,7 +117,7 @@ export async function syncLoadedSessionsInBatches(
     skipped,
     total,
     lastIndexedAt: Date.now(),
-    error: null,
+    error: indexFailureMessage(failed),
   };
 }
 

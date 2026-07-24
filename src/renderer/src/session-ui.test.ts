@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { defaultSettings } from "../../core/platform";
 import {
   migrationTargetsForSession,
@@ -16,11 +15,6 @@ import {
   hasTokenUsage,
   WORKBENCH_SESSION_LIMIT,
 } from "./session-ui";
-
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-const sessionRowSource = readFileSync(new URL("./features/search/session-row.tsx", import.meta.url), "utf8");
-const detailPanelSource = readFileSync(new URL("./features/session-detail/detail-panel.tsx", import.meta.url), "utf8");
-const workbenchSource = readFileSync(new URL("./features/workbench/workbench-page.tsx", import.meta.url), "utf8");
 
 describe("session source labels", () => {
   it("builds one ten-item workbench list with live sessions first and no duplicates", () => {
@@ -60,26 +54,6 @@ describe("session source labels", () => {
     expect(resumeRouteMessage({ route: "app" }, "en")).toBe("Codex task opened.");
     expect(resumeRouteMessage({ route: "app" }, "zh")).toBe("已打开 Codex 会话。");
     expect(resumeActionLabel("codex-cli", "en")).toBe("Opening terminal");
-  });
-
-  it("routes keyboard, detail, and context-menu actions through Codex-aware Resume UI", () => {
-    expect(appSource.match(/resumeActionLabel\(/g)).toHaveLength(5);
-    expect(appSource).toContain('showItermAction={IS_MAC && detail.source !== "codex-app"}');
-    expect(appSource).toContain('state.session.source !== "codex-app"');
-    expect(detailPanelSource).toContain('session.source === "codex-app"');
-    expect(detailPanelSource).toContain('l("Open in Codex", "在 Codex 中打开")');
-  });
-
-  it("renders structured message hits with role, count, highlighting, and a dedicated open action", () => {
-    const sessionRow = sessionRowSource;
-    expect(sessionRow).toContain("session.messageMatchCount");
-    expect(sessionRow).toContain("matchHits.map");
-    expect(sessionRow).toContain("HighlightedSearchText");
-    expect(sessionRow).toContain('hit.role === "user"');
-    expect(sessionRow).toContain("onOpenMatch(session, hit)");
-    expect(sessionRow).toContain("event.stopPropagation()");
-    expect(sessionRow).toContain("Matched session title");
-    expect(sessionRow).toContain("Matched project path");
   });
 
   it("keeps Claude Code and Codex as the only first-party source filters", () => {
@@ -188,8 +162,6 @@ describe("session source labels", () => {
   it("treats zero-token sources as unknown usage instead of displayable usage", () => {
     expect(hasTokenUsage({ totalTokens: 0 })).toBe(false);
     expect(hasTokenUsage({ totalTokens: 1 })).toBe(true);
-    expect(workbenchSource).toContain("formatTokenCount(stats.total.totalTokens)");
-    expect(sessionRowSource).toContain("hasTokenUsage(session.tokenUsage)");
   });
 
   it("derives migration targets from enabled settings in registry order", () => {

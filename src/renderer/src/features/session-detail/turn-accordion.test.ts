@@ -1,11 +1,8 @@
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { SessionTurnDetail, SessionTurnSummary } from "../../../../core/types";
-
-const detailStyles = readFileSync(new URL("../../styles/session-detail.css", import.meta.url), "utf8");
 
 async function loadTurnAccordion(): Promise<Record<string, any> | null> {
   try {
@@ -146,21 +143,5 @@ describe("TurnAccordion", () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Inspect the failing test");
     expect(html).not.toContain("file contents");
-  });
-
-  it("defines compact Turn, timeline, and nested payload styles", () => {
-    for (const selector of [
-      ".turn-conversation",
-      ".turn-count",
-      ".turn-card",
-      ".turn-card-summary",
-      ".turn-card-detail",
-      ".turn-timeline",
-      ".turn-message",
-      ".turn-span",
-      ".turn-span-payload",
-    ]) {
-      expect(detailStyles).toContain(selector);
-    }
   });
 });

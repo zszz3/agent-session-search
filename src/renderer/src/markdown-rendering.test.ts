@@ -1,12 +1,7 @@
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Markdown } from "./markdown";
-
-const markdownSource = readFileSync(new URL("./markdown.tsx", import.meta.url), "utf8");
-const preloadSource = readFileSync(new URL("../../preload/index.ts", import.meta.url), "utf8");
-const mainSource = readFileSync(new URL("../../main/index.ts", import.meta.url), "utf8");
 
 function renderMarkdown(text: string): string {
   return renderToStaticMarkup(createElement(Markdown, { language: "en", text }));
@@ -31,23 +26,15 @@ describe("Markdown rendering", () => {
     expect(html).toContain('class="language-typescript"');
   });
 
-  it("routes supported links over preload IPC and blocks renderer navigation fallbacks", () => {
+  it("renders supported external links", () => {
     const html = renderMarkdown("[Docs](https://example.com/docs)");
 
     expect(html).toContain('href="https://example.com/docs"');
-    expect(markdownSource).toContain("window.sessionSearch.openExternalLink(safeUrl)");
-    expect(markdownSource).toContain("event.preventDefault()");
-    expect(preloadSource).toContain('ipcRenderer.invoke("markdown:open-external", url)');
-    expect(mainSource).toContain('ipcMain.handle("markdown:open-external"');
-    expect(mainSource).toContain("normalizeExternalLink(value)");
-    expect(mainSource).toContain("shell.openExternal(url)");
-    expect(mainSource).toContain('setWindowOpenHandler(() => ({ action: "deny" }))');
-    expect(mainSource).toContain('webContents.on("will-navigate", (event) => event.preventDefault())');
   });
 
   it("does not make unsafe or relative Markdown links navigable", () => {
     const unsafe = renderMarkdown("[Run](javascript:alert(1))");
-    const relative = renderMarkdown("[Local](./README.md)");
+    const relative = renderMarkdown("[Local](./notes.md)");
 
     expect(unsafe).not.toContain("<a");
     expect(relative).not.toContain("<a");

@@ -77,6 +77,24 @@ describe("PostgreSQL Turn search", () => {
         message("user", "retry timeout", "2026-07-22T08:00:00.000Z", 0),
       ],
     );
+    await repository.upsertIndexedSession(
+      session("codex:roles", "消息角色过滤", "2026-07-23T08:00:00.000Z"),
+      [
+        message("user", "中文关键词只应命中对话", "2026-07-23T08:00:00.000Z", 0),
+        message("assistant", "已经理解", "2026-07-23T08:00:01.000Z", 1),
+      ],
+      [],
+      [{
+        index: 0,
+        kind: "tool_result",
+        source: "codex",
+        title: "工具输出",
+        detail: "中文关键词也出现在工具结果中",
+        timestamp: "2026-07-23T08:00:02.000Z",
+        callId: "call-chinese-search",
+        status: "success",
+      }],
+    );
   });
 
   afterEach(async () => {
@@ -123,6 +141,26 @@ describe("PostgreSQL Turn search", () => {
     expect(noCrossTurnMatch.sessions).toEqual([]);
   });
 
+  it("searches Chinese conversation text without returning tool-result hits", async () => {
+    const page = await repository.searchSessionPage({
+      query: "中文关键词",
+      excludeSubagents: true,
+    });
+
+    expect(page.sessions.map((item) => item.sessionKey)).toEqual(["codex:roles"]);
+    expect(page.sessions[0].matchHits).toHaveLength(1);
+    expect(page.sessions[0].matchHits?.[0]).toMatchObject({
+      role: "user",
+      snippet: expect.stringContaining("中文关键词"),
+    });
+
+    const toolOnly = await repository.searchSessionPage({
+      query: "工具结果中",
+      excludeSubagents: true,
+    });
+    expect(toolOnly.sessions).toEqual([]);
+  });
+
   it("supports exact phrases, source/date filters, and paginated Session totals", async () => {
     const phrase = await repository.searchSessionPage({
       query: "\"retry timeout\"",
@@ -144,7 +182,7 @@ describe("PostgreSQL Turn search", () => {
       limit: 2,
     });
     expect(limited.sessions).toHaveLength(2);
-    expect(limited.totalCount).toBe(3);
+    expect(limited.totalCount).toBe(4);
     expect(limited.hasMore).toBe(true);
   });
 });

@@ -110,7 +110,10 @@ describe("deriveSessionTimeline", () => {
       toolNames: ["shell"],
       derivationVersion: TURN_DERIVATION_VERSION,
     });
-    expect(timeline.turns[0].searchText).toContain("1 test failed");
+    expect(timeline.turns[0].searchText).toBe(
+      "Find the failing test\n\nI will inspect the test output.",
+    );
+    expect(timeline.turns[0].toolText).toContain("1 test failed");
     expect(timeline.turns[0].messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(timeline.turns[0].spans).toHaveLength(1);
     expect(timeline.turns[0].spans[0]).toMatchObject({

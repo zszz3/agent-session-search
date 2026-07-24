@@ -85,4 +85,60 @@ describe("AgentRecall PostgreSQL schema", () => {
     expect(extension.rows).toEqual([{ extname: "pg_trgm" }]);
     await database.close();
   });
+
+  it("removes tool output from existing Turn search text during upgrade", async () => {
+    const pool = new PGliteTestPool();
+    const legacyDatabase = new PostgresDatabase(pool, {
+      migrationLock: false,
+      migrations: POSTGRES_MIGRATIONS.filter((migration) => migration.version < 3),
+    });
+    await legacyDatabase.initialize();
+    await legacyDatabase.query(`
+      insert into agent_recall.sessions (
+        session_key, raw_id, source, environment_id, project_path, file_path,
+        original_title, first_question, started_at, file_mtime_ms, file_size,
+        message_count, turn_count, input_tokens, output_tokens,
+        cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at,
+        is_subagent
+      )
+      values (
+        'codex:legacy-search', 'legacy-search', 'codex-cli', 'local', '/repo', '/fixture.jsonl',
+        'Legacy search', 'Find the bug', now(), 1, 1,
+        2, 1, 0, 0, 0, 0, 0, now(), false
+      );
+
+      insert into agent_recall.session_turns (
+        id, session_key, turn_index, synthetic, status,
+        user_text, assistant_text, tool_text, search_text,
+        input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens,
+        total_tokens, error_count, tool_names, derivation_version
+      )
+      values (
+        'turn:legacy-search', 'codex:legacy-search', 0, false, 'completed',
+        'Find the bug', 'The fix is ready', 'secret tool output',
+        E'Find the bug\\n\\nThe fix is ready\\n\\nsecret tool output',
+        0, 0, 0, 0, 0, 0, array['shell'], 1
+      );
+    `);
+
+    const upgradedDatabase = new PostgresDatabase(pool, {
+      migrationLock: false,
+      migrations: POSTGRES_MIGRATIONS,
+    });
+    await upgradedDatabase.initialize();
+
+    const result = await upgradedDatabase.query<{
+      search_text: string;
+      tool_text: string;
+      derivation_version: number;
+    }>(
+      "select search_text, tool_text, derivation_version from agent_recall.session_turns where id = 'turn:legacy-search'",
+    );
+    expect(result.rows).toEqual([{
+      search_text: "Find the bug\n\nThe fix is ready",
+      tool_text: "secret tool output",
+      derivation_version: 2,
+    }]);
+    await upgradedDatabase.close();
+  });
 });

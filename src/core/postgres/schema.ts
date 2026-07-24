@@ -760,4 +760,26 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
         ON agent_recall.search_history (searched_at DESC, id DESC);
     `,
   ],
+}, {
+  version: 3,
+  name: "limit Session search to conversation messages",
+  statements: [
+    `
+      UPDATE agent_recall.session_turns
+      SET
+        search_text = concat_ws(
+          E'\n\n',
+          nullif(user_text, ''),
+          nullif(assistant_text, '')
+        ),
+        derivation_version = 2
+      WHERE
+        search_text IS DISTINCT FROM concat_ws(
+          E'\n\n',
+          nullif(user_text, ''),
+          nullif(assistant_text, '')
+        )
+        OR derivation_version < 2;
+    `,
+  ],
 }];

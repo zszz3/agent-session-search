@@ -6,7 +6,7 @@ import type {
   TokenUsageEvent,
 } from "../types";
 
-export const TURN_DERIVATION_VERSION = 1;
+export const TURN_DERIVATION_VERSION = 2;
 
 export interface DerivedRawEvent {
   eventIndex: number;
@@ -343,7 +343,7 @@ function buildTurns(sessionKey: string, drafts: readonly TurnDraft[]): DerivedSe
       userText,
       assistantText,
       toolText,
-      searchText: [userText, assistantText, toolText].filter(Boolean).join("\n\n"),
+      searchText: [userText, assistantText].filter(Boolean).join("\n\n"),
       ...tokenUsage,
       errorCount,
       toolNames: [...new Set(spans.map((span) => span.name))],

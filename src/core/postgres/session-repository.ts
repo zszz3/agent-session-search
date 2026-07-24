@@ -181,6 +181,10 @@ function numberValue(value: unknown): number {
   return 0;
 }
 
+function postgresText(value: string): string {
+  return value.includes("\u0000") ? value.replaceAll("\u0000", "\u2400") : value;
+}
+
 function timeValue(value: unknown): number {
   if (value instanceof Date) return value.getTime();
   if (typeof value === "number") return value;
@@ -895,13 +899,28 @@ export class PostgresSessionRepository {
     tokenEvents: readonly TokenUsageEvent[] = [],
     traceEvents: readonly SessionTraceEvent[] = [],
   ): Promise<void> {
+    const persistedMessages = messages.map((message) => ({
+      ...message,
+      content: postgresText(message.content),
+    }));
+    const persistedTokenEvents = tokenEvents.map((event) => ({
+      ...event,
+      dedupeKey: postgresText(event.dedupeKey),
+    }));
+    const persistedTraceEvents = traceEvents.map((event) => ({
+      ...event,
+      title: postgresText(event.title),
+      detail: postgresText(event.detail),
+      ...(event.callId ? { callId: postgresText(event.callId) } : {}),
+      ...(event.eventType ? { eventType: postgresText(event.eventType) } : {}),
+    }));
     const timeline = deriveSessionTimeline({
       sessionKey: session.sessionKey,
-      messages,
-      tokenEvents,
-      traceEvents,
+      messages: persistedMessages,
+      tokenEvents: persistedTokenEvents,
+      traceEvents: persistedTraceEvents,
     });
-    const tokenUsage = tokenUsageFromEvents(tokenEvents, session.tokenUsage);
+    const tokenUsage = tokenUsageFromEvents(persistedTokenEvents, session.tokenUsage);
     const environmentId = session.environmentId || "local";
     const startedAt = new Date(Math.max(0, numberValue(session.timestamp))).toISOString();
 
@@ -917,7 +936,7 @@ export class PostgresSessionRepository {
         [
           environmentId,
           session.environmentKind || (environmentId === "local" ? "local" : "ssh"),
-          session.environmentLabel || (environmentId === "local" ? "This Mac" : environmentId),
+          postgresText(session.environmentLabel || (environmentId === "local" ? "This Mac" : environmentId)),
         ],
       );
       await client.query(
@@ -966,14 +985,14 @@ export class PostgresSessionRepository {
           environmentId,
           session.projectPath,
           session.filePath,
-          session.originalTitle,
-          session.firstQuestion,
+          postgresText(session.originalTitle),
+          postgresText(session.firstQuestion),
           startedAt,
           session.fileMtimeMs,
           session.fileSize,
           session.prUrl,
           session.prNumber,
-          messages.length,
+          persistedMessages.length,
           timeline.turns.length,
           tokenUsage.inputTokens,
           tokenUsage.outputTokens,
@@ -991,7 +1010,7 @@ export class PostgresSessionRepository {
       await client.query("delete from agent_recall.token_events where session_key = $1", [session.sessionKey]);
 
       for (const event of timeline.rawEvents) await insertRawEvent(client, session.sessionKey, event);
-      for (const message of messages) {
+      for (const message of persistedMessages) {
         const occurredAt = Date.parse(message.timestamp);
         await client.query(
           `
@@ -1008,7 +1027,7 @@ export class PostgresSessionRepository {
         );
       }
       for (const turn of timeline.turns) await insertTurn(client, session.sessionKey, turn);
-      for (const event of tokenEvents) {
+      for (const event of persistedTokenEvents) {
         await client.query(
           `
             insert into agent_recall.token_events (
@@ -2504,6 +2523,7 @@ export class PostgresSessionRepository {
         from agent_recall.turn_messages messages
         join agent_recall.session_turns turns on turns.id = messages.turn_id
         where turns.session_key = any($1::text[])
+          and messages.role in ('user', 'assistant')
           and (${predicates.join(" or ")})
         order by turns.session_key, turns.turn_index, messages.message_index
       `,

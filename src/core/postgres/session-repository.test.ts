@@ -179,6 +179,25 @@ describe("PostgresSessionRepository", () => {
     })).resolves.toEqual([traces[1]]);
   });
 
+  it("replaces unsupported NUL characters while indexing a session", async () => {
+    const messagesWithNul = messages.map((message, index) => (
+      index === 1 ? { ...message, content: "The cache\u0000key is stale." } : message
+    ));
+    const tracesWithNul = traces.map((event, index) => (
+      index === 1 ? { ...event, detail: "login\u0000test failed" } : event
+    ));
+
+    await repository.upsertIndexedSession(session(), messagesWithNul, tokens, tracesWithNul);
+
+    await expect(repository.getMessages("codex:session-a", 1, 1)).resolves.toEqual([
+      { ...messagesWithNul[1], content: "The cache\u2400key is stale." },
+    ]);
+    await expect(repository.getTraceEvents("codex:session-a")).resolves.toEqual([
+      tracesWithNul[0],
+      { ...tracesWithNul[1], detail: "login\u2400test failed" },
+    ]);
+  });
+
   it("lists lightweight Turn summaries in conversation order", async () => {
     await repository.upsertIndexedSession(session(), messages, tokens, traces);
 
