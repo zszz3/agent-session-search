@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, syncLoadedSessionsInBatches } from "./indexer";
-import { createInMemoryStore } from "./session-store";
+import { createInMemoryStore } from "./postgres/test-session-store";
 import { writeMigratedSession } from "./session-migration-writers";
 import type { IndexedSession, LoadedSession, MigrationTarget, PortableSession, SessionSource } from "./types";
 
@@ -47,12 +47,12 @@ describe("indexer", () => {
     expect(progress).toEqual([1, 2, 3]);
     expect(yields).toBe(3);
     expect(status).toMatchObject({ running: false, indexed: 3, total: 3, error: null });
-    expect(store.searchSessions({ query: "Question", limit: 10 })).toHaveLength(3);
+    expect(await store.searchSessions({ query: "Question", limit: 10 })).toHaveLength(3);
   });
 
   it("skips rebuilding unchanged sessions", async () => {
     const store = createInMemoryStore();
-    store.upsertIndexedSession(session(1).session, [
+    await store.upsertIndexedSession(session(1).session, [
       { role: "user", content: "original indexed question", timestamp: "2026-06-01T10:00:00Z", index: 0 },
     ]);
 
@@ -62,8 +62,25 @@ describe("indexer", () => {
     const status = await syncLoadedSessionsInBatches(store, [unchanged], { batchSize: 1 });
 
     expect(status).toMatchObject({ indexed: 0, skipped: 1, total: 1 });
-    expect(store.searchSessions({ query: "original indexed question", limit: 10 })).toHaveLength(1);
-    expect(store.searchSessions({ query: "should not replace unchanged content", limit: 10 })).toHaveLength(0);
+    expect(await store.searchSessions({ query: "original indexed question", limit: 10 })).toHaveLength(1);
+    expect(await store.searchSessions({ query: "should not replace unchanged content", limit: 10 })).toHaveLength(0);
+  });
+
+  it("continues indexing after one malformed session fails", async () => {
+    const store = createInMemoryStore();
+    const malformed = session(1);
+    malformed.session.sessionKey = "codex:invalid\u0000session";
+
+    const status = await syncLoadedSessionsInBatches(store, [malformed, session(2)], { batchSize: 1 });
+
+    expect(status).toMatchObject({
+      running: false,
+      indexed: 1,
+      skipped: 1,
+      total: 2,
+      error: "1 session could not be indexed; the remaining sessions were processed.",
+    });
+    expect(await store.searchSessions({ query: "Question 2", limit: 10 })).toHaveLength(1);
   });
 
   it("skips unchanged default session files before reading them", async () => {
@@ -74,7 +91,7 @@ describe("indexer", () => {
       const cold = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions: { homeDir } });
       expect(cold).toMatchObject({ indexed: 1, skipped: 0, total: 1 });
 
-      const previousStat = store.listIndexedSessionFiles()[0];
+      const previousStat = (await store.listIndexedSessionFiles())[0]!;
       fs.writeFileSync(filePath, "{not jsonl".padEnd(previousStat.fileSize, "x"));
       fs.utimesSync(filePath, previousStat.fileMtimeMs / 1000, previousStat.fileMtimeMs / 1000);
       const oldIndexTime = new Date(Math.max(0, previousStat.indexedAt - 1000));
@@ -83,7 +100,7 @@ describe("indexer", () => {
       const warm = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions: { homeDir } });
 
       expect(warm).toMatchObject({ indexed: 0, skipped: 1, total: 1 });
-      expect(store.searchSessions({ query: "original question", limit: 10 })).toHaveLength(1);
+      expect(await store.searchSessions({ query: "original question", limit: 10 })).toHaveLength(1);
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
@@ -95,7 +112,7 @@ describe("indexer", () => {
     try {
       writeCodexSession(homeDir, "codex-title-refresh", "title refresh question", "Old Title");
       await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions: { homeDir } });
-      expect(store.searchSessions({ query: "Old Title", limit: 10 })).toHaveLength(1);
+      expect(await store.searchSessions({ query: "Old Title", limit: 10 })).toHaveLength(1);
 
       const indexPath = path.join(homeDir, ".codex", "session_index.jsonl");
       fs.writeFileSync(
@@ -108,8 +125,8 @@ describe("indexer", () => {
       const warm = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions: { homeDir } });
 
       expect(warm).toMatchObject({ indexed: 1, skipped: 0, total: 1 });
-      expect(store.searchSessions({ query: "New Title", limit: 10 })).toHaveLength(1);
-      expect(store.searchSessions({ query: "Old Title", limit: 10 })).toHaveLength(0);
+      expect(await store.searchSessions({ query: "New Title", limit: 10 })).toHaveLength(1);
+      expect(await store.searchSessions({ query: "Old Title", limit: 10 })).toHaveLength(0);
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
@@ -138,18 +155,18 @@ describe("indexer", () => {
           session: portableSession(),
         });
 
-        const status = indexMigratedSessionFile(store, target, written.filePath, written.sessionId);
+        const status = await indexMigratedSessionFile(store, target, written.filePath, written.sessionId);
 
         expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
-        const indexed = store.searchSessions({ source, limit: 10 });
+        const indexed = await store.searchSessions({ source, limit: 10 });
         expect(indexed).toHaveLength(1);
         const sessionKey = indexed[0].sessionKey;
         expect(indexed[0]).toMatchObject({ source, sessionKey });
-        expect(store.searchSessions({ query: "migrated question", source, limit: 10 })).toMatchObject([
+        expect(await store.searchSessions({ query: "migrated question", source, limit: 10 })).toMatchObject([
           { sessionKey },
         ]);
       } finally {
-        store.close();
+        await store.close();
         fs.rmSync(homeDir, { recursive: true, force: true });
       }
     },
@@ -172,29 +189,29 @@ describe("indexer", () => {
         session: portableSession(),
       });
 
-      const status = indexMigratedSessionFile(store, "codewiz", written.filePath, written.sessionId);
+      const status = await indexMigratedSessionFile(store, "codewiz", written.filePath, written.sessionId);
 
       expect(status).toMatchObject({ running: false, indexed: 1, total: 1, error: null });
-      expect(store.searchSessions({ query: "migrated question", source: "codewiz-cli", limit: 10 })).toHaveLength(1);
-      expect(store.searchSessions({ query: "old codewiz question", source: "codewiz-cli", limit: 10 })).toHaveLength(0);
+      expect(await store.searchSessions({ query: "migrated question", source: "codewiz-cli", limit: 10 })).toHaveLength(1);
+      expect(await store.searchSessions({ query: "old codewiz question", source: "codewiz-cli", limit: 10 })).toHaveLength(0);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });
 
   it.each(["claude", "codex", "codebuddy"] as const)(
     "reports a stable domain error when a migrated %s session file is missing",
-    (target) => {
+    async (target) => {
       const store = createInMemoryStore();
       const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `agent-recall-index-missing-${target}-`));
       const filePath = path.join(homeDir, "missing.jsonl");
       try {
-        expect(() => indexMigratedSessionFile(store, target, filePath)).toThrow(
+        await expect(indexMigratedSessionFile(store, target, filePath)).rejects.toThrow(
           `Migrated ${target} session could not be loaded from ${filePath}.`,
         );
       } finally {
-        store.close();
+        await store.close();
         fs.rmSync(homeDir, { recursive: true, force: true });
       }
     },

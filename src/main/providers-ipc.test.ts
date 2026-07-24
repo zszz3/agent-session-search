@@ -53,7 +53,7 @@ function createService(): ProvidersIpcService & Record<keyof ProvidersIpcService
     })),
     getCodexChatProxyStatus: vi.fn(() => null),
     stopCodexChatProxy: vi.fn(async () => null),
-    getProviderKey: vi.fn(() => "saved-key"),
+    getProviderKey: vi.fn(async () => "saved-key"),
   };
 }
 

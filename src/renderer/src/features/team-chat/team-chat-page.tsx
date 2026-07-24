@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   MessageCircleMore,
   Plus,
+  RotateCcw,
   Send,
   UsersRound,
   X,
@@ -51,7 +52,6 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
   const api = useMemo(() => window.sessionSearch.teamChat, []);
   const { api: automationApi, snapshot } = useAutomation();
   const [connection, setConnection] = useState<TeamChatConnectionStatus>(INITIAL_CONNECTION);
-  const [connectionUrl, setConnectionUrl] = useState("");
   const [connectionBusy, setConnectionBusy] = useState(false);
   const [rooms, setRooms] = useState<TeamChatRoomSummary[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string>();
@@ -70,8 +70,8 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
   const [sending, setSending] = useState(false);
   const [activeRootMessageId, setActiveRootMessageId] = useState<string>();
   const [streams, setStreams] = useState<Record<string, StreamDraft>>({});
+  const [resettingAgentIds, setResettingAgentIds] = useState<Set<string>>(() => new Set());
   const [createOpen, setCreateOpen] = useState(false);
-  const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const skipNextAutoScrollRef = useRef(false);
@@ -122,14 +122,11 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
     }
   }, [api]);
 
-  const connect = useCallback(async (nextUrl?: string): Promise<void> => {
+  const connect = useCallback(async (): Promise<void> => {
     setConnectionBusy(true);
     setFeedback(undefined);
     try {
-      const status = nextUrl === undefined ? await api.connect() : await api.connect(nextUrl);
-      setConnection(status);
-      setConnectionUrl("");
-      setDatabaseDialogOpen(false);
+      setConnection(await api.connect());
       await loadRooms();
     } catch (error) {
       setFeedback(errorMessage(error));
@@ -169,6 +166,11 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
         setStreams,
         setActiveRootMessageId,
         refreshRooms: () => void loadRooms(),
+        refreshActiveRoom: (roomId) => {
+          void api.getRoom(roomId).then((room) => {
+            if (selectedRoomIdRef.current === roomId) setActiveRoom(room);
+          }).catch((error) => setFeedback(errorMessage(error)));
+        },
       });
     });
     return () => {
@@ -179,6 +181,7 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
   useEffect(() => {
     setActiveRootMessageId(undefined);
     setStreams({});
+    setResettingAgentIds(new Set());
     setMentionMenuOpen(false);
     if (!selectedRoomId || connection.state !== "ready") {
       setActiveRoom(undefined);
@@ -302,21 +305,6 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
     void sendMessage();
   };
 
-  const useLocalDatabase = async (): Promise<void> => {
-    setConnectionBusy(true);
-    setFeedback(undefined);
-    try {
-      setConnection(await api.useLocalDatabase());
-      setConnectionUrl("");
-      setDatabaseDialogOpen(false);
-      await loadRooms();
-    } catch (error) {
-      setFeedback(errorMessage(error));
-    } finally {
-      setConnectionBusy(false);
-    }
-  };
-
   const archiveRoom = async (): Promise<void> => {
     if (!activeRoom) return;
     if (!window.confirm(l(`Archive “${activeRoom.name}”?`, `归档“${activeRoom.name}”？`))) return;
@@ -325,6 +313,27 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
       await loadRooms();
     } catch (error) {
       setFeedback(errorMessage(error));
+    }
+  };
+
+  const resetAgentConversation = async (member: TeamChatRoomAgent): Promise<void> => {
+    if (!activeRoom || activeRootMessageId || resettingAgentIds.has(member.agentId)) return;
+    setResettingAgentIds((current) => new Set(current).add(member.agentId));
+    setFeedback(undefined);
+    try {
+      const room = await api.resetAgentSession({
+        roomId: activeRoom.id,
+        agentId: member.agentId,
+      });
+      if (selectedRoomIdRef.current === room.id) setActiveRoom(room);
+    } catch (error) {
+      setFeedback(errorMessage(error));
+    } finally {
+      setResettingAgentIds((current) => {
+        const next = new Set(current);
+        next.delete(member.agentId);
+        return next;
+      });
     }
   };
 
@@ -339,16 +348,8 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
           <div className="team-chat-database-controls">
             <div className="team-chat-connection-chip" title={connection.databaseLabel}>
               <Database size={13} />
-              <span>{connection.mode === "local" ? l("Local database", "本地数据库") : connection.databaseLabel}</span>
+              <span>{l("Local data", "本地数据")}</span>
             </div>
-            {connection.mode === "external" ? (
-              <button type="button" onClick={() => void useLocalDatabase()} disabled={connectionBusy}>
-                {l("Use local", "使用本地")}
-              </button>
-            ) : null}
-            <button type="button" onClick={() => setDatabaseDialogOpen(true)} disabled={connectionBusy}>
-              {l("External PostgreSQL", "外部 PostgreSQL")}
-            </button>
           </div>
         ) : null}
       </header>
@@ -357,13 +358,9 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
         <ConnectionSetup
           language={language}
           status={connection}
-          connectionUrl={connectionUrl}
           busy={connectionBusy}
           feedback={feedback}
-          onConnectionUrlChange={setConnectionUrl}
-          onConnect={() => void connect(connectionUrl)}
-          onRetrySaved={() => void connect()}
-          onUseLocal={() => void useLocalDatabase()}
+          onRetry={() => void connect()}
         />
       ) : (
         <div className="team-chat-layout">
@@ -511,11 +508,34 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
             <div className="team-chat-member-list">
               {activeRoom?.agents.map((member) => {
                 const available = snapshot.configuredAgents.some((agent) => agent.id === member.agentId);
+                const continuity = member.hasActiveConversation
+                  ? l("Persistent context", "持续会话")
+                  : member.continuationAvailable
+                    ? l("Continues after first reply", "首次回复后持续")
+                    : l("New context each time", "每次新会话");
+                const resetting = resettingAgentIds.has(member.agentId);
                 return (
-                  <button type="button" key={member.agentId} disabled={!available || !member.enabled} onClick={() => insertMention(member)} title={available ? l(`Mention ${member.displayName}`, `提及 ${member.displayName}`) : l("Agent configuration is unavailable", "Agent 配置不可用")}>
-                    <span className={`team-chat-member-avatar ${available ? "available" : "missing"}`}><Bot size={14} /></span>
-                    <span><strong>{member.displayName}</strong><small>{available ? member.runtimeId : l("Unavailable", "配置不可用")}</small></span>
-                  </button>
+                  <div className="team-chat-member-row" key={member.agentId}>
+                    <button className="team-chat-member-main" type="button" disabled={!available || !member.enabled} onClick={() => insertMention(member)} title={available ? l(`Mention ${member.displayName}`, `提及 ${member.displayName}`) : l("Agent configuration is unavailable", "Agent 配置不可用")}>
+                      <span className={`team-chat-member-avatar ${available ? "available" : "missing"}`}><Bot size={14} /></span>
+                      <span>
+                        <strong>{member.displayName}</strong>
+                        <small>{available ? `${member.runtimeId} · ${continuity}` : l("Unavailable", "配置不可用")}</small>
+                      </span>
+                    </button>
+                    {available && member.hasActiveConversation ? (
+                      <button
+                        className="team-chat-member-reset"
+                        type="button"
+                        disabled={Boolean(activeRootMessageId) || resetting}
+                        onClick={() => void resetAgentConversation(member)}
+                        title={l("Start new conversation", "开始新会话")}
+                        aria-label={l(`Start a new conversation for ${member.displayName}`, `为 ${member.displayName} 开始新会话`)}
+                      >
+                        {resetting ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}
+                      </button>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -538,19 +558,6 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
         />
       ) : null}
 
-      {databaseDialogOpen ? (
-        <ExternalDatabaseDialog
-          language={language}
-          connection={connection}
-          connectionUrl={connectionUrl}
-          busy={connectionBusy}
-          feedback={feedback}
-          onConnectionUrlChange={setConnectionUrl}
-          onConnect={() => void connect(connectionUrl)}
-          onUseLocal={() => void useLocalDatabase()}
-          onClose={() => setDatabaseDialogOpen(false)}
-        />
-      ) : null}
     </div>
   );
 }
@@ -558,23 +565,15 @@ export function TeamChatPage({ language }: { language: LanguageMode }): ReactEle
 function ConnectionSetup({
   language,
   status,
-  connectionUrl,
   busy,
   feedback,
-  onConnectionUrlChange,
-  onConnect,
-  onRetrySaved,
-  onUseLocal,
+  onRetry,
 }: {
   language: LanguageMode;
   status: TeamChatConnectionStatus;
-  connectionUrl: string;
   busy: boolean;
   feedback?: string;
-  onConnectionUrlChange: (value: string) => void;
-  onConnect: () => void;
-  onRetrySaved: () => void;
-  onUseLocal: () => void;
+  onRetry: () => void;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   return (
@@ -583,90 +582,17 @@ function ConnectionSetup({
         <span className="team-chat-setup-icon"><Database size={22} /></span>
         <h3>{status.state === "connecting" ? l("Starting Chat database", "正在启动 Chat 数据库") : l("Chat database unavailable", "Chat 数据库不可用")}</h3>
         <p>{l(
-          "AgentRecall starts a private local database automatically. You can retry it or connect your own PostgreSQL database.",
-          "AgentRecall 会自动启动专用的本地数据库。你可以重试，或连接自己的 PostgreSQL 数据库。",
+          "AgentRecall manages Chat data automatically. No database setup is required.",
+          "AgentRecall 会自动管理 Chat 数据，无需单独安装或配置数据库。",
         )}</p>
-        <label>
-          <span>{l("External PostgreSQL", "外部 PostgreSQL")}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={connectionUrl}
-            onChange={(event) => onConnectionUrlChange(event.currentTarget.value)}
-            placeholder="postgresql://user:password@localhost/agent_recall"
-          />
-        </label>
         {feedback || status.error ? <div className="team-chat-setup-error" role="alert">{feedback || status.error}</div> : null}
         <div className="team-chat-setup-actions">
-          {status.mode === "external" && status.databaseLabel ? (
-            <button type="button" onClick={onRetrySaved} disabled={busy}>
-              {l("Retry external", "重试外部数据库")}
-            </button>
-          ) : null}
-          <button className="primary" type="button" onClick={onUseLocal} disabled={busy}>
+          <button className="primary" type="button" onClick={onRetry} disabled={busy || status.state === "connecting"}>
             {busy ? <LoaderCircle className="spin" size={14} /> : null}
-            {l("Use local database", "使用本地数据库")}
+            {l("Retry", "重试")}
           </button>
-          <button type="button" onClick={onConnect} disabled={busy || !connectionUrl.trim()}>{l("Connect external", "连接外部数据库")}</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ExternalDatabaseDialog({
-  language,
-  connection,
-  connectionUrl,
-  busy,
-  feedback,
-  onConnectionUrlChange,
-  onConnect,
-  onUseLocal,
-  onClose,
-}: {
-  language: LanguageMode;
-  connection: TeamChatConnectionStatus;
-  connectionUrl: string;
-  busy: boolean;
-  feedback?: string;
-  onConnectionUrlChange: (value: string) => void;
-  onConnect: () => void;
-  onUseLocal: () => void;
-  onClose: () => void;
-}): ReactElement {
-  const l = (en: string, zh: string) => localize(language, en, zh);
-  return (
-    <div className="team-chat-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <form className="team-chat-dialog team-chat-database-dialog" onSubmit={(event) => { event.preventDefault(); onConnect(); }}>
-        <header>
-          <div>
-            <h3>{l("External PostgreSQL", "外部 PostgreSQL")}</h3>
-            <p>{l("Use this only when Chat data must live in a PostgreSQL server you manage.", "仅在需要把 Chat 数据保存在自管 PostgreSQL 服务时使用。")}</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={busy} aria-label={l("Close", "关闭")}><X size={16} /></button>
-        </header>
-        <label className="team-chat-field">
-          <span>{l("Connection URL", "连接地址")}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={connectionUrl}
-            onChange={(event) => onConnectionUrlChange(event.currentTarget.value)}
-            placeholder="postgresql://user:password@localhost/agent_recall"
-          />
-        </label>
-        {feedback ? <div className="team-chat-dialog-error" role="alert">{feedback}</div> : null}
-        <footer>
-          {connection.mode === "external" ? <button type="button" onClick={onUseLocal} disabled={busy}>{l("Use local database", "使用本地数据库")}</button> : null}
-          <button type="button" onClick={onClose} disabled={busy}>{l("Cancel", "取消")}</button>
-          <button className="primary" type="submit" disabled={busy || !connectionUrl.trim()}>
-            {busy ? <LoaderCircle className="spin" size={14} /> : null}{l("Connect", "连接")}
-          </button>
-        </footer>
-      </form>
     </div>
   );
 }
@@ -801,6 +727,7 @@ function handleTeamChatEvent(event: TeamChatEvent, handlers: {
   setStreams: React.Dispatch<React.SetStateAction<Record<string, StreamDraft>>>;
   setActiveRootMessageId: React.Dispatch<React.SetStateAction<string | undefined>>;
   refreshRooms: () => void;
+  refreshActiveRoom: (roomId: string) => void;
 }): void {
   if (event.type === "connection-changed") {
     handlers.setConnection(event.status);
@@ -808,6 +735,10 @@ function handleTeamChatEvent(event: TeamChatEvent, handlers: {
   }
   if (event.type === "rooms-changed") {
     handlers.refreshRooms();
+    return;
+  }
+  if (event.type === "agent-session-changed") {
+    if (event.roomId === handlers.selectedRoomId) handlers.refreshActiveRoom(event.roomId);
     return;
   }
   if (event.type === "message-created") {

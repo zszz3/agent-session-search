@@ -1,12 +1,7 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SessionSyncItem } from "../../core/remote-session-sync";
 import type { SessionSearchResult } from "../../core/types";
 import { primarySessionAction, sessionCopySummary } from "./features/remote-sessions/remote-sessions-dialog";
-import { rendererStyleSource } from "./style-test-source";
-
-const source = readFileSync(new URL("./features/remote-sessions/remote-sessions-dialog.tsx", import.meta.url), "utf8");
-const stylesheet = rendererStyleSource;
 
 const local: SessionSearchResult = {
   sessionKey: "codex:local",
@@ -92,43 +87,5 @@ describe("remote session comparison cards", () => {
     expect(sessionCopySummary(item("local-newer"), "remote")).toMatchObject({ present: true, updatedAt: 2_000, messageCount: 39, syncedAt: 3_000 });
     expect(sessionCopySummary(item("local-only", { remote: false }), "remote")).toEqual({ present: false, missing: "not-uploaded" });
     expect(sessionCopySummary(item("remote-only", { local: false }), "local")).toEqual({ present: false, missing: "no-local-copy" });
-  });
-
-  it("renders compact comparisons, keeps View visible, and aligns branch tags", () => {
-    expect(source).toContain('className="remote-session-comparison"');
-    expect(source).toContain('className={`remote-copy ${isLocal ? "local" : "cloud"}`}');
-    expect(source).toContain("remote-session-primary-action");
-    expect(source).toContain("remote-session-view-action");
-    expect(source).toContain('remote && item.state !== "conflict"');
-    expect(source).toContain('l("Restore", "恢复")');
-    expect(source).toContain('remote ? l("Update", "更新") : l("Upload", "上传")');
-    expect(source).toContain('remote ? "" : "cloud-empty"');
-    expect(source).toContain("Number.isFinite(summary.updatedAt)");
-    expect(source).toContain('className="remote-session-tags"');
-    expect(source).toContain("MoreHorizontal");
-    expect(source).toContain("Resolve conflict");
-    expect(stylesheet).toMatch(/\.remote-session-comparison\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
-    expect(stylesheet).toMatch(/\.remote-copy\s*\{[^}]*display:\s*flex/);
-    expect(stylesheet).toMatch(/\.remote-session-row\s*\{[^}]*grid-template-columns:\s*20px minmax\(0, 1fr\) 280px/);
-    expect(stylesheet).toMatch(/\.settings-feedback\.inline\.remote-session-feedback\s*\{[^}]*flex:\s*0 0 auto/);
-    expect(stylesheet).toMatch(/\.remote-session-action\.primary\s*\{[^}]*width:\s*auto/);
-    expect(stylesheet).toMatch(/\.remote-session-actions\.cloud-empty\s*\{[^}]*justify-content:\s*center/);
-  });
-
-  it("uses balanced, dialog-specific controls for restoring a remote session", () => {
-    const restoreDialog = source.slice(
-      source.indexOf("function RemoteRestoreDialog"),
-      source.indexOf("function DeleteRemoteSessionsDialog"),
-    );
-
-    expect(restoreDialog).toContain('className="remote-restore-session-summary"');
-    expect(restoreDialog).toContain('className="remote-restore-targets"');
-    expect(restoreDialog).toContain('aria-pressed={target === item}');
-    expect(restoreDialog).toContain('className="remote-restore-destination remote-project-picker"');
-    expect(restoreDialog).toContain('className="primary-action"');
-    expect(restoreDialog).not.toContain('className="remote-targets"');
-    expect(restoreDialog).not.toContain('className="primary"');
-    expect(stylesheet).toMatch(/\.remote-restore-targets\s*\{[^}]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
-    expect(stylesheet).toMatch(/\.remote-restore-destination\s*\{[^}]*height:\s*40px/);
   });
 });

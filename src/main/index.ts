@@ -22,36 +22,22 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { loadActiveCodexSummaryEndpointDefaults } from "../core/codex-profile";
-import {
-  reconstructCodexResponsesRequest,
-  resolveCodexResponsesRequest,
-  type CodexRequestExport,
-  type CodexRequestFidelity,
-} from "../core/codex-request-export";
+import type { CodexRequestFidelity } from "../core/codex-request-export";
 import { indexMigratedSessionFile, syncDefaultSessionsInBatches, type IndexStatus } from "../core/indexer";
-import {
-  formatSessionJson,
-  formatSessionMarkdown,
-  formatSessionPlainText,
-  type SessionJsonExportFormat,
-} from "../core/format-session";
+import type { SessionJsonExportFormat } from "../core/format-session";
 import { normalizeExternalLink } from "../core/external-link";
 import {
   defaultSettings,
   getMigrationResumeProcessSpec,
   getSafeMigrationResumeCommand,
-  getResumeCommand,
   inspectMigrationCli,
   mergeAppSettings,
   normalizeTerminal,
-  openNativeApp,
   openMigrationResumeInTerminal,
-  openResumeInSpecificTerminal,
-  openResumeInTerminal,
   revealInFileManager,
 } from "../core/platform";
 import { loadUsageQuotaSnapshot } from "../core/quota";
-import { focusLiveSessionTerminal, setLiveSessionTerminalTitle } from "../core/session-focus";
+import { setLiveSessionTerminalTitle } from "../core/session-focus";
 import { setSessionCustomTitleAndSyncTerminal } from "../core/session-title-sync";
 import { createCachedLiveSessionSnapshotLoader } from "../core/session-activity";
 import { summarizeSession, type SummaryEndpoint } from "../core/session-summarizer";
@@ -71,23 +57,22 @@ import { applyMigrationLengthPolicy, createMigrationCompressor } from "../core/s
 import { migrateSession } from "../core/session-migration";
 import { runLocalSessionMigration } from "./local-session-migration";
 import { targetFilePath, writeMigratedSession } from "../core/session-migration-writers";
-import { writeDbPointer } from "../core/app-paths";
-import { routeResumeSession } from "../core/resume-router";
-import { diagnoseRemoteEnvironment, preflightRemoteSessionResume } from "../core/remote-health";
-import { buildRemoteSyncSshArgs, fetchRemoteSessionFilePayload, fetchRemoteSessionMessagePage, syncRemoteEnvironment } from "../core/remote-sync";
+import { writeDatabaseUrlPointer } from "../core/app-paths";
+import { PostgresDatabase } from "../core/postgres/database";
+import { POSTGRES_MIGRATIONS } from "../core/postgres/schema";
+import { diagnoseRemoteEnvironment } from "../core/remote-health";
+import { buildRemoteSyncSshArgs, fetchRemoteSessionMessagePage, syncRemoteEnvironment } from "../core/remote-sync";
 import { REMOTE_PROCESS_EXEC_OPTIONS, runRemoteCommandWithInput } from "../core/remote-process";
-import { loadRemoteSessionDetailPayload, loadWslSessionDetailPayload } from "../core/remote-session-loader";
 import type { RemoteSessionRestoreDependencies } from "../core/remote-session-restore";
 import { RemoteEnvironmentLifecycle } from "../core/remote-environment-lifecycle";
 import { RemoteWatchManager } from "../core/remote-watch";
-import { SessionStore, type TraceEventQueryOptions } from "../core/session-store";
+import { SessionStore } from "../core/session-store";
 import { buildCombinedSupabaseSetupSql, supabaseSqlEditorUrl } from "../core/supabase-setup";
-import { buildSshArgs, readUserSshConfig } from "../core/ssh-config";
+import { readUserSshConfig } from "../core/ssh-config";
 import { listWslDistributions } from "../core/wsl";
 import { deleteWslSessionFile } from "../core/wsl-session-actions";
 import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
-import { isLocalSessionEnvironment } from "../core/session-environment";
 import { OPTIONAL_SESSION_SOURCE_DESCRIPTORS } from "../core/session-sources";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import { APP_UPDATE_EVENTS } from "../shared/ipc/app-update";
@@ -101,6 +86,8 @@ import { registerMemoriesIpc, type MemoriesIpcService } from "./ipc/memories";
 import { registerDiscoveryIpc, type DiscoveryIpcService } from "./ipc/discovery";
 import { registerRulesIpc, type RulesIpcService } from "./ipc/rules";
 import { registerSkillsIpc } from "./ipc/skills";
+import { registerSessionCatalogIpc } from "./ipc/session-catalog";
+import { registerSessionCommandIpc } from "./ipc/session-commands";
 import {
   AppUpdateService,
   launchDetachedAppUpdateInstaller,
@@ -117,7 +104,11 @@ import {
 import { buildMemoriesSyncSetupSql, memoryIdentity, scanLocalMemories, SupabaseMemoriesSyncClient } from "../core/memories-sync";
 import { buildRulesSyncSetupSql, restoreGlobalRules, ruleIdentity, scanLocalRules, SupabaseRulesSyncClient } from "../core/rules-sync";
 import { SkillService, type SkillUsageHookSetup } from "./services/skill-service";
+import { SessionCatalogService } from "./services/session-catalog-service";
+import { SessionCommandService } from "./services/session-command-service";
+import { RemoteSessionAccess } from "./services/remote-session-access";
 import { bootstrapApplicationPaths } from "./app-path-bootstrap";
+import { startPostgresRuntime, type PostgresRuntime } from "./postgres/managed-postgres";
 import type {
   EnvironmentUpsertInput,
   MigrationAgent,
@@ -130,7 +121,6 @@ import type {
   SessionSearchResult,
   SessionSource,
   SessionStatsOptions,
-  TagListOptions,
 } from "../core/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -197,6 +187,8 @@ let automationService: NativeAutomationService | null = null;
 let disposeAutomationIpc: (() => void) | null = null;
 let disposeTeamChatIpc: (() => void) | null = null;
 let automationQuitReady = false;
+let postgresRuntime: PostgresRuntime | null = null;
+let postgresDatabase: PostgresDatabase | null = null;
 let tray: Tray | null = null;
 let store: SessionStore;
 let indexStatus: IndexStatus = { running: false, indexed: 0, skipped: 0, total: 0, lastIndexedAt: null, error: null };
@@ -205,19 +197,9 @@ let autoIndexTimer: ReturnType<typeof setInterval> | null = null;
 let registeredGlobalShortcut: string | null = null;
 let remoteWatchManager: RemoteWatchManager | null = null;
 let remoteEnvironmentLifecycle: RemoteEnvironmentLifecycle | null = null;
-const remoteDetailLoads = new Map<string, Promise<void>>();
 
 const settingsStore = new Store<AppSettings>({
   defaults: defaultSettings,
-});
-
-interface TeamChatSettings {
-  postgresUrl: string;
-}
-
-const teamChatSettingsStore = new Store<TeamChatSettings>({
-  name: "team-chat",
-  defaults: { postgresUrl: "" },
 });
 
 type SavedWindowState = {
@@ -251,15 +233,14 @@ function bundledAutomationWorkflowsPath(): string {
 }
 
 function createAutomationService(): NativeAutomationService {
+  if (!postgresDatabase) throw new Error("PostgreSQL must be ready before automation starts.");
   return new NativeAutomationService({
+    database: postgresDatabase,
     userDataPath: app.getPath("userData"),
     homePath: app.getPath("home"),
     appDataPath: app.getPath("appData"),
     bundledWorkflowsPath: bundledAutomationWorkflowsPath(),
     workflowMcpServerPath: path.join(app.getAppPath(), "out", "mcp", "workflow-entry.js"),
-    localTeamChatDataPath: path.join(app.getPath("userData"), "team-chat-pgdata"),
-    readTeamChatConnectionUrl: () => teamChatSettingsStore.get("postgresUrl"),
-    writeTeamChatConnectionUrl: (postgresUrl) => teamChatSettingsStore.set("postgresUrl", postgresUrl),
   });
 }
 
@@ -327,11 +308,15 @@ const agentMemoryService = new AgentMemoryService({
   chooseDirectory: chooseAgentMemoryDirectory,
 });
 
+const remoteSessionAccess = new RemoteSessionAccess({
+  getStore: () => store,
+});
+
 const remoteSessionService = new RemoteSessionService({
   getStore: () => store,
   getSettings,
   getHookSetup: loadSessionSyncHookSetup,
-  ensureSessionDetails: ensureRemoteSessionDetailsLoaded,
+  ensureSessionDetails: (sessionKey) => remoteSessionAccess.ensureDetails(sessionKey),
   runIndexSync,
   chooseLocalProject: chooseLocalProjectDirectory,
   createLocalRestoreDependencies: createLocalRemoteRestoreDependencies,
@@ -346,7 +331,8 @@ function visibleSearchOptions(options: SearchOptions = {}): SearchOptions {
 }
 
 function createRulesSyncService(): RulesIpcService {
-  const projectDirs = () => store.listProjects(visibleProjectOptions()).map((p) => p.path);
+  const projectDirs = async () =>
+    (await store.listProjects(visibleProjectOptions())).map((project) => project.path);
   const createClient = () => {
     const settings = getSettings();
     return new SupabaseRulesSyncClient({ url: settings.skillSyncSupabaseUrl, anonKey: settings.skillSyncSupabaseAnonKey });
@@ -354,7 +340,7 @@ function createRulesSyncService(): RulesIpcService {
   return {
     async getSyncSnapshot() {
       const settings = getSettings();
-      const localRules = scanLocalRules({ projectDirs: projectDirs() });
+      const localRules = scanLocalRules({ projectDirs: await projectDirs() });
       if (!settings.rulesSyncEnabled || !settings.skillSyncSupabaseUrl || !settings.skillSyncSupabaseAnonKey) {
         return { status: { kind: "unconfigured" as const, setupSql: buildRulesSyncSetupSql() }, localRules, remoteRules: [], scannedAt: Date.now() };
       }
@@ -364,13 +350,13 @@ function createRulesSyncService(): RulesIpcService {
       return { status, localRules, remoteRules, scannedAt: Date.now() };
     },
     async upload(identity) {
-      const localRules = scanLocalRules({ projectDirs: projectDirs() });
+      const localRules = scanLocalRules({ projectDirs: await projectDirs() });
       const rule = localRules.find((r) => ruleIdentity(r) === identity);
       if (!rule) throw new Error("Rule not found locally.");
       return createClient().uploadRule(rule);
     },
     async uploadAll() {
-      const localRules = scanLocalRules({ projectDirs: projectDirs() });
+      const localRules = scanLocalRules({ projectDirs: await projectDirs() });
       const client = createClient();
       const remoteRules = await client.listRemoteRules();
       let uploaded = 0;
@@ -471,114 +457,15 @@ function visibleProjectOptions(): { excludeSubagents: boolean } {
   return { excludeSubagents: getSettings().hideSubagentSessions };
 }
 
-function pruneDisabledOptionalSources(settings: AppSettings): void {
+async function pruneDisabledOptionalSources(settings: AppSettings): Promise<void> {
   const disabledSources = OPTIONAL_SOURCE_SETTINGS.flatMap((item) => (settings[item.key] ? [] : item.sources));
-  store.deleteSessionsBySource(disabledSources);
+  await store.deleteSessionsBySource(disabledSources);
 }
 
 function enabledRemoteOptionalSources(settings: AppSettings): SessionSource[] {
   return OPTIONAL_SESSION_SOURCE_DESCRIPTORS
     .filter((descriptor) => descriptor.remoteCollectorOptional && settings[descriptor.optionalSetting])
     .map((descriptor) => descriptor.id);
-}
-
-function exportFileName(title: string, extension: "md" | "json"): string {
-  const safeTitle = title
-    .replace(/[\\/:*?"<>|\x00-\x1f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return `${safeTitle || "session"}.${extension}`;
-}
-
-function sshArgsForSession(session: SessionSearchResult): string[] | undefined {
-  if (isLocalSessionEnvironment(session)) return undefined;
-  const environment = store.getEnvironment(session.environmentId);
-  if (!environment || environment.kind !== "ssh") return undefined;
-  try {
-    const args = buildSshArgs(environment, "");
-    return args.slice(0, -1);
-  } catch {
-    return undefined;
-  }
-}
-
-function requireSshArgsForRemoteSession(session: SessionSearchResult): string[] | undefined {
-  const sshArgs = sshArgsForSession(session);
-  if (!isLocalSessionEnvironment(session) && !sshArgs) {
-    throw new Error("SSH environment is not available for this remote session.");
-  }
-  return sshArgs;
-}
-
-function requireWslEnvironment(session: SessionSearchResult): SessionEnvironment {
-  const environment = store.getEnvironment(session.environmentId);
-  if (environment?.kind !== "wsl") throw new Error("WSL environment is not available for this remote session.");
-  return environment;
-}
-
-function requireWslResumeOptions(session: SessionSearchResult): { wslDistribution: string } {
-  const environment = requireWslEnvironment(session);
-  if (!environment.wslDistribution) throw new Error("WSL distribution is not configured for this remote session.");
-  return { wslDistribution: environment.wslDistribution };
-}
-
-function requireRemoteSshEnvironment(session: SessionSearchResult): SessionEnvironment | null {
-  if (isLocalSessionEnvironment(session)) return null;
-  const environment = store.getEnvironment(session.environmentId);
-  if (!environment || environment.kind !== "ssh") throw new Error("SSH environment is not available for this remote session.");
-  return environment;
-}
-
-function requireSshEnvironment(environmentId: string): SessionEnvironment {
-  const environment = store.getEnvironment(environmentId);
-  if (!environment) throw new Error("SSH environment was not found.");
-  if (environment.kind !== "ssh") throw new Error("Diagnostics are only available for SSH environments.");
-  return environment;
-}
-
-async function ensureRemoteResumePreflight(session: SessionSearchResult): Promise<void> {
-  const environment = requireRemoteSshEnvironment(session);
-  if (!environment) return;
-  const report = await preflightRemoteSessionResume(environment, session);
-  const errors = report.checks.filter((check) => check.status === "error");
-  if (errors.length === 0) return;
-  const detail = errors.map((check) => `${check.label}: ${check.message}`).join("; ");
-  throw new Error(`Remote resume preflight failed: ${detail}`);
-}
-
-function hasHydratedRemoteDetails(sessionKey: string): boolean {
-  return store.getMessages(sessionKey, 0, 1).length > 0;
-}
-
-async function ensureRemoteSessionDetailsLoaded(sessionKey: string): Promise<void> {
-  const session = store.getSession(sessionKey);
-  if (!session || isLocalSessionEnvironment(session)) return;
-  if (hasHydratedRemoteDetails(sessionKey)) return;
-
-  const active = remoteDetailLoads.get(sessionKey);
-  if (active) return active;
-
-  const load = (async () => {
-    const latest = store.getSession(sessionKey);
-    if (!latest || isLocalSessionEnvironment(latest)) return;
-    if (latest.source === "codewiz-cli") return;
-    const environment = store.getEnvironment(latest.environmentId);
-    if (environment?.kind === "wsl") {
-      const payload = await fetchRemoteSessionFilePayload(environment, latest);
-      const loaded = loadWslSessionDetailPayload(environment, payload, latest);
-      if (loaded) store.upsertIndexedSession(loaded.session, loaded.messages, loaded.tokenEvents, loaded.traceEvents);
-      return;
-    }
-    if (!environment || environment.kind !== "ssh") throw new Error("SSH environment is not available for this remote session.");
-    const payload = await fetchRemoteSessionFilePayload(environment, latest);
-    const loaded = loadRemoteSessionDetailPayload(environment, payload, latest);
-    if (loaded) store.upsertIndexedSession(loaded.session, loaded.messages, loaded.tokenEvents, loaded.traceEvents);
-  })().finally(() => {
-    remoteDetailLoads.delete(sessionKey);
-  });
-
-  remoteDetailLoads.set(sessionKey, load);
-  return load;
 }
 
 async function chooseMarkdownExportPath(defaultFileName: string): Promise<string | null> {
@@ -616,6 +503,32 @@ async function chooseJsonExportPath(defaultFileName: string): Promise<string | n
   const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
   if (result.canceled || !result.filePath) return null;
   return path.extname(result.filePath) ? result.filePath : `${result.filePath}.json`;
+}
+
+async function showJsonExportNotice(
+  exportPath: string,
+  fidelity: CodexRequestFidelity,
+): Promise<void> {
+  const fidelityMessage = fidelity === "exact-trace"
+    ? "Exact Codex request body captured from CODEX_ROLLOUT_TRACE_ROOT."
+    : fidelity === "reconstructed"
+      ? "Request body reconstructed from the Codex rollout history."
+      : "Request body exported in normalized message format.";
+  const fidelityMessageZh = fidelity === "exact-trace"
+    ? "已从 CODEX_ROLLOUT_TRACE_ROOT 导出 Codex 原始请求体。"
+    : fidelity === "reconstructed"
+      ? "已根据 Codex rollout 历史重建请求体。"
+      : "已按标准消息格式导出请求体。";
+  const notice: Electron.MessageBoxOptions = {
+    type: "info",
+    title: "JSON Export Complete",
+    message: fidelityMessage,
+    detail: `${fidelityMessageZh}\n\n${exportPath}`,
+    buttons: ["OK"],
+    noLink: true,
+  };
+  if (mainWindow) await dialog.showMessageBox(mainWindow, notice);
+  else await dialog.showMessageBox(notice);
 }
 
 async function chooseLocalProjectDirectory(): Promise<string | null> {
@@ -747,29 +660,6 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
-}
-
-async function ensureWslResumePreflight(session: SessionSearchResult): Promise<void> {
-  const environment = requireWslEnvironment(session);
-  const report = await preflightRemoteSessionResume(environment, session);
-  const errors = report.checks.filter((check) => check.status === "error");
-  if (errors.length > 0) {
-    throw new Error(errors.map((check) => `${check.label}: ${check.message}`).join("\n"));
-  }
-}
-
-async function resumeWslSession(session: SessionSearchResult): Promise<{ route: "resume" }> {
-  const wslOptions = requireWslResumeOptions(session);
-  await ensureWslResumePreflight(session);
-  await openResumeInTerminal(session, getSettings(), wslOptions);
-  store.markResumed(session.sessionKey);
-  return { route: "resume" };
-}
-
-async function resumeWslSessionInIterm(session: SessionSearchResult): Promise<void> {
-  await ensureWslResumePreflight(session);
-  await openResumeInSpecificTerminal(session, getSettings(), "iTerm", requireWslResumeOptions(session));
-  store.markResumed(session.sessionKey);
 }
 
 function toggleWindow(): void {
@@ -919,8 +809,8 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function emitEnvironmentsUpdated(): void {
-  mainWindow?.webContents.send("environments-updated", store.listEnvironments());
+function emitEnvironmentsUpdated(environments: SessionEnvironment[]): void {
+  mainWindow?.webContents.send("environments-updated", environments);
 }
 
 function remoteSyncErrorMessage(error: unknown): string {
@@ -932,8 +822,13 @@ function ensureRemoteWatchManager(): RemoteWatchManager {
     remoteWatchManager = new RemoteWatchManager({
       syncEnvironment: (environment) => ensureRemoteEnvironmentLifecycle().syncFromWatcher(environment),
       onSyncError: (environment, error) => {
-        store.updateEnvironmentSyncState(environment.id, "error", { lastError: remoteSyncErrorMessage(error) });
-        emitEnvironmentsUpdated();
+        void store.updateEnvironmentSyncState(
+          environment.id,
+          "error",
+          { lastError: remoteSyncErrorMessage(error) },
+        ).then(() => store.listEnvironments())
+          .then(emitEnvironmentsUpdated)
+          .catch(() => undefined);
       },
     });
   }
@@ -949,7 +844,7 @@ function ensureRemoteEnvironmentLifecycle(): RemoteEnvironmentLifecycle {
           enabledOptionalSources: enabledRemoteOptionalSources(getSettings()),
         }).then(() => undefined),
       watchManager: ensureRemoteWatchManager(),
-      onEnvironmentsUpdated: () => emitEnvironmentsUpdated(),
+      onEnvironmentsUpdated: emitEnvironmentsUpdated,
     });
   }
   return remoteEnvironmentLifecycle;
@@ -959,7 +854,7 @@ async function runIndexSync(): Promise<IndexStatus> {
   if (activeIndexRun) return activeIndexRun;
 
   const settings = getSettings();
-  pruneDisabledOptionalSources(settings);
+  await pruneDisabledOptionalSources(settings);
   indexStatus = { ...indexStatus, running: true, error: null };
   mainWindow?.webContents.send("index-status", indexStatus);
 
@@ -1004,7 +899,7 @@ async function runIndexSync(): Promise<IndexStatus> {
       return indexStatus;
     })
     .finally(() => {
-      ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
+      void ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
       activeIndexRun = null;
     });
 
@@ -1021,11 +916,7 @@ const SUMMARY_PROVIDER_ERROR =
 function buildCodexExecEndpoint(settings: AppSettings): SummaryEndpoint {
   return buildCodexExecEndpointShared(settings, {
     onTemporarySession: (sessionKey) => {
-      try {
-        store.deleteSession(sessionKey);
-      } catch {
-        // Best-effort cleanup if an ephemeral Codex call is indexed before it exits.
-      }
+      void store.deleteSession(sessionKey).catch(() => undefined);
     },
   });
 }
@@ -1033,11 +924,7 @@ function buildCodexExecEndpoint(settings: AppSettings): SummaryEndpoint {
 async function resolveSummaryEndpointFromSettings(): Promise<SummaryEndpoint | null> {
   const settings = await providerService.hydrateSettings();
   const onTemporarySession = (sessionKey: string): void => {
-    try {
-      store.deleteSession(sessionKey);
-    } catch {
-      // Best-effort cleanup if an ephemeral summary call is indexed before it exits.
-    }
+    void store.deleteSession(sessionKey).catch(() => undefined);
   };
   if (settings.summarySource === "custom") {
     const endpoint = resolveSummaryEndpointFromSettingsShared(settings, {});
@@ -1064,19 +951,23 @@ const SUMMARY_FULL_THRESHOLD = SUMMARY_HEAD_MESSAGES + SUMMARY_TAIL_MESSAGES;
 // Short sessions are summarized in full; long ones use a head + tail excerpt so the
 // original problem and the final resolution both survive, fetching only a bounded slice.
 async function summarizeOneSession(sessionKey: string, endpoint: SummaryEndpoint): Promise<void> {
-  const count = store.getMessageCount(sessionKey);
+  const count = await store.getMessageCount(sessionKey);
   let excerpt;
   if (count <= SUMMARY_FULL_THRESHOLD) {
-    excerpt = { head: store.getMessages(sessionKey, 0, SUMMARY_FULL_THRESHOLD), tail: [], omittedCount: 0 };
+    excerpt = {
+      head: await store.getMessages(sessionKey, 0, SUMMARY_FULL_THRESHOLD),
+      tail: [],
+      omittedCount: 0,
+    };
   } else {
     excerpt = {
-      head: store.getMessages(sessionKey, 0, SUMMARY_HEAD_MESSAGES),
-      tail: store.getMessages(sessionKey, count - SUMMARY_TAIL_MESSAGES, SUMMARY_TAIL_MESSAGES),
+      head: await store.getMessages(sessionKey, 0, SUMMARY_HEAD_MESSAGES),
+      tail: await store.getMessages(sessionKey, count - SUMMARY_TAIL_MESSAGES, SUMMARY_TAIL_MESSAGES),
       omittedCount: count - SUMMARY_HEAD_MESSAGES - SUMMARY_TAIL_MESSAGES,
     };
   }
   const result = await summarizeSession(excerpt, endpoint);
-  store.setAiSummary(sessionKey, result.summary, endpoint.model);
+  await store.setAiSummary(sessionKey, result.summary, endpoint.model);
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -1123,7 +1014,7 @@ async function createLocalRemoteRestoreDependencies(
     write: (target, session) => writeMigratedSession({ target, session }),
     record: (record) => store.recordSessionMigration(record),
     refreshIndex: async (target, writtenFilePath, targetSessionId) => {
-      indexStatus = indexMigratedSessionFile(store, target, writtenFilePath, targetSessionId);
+      indexStatus = await indexMigratedSessionFile(store, target, writtenFilePath, targetSessionId);
       mainWindow?.webContents.send("index-status", indexStatus);
     },
     launch: (target, targetSessionId, projectPath) =>
@@ -1157,7 +1048,7 @@ async function createSourceRemoteRestoreDependencies(
       await syncRemoteEnvironment(store, environment, {
         enabledOptionalSources: enabledRemoteOptionalSources(getSettings()),
       });
-      mainWindow?.webContents.send("environments-updated", store.listEnvironments());
+      mainWindow?.webContents.send("environments-updated", await store.listEnvironments());
     },
     launch: async () => undefined,
     resumeCommand: (target, targetSessionId, projectPath) =>
@@ -1186,11 +1077,7 @@ function localSessionMigrationRuntime(event: IpcMainInvokeEvent) {
   return {
     resolveSummaryEndpoint: (snapshot: AppSettings) => resolveSummaryEndpointFromSettingsShared(snapshot, {
       onTemporarySession: (temporarySessionKey) => {
-        try {
-          store.deleteSession(temporarySessionKey);
-        } catch {
-          // Best-effort cleanup if an ephemeral summary call is indexed before it exits.
-        }
+        void store.deleteSession(temporarySessionKey).catch(() => undefined);
       },
     }) ?? buildCodexExecEndpoint(snapshot),
     createCompressor: (endpoint: SummaryEndpoint, concurrency: number) =>
@@ -1203,7 +1090,7 @@ function localSessionMigrationRuntime(event: IpcMainInvokeEvent) {
       writeMigratedSession({ target: migrationTarget, session: portable }),
     record: (record: Parameters<SessionStore["recordSessionMigration"]>[0]) => store.recordSessionMigration(record),
     refreshIndex: async (migrationTarget: MigrationTarget, writtenFilePath: string, targetSessionId: string) => {
-      const status = indexMigratedSessionFile(store, migrationTarget, writtenFilePath, targetSessionId);
+      const status = await indexMigratedSessionFile(store, migrationTarget, writtenFilePath, targetSessionId);
       indexStatus = status;
       mainWindow?.webContents.send("index-status", indexStatus);
     },
@@ -1327,7 +1214,7 @@ async function maybeAutoBackfillSummaries(): Promise<void> {
   summaryBackfillRunning = true;
   try {
     const maxAgeMs = settings.summaryMaxAgeDays * 86_400_000;
-    const candidates = store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 25);
+    const candidates = await store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 25);
     for (const candidate of candidates) {
       try {
         await summarizeOneSession(candidate.sessionKey, endpoint);
@@ -1366,7 +1253,7 @@ function registerIpc(): void {
       const resolvedPath = path.resolve(filePath);
       await createLocalTextFilePreviewUnderRoots(
         resolvedPath,
-        automationService?.hub().allowedFileRoots() ?? [],
+        automationService?.workflows.allowedFileRoots() ?? [],
         app.getPath("home"),
       );
       shell.showItemInFolder(resolvedPath);
@@ -1375,44 +1262,49 @@ function registerIpc(): void {
   });
   disposeTeamChatIpc = registerTeamChatIpc({
     ipc: ipcMain,
-    service: automationService.teamChat(),
+    service: automationService.teamChat,
     send: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+    ensureReady: () => automationService!.requireReady(),
   });
   ipcMain.handle("markdown:open-external", (_event, value: unknown) => {
     const url = normalizeExternalLink(value);
     if (!url) throw new Error("Only HTTP, HTTPS, and mailto links can be opened externally.");
     return shell.openExternal(url);
   });
-  ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(visibleSearchOptions(options)));
-  ipcMain.handle("search:session-page", (_event, options: SearchOptions) => store.searchSessionPage(visibleSearchOptions(options)));
-  ipcMain.handle("session:get", (_event, sessionKey: string) => {
-    store.markOpened(sessionKey);
-    return store.getSession(sessionKey);
-  });
-  ipcMain.handle("session:messages", async (_event, sessionKey: string, offset?: number, limit?: number) => {
-    const pageOffset = offset ?? 0;
-    const pageLimit = limit ?? 120;
-    const session = store.getSession(sessionKey);
-    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) {
-      if (session.messageCount <= 0) return [];
-      const environment = session.environmentKind === "wsl"
-        ? requireWslEnvironment(session)
-        : requireRemoteSshEnvironment(session);
-      if (!environment) return [];
-      return fetchRemoteSessionMessagePage(environment, session, pageOffset, pageLimit);
-    }
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    return store.getMessages(sessionKey, pageOffset, pageLimit);
-  });
-  ipcMain.handle("session:trace-events", async (_event, sessionKey: string, options?: TraceEventQueryOptions) => {
-    const session = store.getSession(sessionKey);
-    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) return [];
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    return store.getTraceEvents(sessionKey, options);
-  });
-  ipcMain.handle("sessions:live", () => loadCachedLiveSessionSnapshot({ includeTrae: getSettings().includeTrae, includeQoder: getSettings().includeQoder }));
+  registerSessionCatalogIpc(ipcMain, new SessionCatalogService({
+    store,
+    visibleSearchOptions,
+    visibleStatsOptions,
+    visibleProjectOptions,
+    ensureRemoteDetails: (sessionKey) => remoteSessionAccess.ensureDetails(sessionKey),
+    hasRemoteDetails: (sessionKey) => remoteSessionAccess.hasHydratedDetails(sessionKey),
+    requireWslEnvironment: (session) => remoteSessionAccess.requireWslEnvironment(session),
+    requireSshEnvironment: (session) => remoteSessionAccess.requireRemoteSshEnvironment(session),
+    fetchRemoteMessages: fetchRemoteSessionMessagePage,
+    loadLiveSessions: () => loadCachedLiveSessionSnapshot({
+      includeTrae: getSettings().includeTrae,
+      includeQoder: getSettings().includeQoder,
+    }),
+    refreshIndex: runIndexSync,
+    getIndexStatus: () => indexStatus,
+    setCustomTitle: (sessionKey, title) =>
+      setSessionCustomTitleAndSyncTerminal(sessionKey, title, {
+        getSession: (key) => store.getSession(key),
+        setCustomTitle: (key, customTitle) => store.setCustomTitle(key, customTitle),
+        loadLiveSessions: () => loadCachedLiveSessionSnapshot({
+          includeTrae: getSettings().includeTrae,
+          includeQoder: getSettings().includeQoder,
+        }),
+        setLiveTerminalTitle: (pid, displayTitle) => setLiveSessionTerminalTitle(pid, displayTitle),
+        onSyncError: (error) => console.warn(
+          "[terminal-title] Could not synchronize live terminal title.",
+          error,
+        ),
+      }),
+    deleteWslSession: deleteWslSessionFile,
+  }));
   ipcMain.handle("session:summarize", async (_event, sessionKey: string) => {
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    await remoteSessionAccess.ensureDetails(sessionKey);
     const endpoint = await resolveSummaryEndpointFromSettings();
     if (!endpoint) {
       throw new Error(SUMMARY_PROVIDER_ERROR);
@@ -1429,7 +1321,7 @@ function registerIpc(): void {
     const maxAgeMs = settings.summaryMaxAgeDays * 86_400_000;
     // Cover all missing/stale sessions in the age window in one run (bounded for
     // safety). Failed ones stay missing and are retried on the next run.
-    const candidates = store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 500);
+    const candidates = await store.listSessionsNeedingSummary(Date.now(), maxAgeMs, 500);
     const total = candidates.length;
     let processed = 0;
     let failed = 0;
@@ -1466,7 +1358,7 @@ function registerIpc(): void {
     // CLI write a grounded answer over the hits.
     if (isLocalCliEndpoint(endpoint)) {
       const search = async (query: string): Promise<FallbackSessionHit[]> => {
-        const sessions = store.searchSessions(visibleSearchOptions({ query, limit: 12 }));
+        const sessions = await store.searchSessions(visibleSearchOptions({ query, limit: 12 }));
         return sessions.map((session) => ({
           sessionKey: session.sessionKey,
           title: session.displayTitle,
@@ -1476,8 +1368,8 @@ function registerIpc(): void {
         }));
       };
       const { reply, sessionKeys } = await runAiAssistantFallback(endpoint, messages, search);
-      const sessions = sessionKeys
-        .map((key) => store.getSession(key))
+      const sessions = (await Promise.all(sessionKeys
+        .map((key) => store.getSession(key))))
         .filter((session): session is SessionSearchResult => session !== null);
       return { reply, sessions };
     }
@@ -1491,7 +1383,7 @@ function registerIpc(): void {
           const source = typeof args.source === "string" && args.source ? args.source : undefined;
           const projectPath = typeof args.project === "string" && args.project ? args.project : undefined;
           const limit = typeof args.limit === "number" ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 20;
-          const sessions = store.searchSessions(visibleSearchOptions({
+          const sessions = await store.searchSessions(visibleSearchOptions({
             query,
             source: source as SearchOptions["source"],
             projectPath,
@@ -1510,24 +1402,24 @@ function registerIpc(): void {
           };
         }
         case "list_projects": {
-          const projects = store.listProjects(visibleProjectOptions());
+          const projects = await store.listProjects(visibleProjectOptions());
           return {
             result: projects.map((project) => ({ project: project.path, sessions: project.sessionCount })),
             sessionKeys: [],
           };
         }
         case "list_tags": {
-          return { result: store.listTags(), sessionKeys: [] };
+          return { result: await store.listTags(), sessionKeys: [] };
         }
         case "get_session": {
           const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : "";
           if (!sessionKey) return { result: { error: "sessionKey is required." }, sessionKeys: [] };
-          await ensureRemoteSessionDetailsLoaded(sessionKey);
-          const session = store.getSession(sessionKey);
+          await remoteSessionAccess.ensureDetails(sessionKey);
+          const session = await store.getSession(sessionKey);
           if (!session) return { result: { error: "Session not found." }, sessionKeys: [] };
           const maxMessages = typeof args.maxMessages === "number" ? Math.max(1, Math.min(200, Math.floor(args.maxMessages))) : 40;
           const offset = typeof args.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 0;
-          const messageList = store.getMessages(sessionKey, offset, maxMessages);
+          const messageList = await store.getMessages(sessionKey, offset, maxMessages);
           return {
             result: {
               sessionKey: session.sessionKey,
@@ -1548,8 +1440,8 @@ function registerIpc(): void {
     };
 
     const { reply, sessionKeys } = await runAiAssistantTurn(endpoint, messages, executeTool);
-    const sessions = sessionKeys
-      .map((key) => store.getSession(key))
+    const sessions = (await Promise.all(sessionKeys
+      .map((key) => store.getSession(key))))
       .filter((session): session is SessionSearchResult => session !== null);
     return { reply, sessions };
   });
@@ -1566,8 +1458,6 @@ function registerIpc(): void {
     settingsStore.set("sessionSearchMcpEnabled", enabled);
     return setup.status();
   });
-  ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(visibleStatsOptions(options)));
-  ipcMain.handle("stats:trend", (_event, options?: SessionStatsOptions) => store.getStatsTrend(visibleStatsOptions(options)));
   ipcMain.handle("quota:get", () => {
     const settings = getSettings();
     return loadUsageQuotaSnapshot({
@@ -1575,14 +1465,6 @@ function registerIpc(): void {
       hideClaudeQuota: settings.hideClaudeQuota,
     });
   });
-  ipcMain.handle("tags:list", (_event, options?: TagListOptions) =>
-    store.listTags({ ...visibleProjectOptions(), ...options }),
-  );
-  ipcMain.handle("projects:list", (_event, options?: ProjectQueryOptions) =>
-    store.listProjects({ ...visibleProjectOptions(), ...options }),
-  );
-  ipcMain.handle("tags:by-project", () => store.listTagsByProject(visibleProjectOptions()));
-  ipcMain.handle("environments:list", () => store.listEnvironments());
   ipcMain.handle("ssh-config:list-hosts", () => readUserSshConfig());
   ipcMain.handle("wsl:list-distributions", () => listWslDistributions());
   ipcMain.handle("environment:save", (_event, input: EnvironmentUpsertInput) =>
@@ -1594,34 +1476,11 @@ function registerIpc(): void {
   ipcMain.handle("environment:refresh", (_event, environmentId: string) =>
     ensureRemoteEnvironmentLifecycle().refreshEnvironment(environmentId),
   );
-  ipcMain.handle("environment:diagnose", (_event, environmentId: string) => {
-    const environment = store.getEnvironment(environmentId);
+  ipcMain.handle("environment:diagnose", async (_event, environmentId: string) => {
+    const environment = await store.getEnvironment(environmentId);
     if (environment?.kind === "wsl") return diagnoseRemoteEnvironment(environment);
-    return diagnoseRemoteEnvironment(requireSshEnvironment(environmentId));
+    return diagnoseRemoteEnvironment(await remoteSessionAccess.requireSshEnvironment(environmentId));
   });
-  ipcMain.handle("title:set", (_event, sessionKey: string, title: string | null) =>
-    setSessionCustomTitleAndSyncTerminal(sessionKey, title, {
-      getSession: (key) => store.getSession(key),
-      setCustomTitle: (key, customTitle) => store.setCustomTitle(key, customTitle),
-      loadLiveSessions: () => loadCachedLiveSessionSnapshot({ includeTrae: getSettings().includeTrae, includeQoder: getSettings().includeQoder }),
-      setLiveTerminalTitle: (pid, displayTitle) => setLiveSessionTerminalTitle(pid, displayTitle),
-      onSyncError: (error) => console.warn("[terminal-title] Could not synchronize live terminal title.", error),
-    }),
-  );
-  ipcMain.handle("tag:add", (_event, sessionKey: string, tagName: string) => store.addTag(sessionKey, tagName));
-  ipcMain.handle("tag:remove", (_event, sessionKey: string, tagName: string) => store.removeTag(sessionKey, tagName));
-  ipcMain.handle("tag:delete", (_event, tagName: string) => store.deleteTag(tagName));
-  ipcMain.handle("favorite:set", (_event, sessionKey: string, favorited: boolean) => store.setFavorited(sessionKey, favorited));
-  ipcMain.handle("pin:set", (_event, sessionKey: string, pinned: boolean) => store.setPinned(sessionKey, pinned));
-  ipcMain.handle("hide:set", (_event, sessionKey: string, hidden: boolean) => store.setHidden(sessionKey, hidden));
-  ipcMain.handle("session:delete", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session || session.environmentKind !== "wsl") return store.deleteSession(sessionKey);
-    await deleteWslSessionFile(requireWslEnvironment(session), session.filePath);
-    return store.deleteSessionRecord(sessionKey);
-  });
-  ipcMain.handle("index:refresh", () => runIndexSync());
-  ipcMain.handle("index:status", () => indexStatus);
   registerAppUpdateIpc(ipcMain, appUpdateService);
   registerAgentMemoryIpc(ipcMain, agentMemoryService);
   ipcMain.handle("settings:get", () => providerService.hydrateSettings());
@@ -1637,10 +1496,10 @@ function registerIpc(): void {
     if ("remoteSyncEnabled" in settings && !next.remoteSyncEnabled) {
       remoteSessionService.disableSync();
     }
-    providerService.persistKeysFromUpdate(settings, next);
+    await providerService.persistKeysFromUpdate(settings, next);
     settingsStore.set(providerService.removeStoredKeys(next));
     if ("autoCheckUpdates" in settings) await appUpdateService.setAutoCheckEnabled(next.autoCheckUpdates);
-    pruneDisabledOptionalSources(next);
+    await pruneDisabledOptionalSources(next);
     return providerService.addStoredKeys(next);
   });
   registerSkillsIpc(ipcMain, skillService);
@@ -1656,55 +1515,26 @@ function registerIpc(): void {
     return shell.openExternal(supabaseSqlEditorUrl(projectUrl));
   });
   registerRemoteSessionsIpc(ipcMain, remoteSessionService);
-  ipcMain.handle("command:copy-resume", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session) return;
-    if (session.environmentKind === "wsl") {
-      clipboard.writeText(getResumeCommand(session, getSettings(), requireWslResumeOptions(session)));
-      return;
-    }
-    clipboard.writeText(getResumeCommand(session, getSettings(), { sshArgs: requireSshArgsForRemoteSession(session) }));
-  });
-  ipcMain.handle("command:resume", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session) return { route: "resume" as const };
-    if (session.environmentKind === "wsl") return resumeWslSession(session);
-    const sshArgs = requireSshArgsForRemoteSession(session);
-    if (!isLocalSessionEnvironment(session)) {
-      await ensureRemoteResumePreflight(session);
-      await openResumeInTerminal(session, getSettings(), { sshArgs });
-      store.markResumed(sessionKey);
-      return { route: "resume" as const };
-    }
-    const snapshot = await loadCachedLiveSessionSnapshot({ includeTrae: getSettings().includeTrae, includeQoder: getSettings().includeQoder });
-    const route = routeResumeSession(session, snapshot.error ? [] : snapshot.sessions);
-    if (route.route === "app") {
-      await openNativeApp(session, { openExternal: (url) => shell.openExternal(url) });
-      store.markResumed(sessionKey);
-      return route;
-    }
-    if (route.route === "focus") {
-      await focusLiveSessionTerminal(route.pid);
-      store.markResumed(sessionKey);
-      return route;
-    }
-    await openResumeInTerminal(session, getSettings(), { sshArgs });
-    store.markResumed(sessionKey);
-    return route;
-  });
-  ipcMain.handle("command:resume-iterm", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session) return;
-    if (session.environmentKind === "wsl") return resumeWslSessionInIterm(session);
-    const sshArgs = requireSshArgsForRemoteSession(session);
-    await ensureRemoteResumePreflight(session);
-    await openResumeInSpecificTerminal(session, getSettings(), "iTerm", { sshArgs });
-    store.markResumed(sessionKey);
-  });
+  registerSessionCommandIpc(ipcMain, new SessionCommandService({
+    store,
+    remoteAccess: remoteSessionAccess,
+    getSettings,
+    loadLiveSessions: () => loadCachedLiveSessionSnapshot({
+      includeTrae: getSettings().includeTrae,
+      includeQoder: getSettings().includeQoder,
+    }),
+    copyText: (text) => clipboard.writeText(text),
+    openExternal: (url) => shell.openExternal(url),
+    chooseMarkdownPath: chooseMarkdownExportPath,
+    chooseJsonFormat: chooseJsonExportFormat,
+    chooseJsonPath: chooseJsonExportPath,
+    writeTextFile: (filePath, content) => fs.writeFile(filePath, content, "utf-8"),
+    showJsonExportNotice,
+  }));
   ipcMain.handle("session:migrate", async (event, sessionKey: string, target: unknown) => {
-    const session = store.getSession(sessionKey);
+    const session = await store.getSession(sessionKey);
     if (!session) throw new Error("Session not found.");
-    const messages = store.getAllMessages(sessionKey);
+    const messages = await store.getAllMessages(sessionKey);
     const settings = Object.freeze(await providerService.hydrateSettings());
 
     return runLocalSessionMigration({
@@ -1713,92 +1543,6 @@ function registerIpc(): void {
       target,
       settings,
     }, localSessionMigrationRuntime(event));
-  });
-  ipcMain.handle("command:open-app", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session) return false;
-    if (!isLocalSessionEnvironment(session)) return false;
-    await openNativeApp(session, { openExternal: (url) => shell.openExternal(url) });
-    return true;
-  });
-  ipcMain.handle("command:reveal", async (_event, sessionKey: string) => {
-    const session = store.getSession(sessionKey);
-    if (!session) return false;
-    if (!isLocalSessionEnvironment(session)) return false;
-    await revealInFileManager(session.projectPath || session.filePath);
-    return true;
-  });
-  ipcMain.handle("command:copy-markdown", async (_event, sessionKey: string) => {
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    const session = store.getSession(sessionKey);
-    if (!session) return;
-    clipboard.writeText(formatSessionMarkdown(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)));
-  });
-  ipcMain.handle("command:export-markdown", async (_event, sessionKey: string) => {
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    const session = store.getSession(sessionKey);
-    if (!session) return false;
-    const exportPath = await chooseMarkdownExportPath(exportFileName(session.displayTitle || session.originalTitle || session.rawId, "md"));
-    if (!exportPath) return false;
-    await fs.writeFile(exportPath, formatSessionMarkdown(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)), "utf-8");
-    return true;
-  });
-  ipcMain.handle("command:export-json", async (_event, sessionKey: string) => {
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    const session = store.getSession(sessionKey);
-    if (!session) return { exported: false };
-    const format = await chooseJsonExportFormat();
-    if (!format) return { exported: false };
-    const exportPath = await chooseJsonExportPath(exportFileName(session.displayTitle || session.originalTitle || session.rawId, "json"));
-    if (!exportPath) return { exported: false };
-
-    let codexRequest: CodexRequestExport | null = null;
-    const isCodexSession = ["codex-cli", "codex-app", "codex-internal", "tcodex-cli"].includes(session.source);
-    if (isCodexSession && isLocalSessionEnvironment(session)) {
-      if (format === "openai_responses") {
-        codexRequest = await resolveCodexResponsesRequest({
-          filePath: session.filePath,
-          rawId: session.rawId,
-          traceRoot: process.env.CODEX_ROLLOUT_TRACE_ROOT?.trim() || undefined,
-        });
-      } else {
-        const reconstructed = await reconstructCodexResponsesRequest(session.filePath);
-        if (reconstructed) codexRequest = { body: reconstructed, fidelity: "reconstructed" };
-      }
-    }
-    const fidelity: CodexRequestFidelity = codexRequest?.fidelity ?? "normalized";
-    await fs.writeFile(
-      exportPath,
-      formatSessionJson(store.getAllMessages(sessionKey), format, codexRequest?.body),
-      "utf-8",
-    );
-    const fidelityMessage = fidelity === "exact-trace"
-      ? "Exact Codex request body captured from CODEX_ROLLOUT_TRACE_ROOT."
-      : fidelity === "reconstructed"
-        ? "Request body reconstructed from the Codex rollout history."
-        : "Request body exported in normalized message format.";
-    const fidelityMessageZh = fidelity === "exact-trace"
-      ? "已从 CODEX_ROLLOUT_TRACE_ROOT 导出 Codex 原始请求体。"
-      : fidelity === "reconstructed"
-        ? "已根据 Codex rollout 历史重建请求体。"
-        : "已按标准消息格式导出请求体。";
-    const notice: Electron.MessageBoxOptions = {
-      type: "info",
-      title: "JSON Export Complete",
-      message: fidelityMessage,
-      detail: `${fidelityMessageZh}\n\n${exportPath}`,
-      buttons: ["OK"],
-      noLink: true,
-    };
-    if (mainWindow) await dialog.showMessageBox(mainWindow, notice);
-    else await dialog.showMessageBox(notice);
-    return { exported: true, fidelity };
-  });
-  ipcMain.handle("command:copy-plain", async (_event, sessionKey: string) => {
-    await ensureRemoteSessionDetailsLoaded(sessionKey);
-    const session = store.getSession(sessionKey);
-    if (!session) return;
-    clipboard.writeText(formatSessionPlainText(session, store.getAllMessages(sessionKey), store.getTraceEvents(sessionKey)));
   });
 }
 
@@ -1812,41 +1556,51 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-app.whenReady().then(() => {
-  void appUpdateService.registerRunningProcess();
-  const dbPath = path.join(app.getPath("userData"), "session-search.sqlite");
-  store = new SessionStore(dbPath);
-  // Publish the live database path so the standalone MCP server can find it.
+app.whenReady().then(async () => {
+  await appUpdateService.registerRunningProcess();
+  postgresRuntime = await startPostgresRuntime({ userDataPath: app.getPath("userData") });
+  postgresDatabase = PostgresDatabase.connect(postgresRuntime.connectionUrl, {
+    migrations: POSTGRES_MIGRATIONS,
+  });
+  await postgresDatabase.initialize();
+  store = new SessionStore(postgresDatabase);
+  // Publish the live endpoint so standalone MCP clients use the same store.
   try {
-    writeDbPointer(dbPath);
+    writeDatabaseUrlPointer(postgresRuntime.connectionUrl);
   } catch {
-    // Non-fatal: the MCP server can still be pointed at the DB via env var.
+    // Non-fatal: the MCP server can still use AGENT_RECALL_DATABASE_URL.
   }
   try {
     ensureAgentRecallMcpPreference();
   } catch (error) {
     console.error(`Failed to configure session search MCP: ${error instanceof Error ? error.message : String(error)}`);
   }
-  providerService.migrateLegacyKeys();
-  pruneDisabledOptionalSources(getSettings());
+  await providerService.migrateLegacyKeys();
+  await pruneDisabledOptionalSources(getSettings());
   automationService = createAutomationService();
   registerIpc();
   createApplicationMenu();
   createWindow();
-  void automationService.initialize();
   createTray();
   void appUpdateService.showPreviousUpdateResult();
   const shortcut = getSettings().globalShortcut;
   if (!registerAppGlobalShortcut(shortcut)) {
     console.error(`Global shortcut ${globalShortcutLabel(shortcut)} could not be registered.`);
   }
-  ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
+  void ensureRemoteEnvironmentLifecycle().startEnabledEnvironments();
   void providerService.restoreCodexChatProxy();
   setTimeout(() => void runIndexSync(), INITIAL_INDEX_DELAY_MS);
   startAutoIndexRefresh();
   skillService.startUsageRefresh();
   remoteSessionService.startQueue();
   appUpdateService.scheduleInitialCheck();
+}).catch(async (error) => {
+  console.error(`Failed to start AgentRecall: ${error instanceof Error ? error.message : String(error)}`);
+  await postgresDatabase?.close().catch(() => undefined);
+  await postgresRuntime?.stop().catch(() => undefined);
+  postgresDatabase = null;
+  postgresRuntime = null;
+  app.quit();
 });
 
 app.on("window-all-closed", () => {
@@ -1858,26 +1612,32 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", (event) => {
-  if (automationService && !automationQuitReady) {
-    event.preventDefault();
-    void automationService.shutdown().catch((error) => {
-      console.error(`Failed to stop AgentRecall automation cleanly: ${error instanceof Error ? error.message : String(error)}`);
-    }).finally(() => {
-      automationQuitReady = true;
-      app.quit();
-    });
-    return;
-  }
-  void appUpdateService.clearRunningProcess();
+  if (automationQuitReady) return;
+  event.preventDefault();
   stopAutoIndexRefresh();
   skillService.stopUsageRefresh();
   remoteSessionService.stopQueue();
   remoteEnvironmentLifecycle?.stopAll();
-  void providerService.stopCodexChatProxy();
   disposeAutomationIpc?.();
   disposeAutomationIpc = null;
   disposeTeamChatIpc?.();
   disposeTeamChatIpc = null;
   globalShortcut.unregisterAll();
-  store?.close();
+  void Promise.allSettled([
+    appUpdateService.clearRunningProcess(),
+    automationService?.shutdown() ?? Promise.resolve(),
+    providerService.stopCodexChatProxy(),
+  ]).then(async () => {
+    await postgresDatabase?.close().catch((error) => {
+      console.error(`Failed to close AgentRecall data store: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    postgresDatabase = null;
+    await postgresRuntime?.stop().catch((error) => {
+      console.error(`Failed to stop AgentRecall PostgreSQL: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    postgresRuntime = null;
+  }).finally(() => {
+    automationQuitReady = true;
+    app.quit();
+  });
 });

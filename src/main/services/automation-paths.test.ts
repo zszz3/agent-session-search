@@ -5,7 +5,7 @@ import { resolveAutomationPaths } from "./automation-paths";
 describe("resolveAutomationPaths", () => {
   it("keeps automation data separate on macOS-style paths", () => {
     expect(resolveAutomationPaths("/tmp/AgentRecall", path.posix)).toEqual({
-      databasePath: "/tmp/AgentRecall/automation.db",
+      fileStoragePath: "/tmp/AgentRecall/automation/state.json",
       channelsPath: "/tmp/AgentRecall/runtime-channels.json",
       discoveryPath: "/tmp/AgentRecall/automation-mcp-bridge.json",
       bundledSkillsPath: "/tmp/AgentRecall/automation-skills",
@@ -14,7 +14,7 @@ describe("resolveAutomationPaths", () => {
 
   it("uses native separators for Windows user-data paths", () => {
     expect(resolveAutomationPaths("C:\\Users\\dev\\AppData\\Roaming\\AgentRecall", path.win32)).toEqual({
-      databasePath: "C:\\Users\\dev\\AppData\\Roaming\\AgentRecall\\automation.db",
+      fileStoragePath: "C:\\Users\\dev\\AppData\\Roaming\\AgentRecall\\automation\\state.json",
       channelsPath: "C:\\Users\\dev\\AppData\\Roaming\\AgentRecall\\runtime-channels.json",
       discoveryPath: "C:\\Users\\dev\\AppData\\Roaming\\AgentRecall\\automation-mcp-bridge.json",
       bundledSkillsPath: "C:\\Users\\dev\\AppData\\Roaming\\AgentRecall\\automation-skills",

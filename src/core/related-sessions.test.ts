@@ -1,128 +1,148 @@
-import { createRequire } from "node:module";
-import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PostgresDatabase } from "./postgres/database";
+import { POSTGRES_MIGRATIONS } from "./postgres/schema";
+import { PostgresSessionRepository } from "./postgres/session-repository";
+import { PGliteTestPool } from "./postgres/test-pglite";
 import { findRelatedSessions } from "./related-sessions";
-import { migrateSessionStore } from "./store/schema";
-
-const require = createRequire(import.meta.url);
-const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
+import type { IndexedSession, SessionSource } from "./types";
 
 const DAY = 24 * 60 * 60 * 1000;
 const BASE_TIME = 1_720_000_000_000;
 
-function setupDb(): DatabaseSyncType {
-  const db = new DatabaseSync(":memory:");
-  migrateSessionStore(db);
-  return db;
-}
-
-function insertSession(
-  db: DatabaseSyncType,
-  sessionKey: string,
-  overrides: { title?: string; source?: string; project?: string; timestamp?: number } = {},
-): void {
-  db.prepare(
-    `INSERT INTO sessions (
-       session_key, raw_id, source, environment_id, project_path, file_path,
-       original_title, first_question, timestamp, file_mtime_ms, file_size
-     ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, 0, 0)`,
-  ).run(
-    sessionKey,
-    sessionKey,
-    overrides.source ?? "codex-cli",
-    overrides.project ?? "/work/app",
-    `/tmp/${sessionKey}.jsonl`,
-    overrides.title ?? "Untitled",
-    overrides.title ?? "Untitled",
-    overrides.timestamp ?? BASE_TIME,
-  );
-}
-
-function addTag(db: DatabaseSyncType, sessionKey: string, tagName: string): void {
-  db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run(tagName);
-  const tag = db.prepare("SELECT id FROM tags WHERE name = ?").get(tagName) as { id: number };
-  db.prepare("INSERT OR IGNORE INTO session_tags (session_key, tag_id) VALUES (?, ?)").run(sessionKey, tag.id);
-}
-
 describe("findRelatedSessions", () => {
-  it("returns empty for an unknown session", () => {
-    const db = setupDb();
-    expect(findRelatedSessions(db, "missing")).toEqual([]);
+  let database: PostgresDatabase;
+  let sessions: PostgresSessionRepository;
+
+  beforeEach(async () => {
+    database = new PostgresDatabase(new PGliteTestPool(), {
+      migrationLock: false,
+      migrations: POSTGRES_MIGRATIONS,
+    });
+    await database.initialize();
+    sessions = new PostgresSessionRepository(database);
   });
 
-  it("ranks same-project sessions higher", () => {
-    const db = setupDb();
-    insertSession(db, "target", { project: "/work/app" });
-    insertSession(db, "same-project", { project: "/work/app", timestamp: BASE_TIME + 30 * DAY });
-    insertSession(db, "other-project", { project: "/work/other", timestamp: BASE_TIME + 30 * DAY });
-
-    const related = findRelatedSessions(db, "target");
-    expect(related.map((r) => r.sessionKey)).toContain("same-project");
-    const sameProject = related.find((r) => r.sessionKey === "same-project");
-    expect(sameProject!.score).toBeGreaterThanOrEqual(30);
+  afterEach(async () => {
+    await database.close();
   });
 
-  it("adds score for shared tags", () => {
-    const db = setupDb();
-    insertSession(db, "target", {});
-    insertSession(db, "tagged-peer", { timestamp: BASE_TIME + 30 * DAY });
-    addTag(db, "target", "auth");
-    addTag(db, "tagged-peer", "auth");
+  async function insertSession(
+    sessionKey: string,
+    overrides: {
+      title?: string;
+      source?: SessionSource;
+      project?: string;
+      timestamp?: number;
+    } = {},
+  ): Promise<void> {
+    const session: IndexedSession = {
+      sessionKey,
+      rawId: sessionKey,
+      source: overrides.source ?? "codex-cli",
+      projectPath: overrides.project ?? "/work/app",
+      filePath: `/synthetic/${sessionKey}.jsonl`,
+      originalTitle: overrides.title ?? "Untitled",
+      firstQuestion: overrides.title ?? "Untitled",
+      timestamp: overrides.timestamp ?? BASE_TIME,
+      fileMtimeMs: 0,
+      fileSize: 0,
+      prUrl: null,
+      prNumber: null,
+    };
+    await sessions.upsertIndexedSession(session, []);
+  }
 
-    const related = findRelatedSessions(db, "target");
-    const peer = related.find((r) => r.sessionKey === "tagged-peer");
-    expect(peer).toBeDefined();
-    expect(peer!.sharedTags).toContain("auth");
+  it("returns empty for an unknown session", async () => {
+    await expect(findRelatedSessions(database, "missing")).resolves.toEqual([]);
+  });
+
+  it("ranks same-project sessions higher", async () => {
+    await insertSession("target", { project: "/work/app" });
+    await insertSession("same-project", {
+      project: "/work/app",
+      timestamp: BASE_TIME + 30 * DAY,
+    });
+    await insertSession("other-project", {
+      project: "/work/other",
+      timestamp: BASE_TIME + 30 * DAY,
+    });
+
+    const related = await findRelatedSessions(database, "target");
+    expect(related.map((item) => item.sessionKey)).toContain("same-project");
+    expect(related.find((item) => item.sessionKey === "same-project")!.score)
+      .toBeGreaterThanOrEqual(30);
+  });
+
+  it("adds score for shared tags", async () => {
+    await insertSession("target");
+    await insertSession("tagged-peer", { timestamp: BASE_TIME + 30 * DAY });
+    await sessions.addTag("target", "auth");
+    await sessions.addTag("tagged-peer", "auth");
+
+    const peer = (await findRelatedSessions(database, "target"))
+      .find((item) => item.sessionKey === "tagged-peer");
+    expect(peer).toMatchObject({
+      sharedTags: ["auth"],
+      score: expect.any(Number),
+    });
     expect(peer!.score).toBeGreaterThanOrEqual(20);
   });
 
-  it("rewards temporal proximity within seven days", () => {
-    const db = setupDb();
-    insertSession(db, "target", { title: "Alpha topic" });
-    insertSession(db, "recent", { title: "Beta subject", project: "/work/other", source: "claude-cli", timestamp: BASE_TIME + 2 * DAY });
-    insertSession(db, "old", { title: "Gamma matter", project: "/work/other", source: "claude-cli", timestamp: BASE_TIME + 30 * DAY });
+  it("rewards temporal proximity within seven days", async () => {
+    await insertSession("target", { title: "Alpha topic" });
+    await insertSession("recent", {
+      title: "Beta subject",
+      project: "/work/other",
+      source: "claude-cli",
+      timestamp: BASE_TIME + 2 * DAY,
+    });
+    await insertSession("old", {
+      title: "Gamma matter",
+      project: "/work/other",
+      source: "claude-cli",
+      timestamp: BASE_TIME + 30 * DAY,
+    });
 
-    const related = findRelatedSessions(db, "target");
-    const recent = related.find((r) => r.sessionKey === "recent");
-    const old = related.find((r) => r.sessionKey === "old");
-    // recent gets +15 time bonus; old gets nothing (different project/source, outside window)
-    expect(recent).toBeDefined();
-    expect(recent!.score).toBeGreaterThanOrEqual(15);
-    expect(old).toBeUndefined();
+    const related = await findRelatedSessions(database, "target");
+    expect(related.find((item) => item.sessionKey === "recent")!.score)
+      .toBeGreaterThanOrEqual(15);
+    expect(related.find((item) => item.sessionKey === "old")).toBeUndefined();
   });
 
-  it("rewards title keyword overlap", () => {
-    const db = setupDb();
-    insertSession(db, "target", { title: "Fix login redirect bug" });
-    insertSession(db, "keyword-peer", { title: "Debug login redirect issue", timestamp: BASE_TIME + 30 * DAY });
+  it("rewards title keyword overlap", async () => {
+    await insertSession("target", { title: "Fix login redirect bug" });
+    await insertSession("keyword-peer", {
+      title: "Debug login redirect issue",
+      timestamp: BASE_TIME + 30 * DAY,
+    });
 
-    const related = findRelatedSessions(db, "target");
-    const peer = related.find((r) => r.sessionKey === "keyword-peer");
+    const peer = (await findRelatedSessions(database, "target"))
+      .find((item) => item.sessionKey === "keyword-peer");
     expect(peer).toBeDefined();
     expect(peer!.score).toBeGreaterThanOrEqual(10);
   });
 
-  it("excludes hidden sessions and the target itself", () => {
-    const db = setupDb();
-    insertSession(db, "target", {});
-    insertSession(db, "hidden-peer", {});
-    db.prepare("UPDATE sessions SET hidden = 1 WHERE session_key = 'hidden-peer'").run();
+  it("excludes hidden sessions and the target itself", async () => {
+    await insertSession("target");
+    await insertSession("hidden-peer");
+    await sessions.setHidden("hidden-peer", true);
 
-    const related = findRelatedSessions(db, "target");
-    expect(related.every((r) => r.sessionKey !== "target")).toBe(true);
-    expect(related.every((r) => r.sessionKey !== "hidden-peer")).toBe(true);
+    const related = await findRelatedSessions(database, "target");
+    expect(related.every((item) => item.sessionKey !== "target")).toBe(true);
+    expect(related.every((item) => item.sessionKey !== "hidden-peer")).toBe(true);
   });
 
-  it("respects the limit and sorts by score", () => {
-    const db = setupDb();
-    insertSession(db, "target", {});
-    for (let i = 0; i < 12; i++) {
-      insertSession(db, `peer-${i}`, { timestamp: BASE_TIME + (i + 1) * DAY });
+  it("respects the limit and sorts by score", async () => {
+    await insertSession("target");
+    for (let index = 0; index < 12; index += 1) {
+      await insertSession(`peer-${index}`, {
+        timestamp: BASE_TIME + (index + 1) * DAY,
+      });
     }
-    const related = findRelatedSessions(db, "target", 5);
+    const related = await findRelatedSessions(database, "target", 5);
     expect(related).toHaveLength(5);
-    for (let i = 1; i < related.length; i++) {
-      expect(related[i - 1].score).toBeGreaterThanOrEqual(related[i].score);
+    for (let index = 1; index < related.length; index += 1) {
+      expect(related[index - 1].score).toBeGreaterThanOrEqual(related[index].score);
     }
   });
 });

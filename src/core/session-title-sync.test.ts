@@ -43,8 +43,8 @@ describe("session title synchronization", () => {
     let current = session();
 
     await setSessionCustomTitleAndSyncTerminal(current.sessionKey, "Renamed", {
-      getSession: () => current,
-      setCustomTitle: (_key, title) => {
+      getSession: async () => current,
+      setCustomTitle: async (_key, title) => {
         calls.push(`persist:${title}`);
         current = { ...current, customTitle: title, displayTitle: title || current.originalTitle };
       },
@@ -68,8 +68,8 @@ describe("session title synchronization", () => {
 
     await expect(
       setSessionCustomTitleAndSyncTerminal(current.sessionKey, "Renamed", {
-        getSession: () => current,
-        setCustomTitle: () => {
+        getSession: async () => current,
+        setCustomTitle: async () => {
           persisted = true;
           current.customTitle = "Renamed";
           current.displayTitle = "Renamed";
@@ -94,8 +94,8 @@ describe("session title synchronization", () => {
     const syncedTitles: string[] = [];
 
     await setSessionCustomTitleAndSyncTerminal(current.sessionKey, null, {
-      getSession: () => current,
-      setCustomTitle: () => {
+      getSession: async () => current,
+      setCustomTitle: async () => {
         current = { ...current, customTitle: null, displayTitle: current.originalTitle };
       },
       loadLiveSessions: async () => ({
@@ -117,8 +117,8 @@ describe("session title synchronization", () => {
     let persisted = false;
 
     await setSessionCustomTitleAndSyncTerminal(current.sessionKey, "Renamed", {
-      getSession: () => current,
-      setCustomTitle: () => {
+      getSession: async () => current,
+      setCustomTitle: async () => {
         persisted = true;
       },
       loadLiveSessions,
@@ -134,8 +134,8 @@ describe("session title synchronization", () => {
     const setLiveTerminalTitle = vi.fn();
 
     await setSessionCustomTitleAndSyncTerminal(current.sessionKey, "Renamed", {
-      getSession: () => current,
-      setCustomTitle: () => {
+      getSession: async () => current,
+      setCustomTitle: async () => {
         current.customTitle = "Renamed";
         current.displayTitle = "Renamed";
       },
@@ -150,7 +150,7 @@ describe("session title synchronization", () => {
     const setCustomTitle = vi.fn();
 
     await setSessionCustomTitleAndSyncTerminal("missing", "Renamed", {
-      getSession: () => null,
+      getSession: async () => null,
       setCustomTitle,
       loadLiveSessions: vi.fn(),
       setLiveTerminalTitle: vi.fn(),
@@ -165,8 +165,8 @@ describe("session title synchronization", () => {
     const onSyncError = vi.fn();
 
     await setSessionCustomTitleAndSyncTerminal(current.sessionKey, "Renamed", {
-      getSession: () => current,
-      setCustomTitle: () => {
+      getSession: async () => current,
+      setCustomTitle: async () => {
         current.customTitle = "Renamed";
         current.displayTitle = "Renamed";
       },

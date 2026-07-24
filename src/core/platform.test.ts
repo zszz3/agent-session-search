@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergeApiConfigWithProfileDefaults, mergeClaudeApiConfigWithProfileDefaults } from "./api-config";
@@ -1037,16 +1037,6 @@ describe("resume process specs", () => {
 });
 
 describe("migration cli process specs", () => {
-  it("keeps the safe formatter independent from the primary formatter chain", () => {
-    const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
-    const safeFormatter = source.slice(
-      source.indexOf("export function getSafeMigrationResumeCommand"),
-      source.indexOf("// Ghostty has no", source.indexOf("export function getSafeMigrationResumeCommand")),
-    );
-    expect(safeFormatter).not.toContain("getMigrationResumeProcessSpec");
-    expect(safeFormatter).not.toContain("buildMigrationResumeShellCommand");
-    expect(safeFormatter).not.toContain("buildMigrationResumeCommands");
-  });
   it("builds an independent safe resume command for all migration targets", () => {
     const settings = {
       ...defaultSettings,

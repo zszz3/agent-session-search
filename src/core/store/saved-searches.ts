@@ -1,5 +1,5 @@
 import type { SearchOptions } from "../types";
-import type { SessionStoreDatabase } from "./database";
+import type { PostgresQueryable } from "../postgres/database";
 
 export interface SavedSearch {
   id: number;
@@ -10,58 +10,73 @@ export interface SavedSearch {
   useCount: number;
 }
 
-interface SavedSearchRow {
+interface SavedSearchRow extends Record<string, unknown> {
   id: number;
   name: string;
-  options_json: string;
-  created_at: number;
-  last_used_at: number | null;
+  options: SearchOptions | string;
+  created_at: Date | string;
+  last_used_at: Date | string | null;
   use_count: number;
 }
 
 export class SavedSearchStore {
-  constructor(private readonly db: SessionStoreDatabase) {}
+  constructor(private readonly database: PostgresQueryable) {}
 
-  listSavedSearches(): SavedSearch[] {
-    const rows = this.db
-      .prepare("SELECT id, name, options_json, created_at, last_used_at, use_count FROM saved_searches ORDER BY use_count DESC, last_used_at DESC, created_at DESC")
-      .all() as unknown as SavedSearchRow[];
-    return rows.map((row) => this.hydrate(row));
+  async listSavedSearches(): Promise<SavedSearch[]> {
+    const result = await this.database.query<SavedSearchRow>(
+      `select id, name, options, created_at, last_used_at, use_count
+       from agent_recall.saved_searches
+       order by use_count desc, last_used_at desc nulls last, created_at desc`,
+    );
+    return result.rows.map((row) => this.hydrate(row));
   }
 
-  getSavedSearch(id: number): SavedSearch | null {
-    const row = this.db
-      .prepare("SELECT id, name, options_json, created_at, last_used_at, use_count FROM saved_searches WHERE id = ?")
-      .get(id) as SavedSearchRow | undefined;
+  async getSavedSearch(id: number): Promise<SavedSearch | null> {
+    const result = await this.database.query<SavedSearchRow>(
+      `select id, name, options, created_at, last_used_at, use_count
+       from agent_recall.saved_searches
+       where id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
     return row ? this.hydrate(row) : null;
   }
 
-  createSavedSearch(name: string, options: SearchOptions): SavedSearch {
+  async createSavedSearch(name: string, options: SearchOptions): Promise<SavedSearch> {
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Saved search name is required.");
-    const now = Date.now();
-    const result = this.db
-      .prepare("INSERT INTO saved_searches (name, options_json, created_at, use_count) VALUES (?, ?, ?, 0)")
-      .run(trimmed, JSON.stringify(options), now);
-    const id = Number(result.lastInsertRowid);
-    return this.getSavedSearch(id) as SavedSearch;
+    const result = await this.database.query<SavedSearchRow>(
+      `insert into agent_recall.saved_searches (name, options, created_at, use_count)
+       values ($1, $2::jsonb, now(), 0)
+       returning id, name, options, created_at, last_used_at, use_count`,
+      [trimmed, JSON.stringify(options)],
+    );
+    return this.hydrate(result.rows[0]);
   }
 
-  deleteSavedSearch(id: number): boolean {
-    const result = this.db.prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
-    return result.changes > 0;
+  async deleteSavedSearch(id: number): Promise<boolean> {
+    const result = await this.database.query(
+      "delete from agent_recall.saved_searches where id = $1",
+      [id],
+    );
+    return result.rowCount > 0;
   }
 
-  touchSavedSearch(id: number): void {
-    this.db
-      .prepare("UPDATE saved_searches SET last_used_at = ?, use_count = use_count + 1 WHERE id = ?")
-      .run(Date.now(), id);
+  async touchSavedSearch(id: number): Promise<void> {
+    await this.database.query(
+      `update agent_recall.saved_searches
+       set last_used_at = now(), use_count = use_count + 1
+       where id = $1`,
+      [id],
+    );
   }
 
   private hydrate(row: SavedSearchRow): SavedSearch {
     let options: SearchOptions = {};
     try {
-      options = JSON.parse(row.options_json) as SearchOptions;
+      options = typeof row.options === "string"
+        ? JSON.parse(row.options) as SearchOptions
+        : row.options;
     } catch {
       options = {};
     }
@@ -69,9 +84,13 @@ export class SavedSearchStore {
       id: row.id,
       name: row.name,
       options,
-      createdAt: row.created_at,
-      lastUsedAt: row.last_used_at,
+      createdAt: timestamp(row.created_at),
+      lastUsedAt: row.last_used_at === null ? null : timestamp(row.last_used_at),
       useCount: row.use_count,
     };
   }
+}
+
+function timestamp(value: Date | string): number {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
 }

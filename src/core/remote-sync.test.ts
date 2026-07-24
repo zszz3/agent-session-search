@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
-import { createInMemoryStore } from "./session-store";
+import { createInMemoryStore } from "./postgres/test-session-store";
 import {
   buildRemoteSyncSshArgs,
   encodeRemotePayloadForTest,
@@ -80,7 +80,7 @@ describe("remote sync", () => {
 
   it("limits WSL indexing to Codex and Claude and uses a WSL-scoped session key", async () => {
     const store = createInMemoryStore();
-    const environment = upsertWslEnvironment(store);
+    const environment = await upsertWslEnvironment(store);
     let collectorCommand = "";
     try {
       await syncRemoteEnvironment(store, environment, {
@@ -97,9 +97,10 @@ describe("remote sync", () => {
       const collectorScript = decodeCollectorScript(collectorCommand);
       expect(collectorScript).not.toContain("codewiz_db = home");
       expect(collectorScript).not.toContain("emit_codewiz_summaries(codewiz_db");
-      expect(store.getSession("wsl:wsl-ubuntu:codex-cli:same")).toBeTruthy();
-      expect(store.getSession("wsl:wsl-ubuntu:claude-cli:same-claude")).toBeTruthy();
-      expect(store.searchSessions({ environmentId: environment.id }).map((session) => session.source)).not.toContain("codebuddy-cli");
+      await expect(store.getSession("wsl:wsl-ubuntu:codex-cli:same")).resolves.toBeTruthy();
+      await expect(store.getSession("wsl:wsl-ubuntu:claude-cli:same-claude")).resolves.toBeTruthy();
+      expect((await store.searchSessions({ environmentId: environment.id }))
+        .map((session) => session.source)).not.toContain("codebuddy-cli");
     } finally {
       store.close();
     }
@@ -107,7 +108,7 @@ describe("remote sync", () => {
 
   it("collects summaries from all five CLI sources and keeps same raw IDs isolated by source", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-five-sources-"));
     const writeJsonl = (filePath: string, rows: unknown[]) => {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -230,9 +231,9 @@ describe("remote sync", () => {
         { index: 0, timestamp: 1_752_573_601_000 },
         { index: 1, timestamp: 1_752_573_602_000 },
       ]);
-      expect(store.getSession("ssh:ssh-devbox:claude-cli:same-id")).not.toBeNull();
-      expect(store.getSession("ssh:ssh-devbox:tclaude-cli:same-id")).not.toBeNull();
-      expect(store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-1")?.tokenUsage).toEqual({
+      expect(await store.getSession("ssh:ssh-devbox:claude-cli:same-id")).not.toBeNull();
+      expect(await store.getSession("ssh:ssh-devbox:tclaude-cli:same-id")).not.toBeNull();
+      expect((await store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-1"))?.tokenUsage).toEqual({
         inputTokens: 580,
         outputTokens: 140,
         cachedInputTokens: 20,
@@ -240,14 +241,14 @@ describe("remote sync", () => {
         totalTokens: 750,
       });
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it("gates optional remote summaries and collector descriptors by the current source settings", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const summary = `${JSON.stringify({
       kind: "claude-project",
       source: "tclaude-cli",
@@ -269,7 +270,7 @@ describe("remote sync", () => {
         return summary;
       },
     });
-    expect(store.getSession("ssh:ssh-devbox:tclaude-cli:optional-tclaude")).toBeNull();
+    expect(await store.getSession("ssh:ssh-devbox:tclaude-cli:optional-tclaude")).toBeNull();
     expect(disabledScript).not.toContain('"tclaude-cli", home / ".tclaude"');
     expect(disabledScript).not.toContain('load_claude_index(".tclaude")');
     expect(disabledScript).not.toContain('load_codex_titles(".tcodex")');
@@ -282,16 +283,16 @@ describe("remote sync", () => {
         return summary;
       },
     });
-    expect(store.getSession("ssh:ssh-devbox:tclaude-cli:optional-tclaude")).not.toBeNull();
+    expect(await store.getSession("ssh:ssh-devbox:tclaude-cli:optional-tclaude")).not.toBeNull();
     expect(enabledScript).toContain('"tclaude-cli", home / ".tclaude"');
     expect(enabledScript).toContain('load_claude_index(".tclaude")');
     expect(enabledScript).not.toContain('load_codex_titles(".tcodex")');
-    store.close();
+    await store.close();
   });
 
   it("loads TCodex titles only when the TCodex source is enabled", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     let script = "";
     await syncRemoteEnvironment(store, environment, {
       enabledOptionalSources: ["tcodex-cli"],
@@ -302,7 +303,7 @@ describe("remote sync", () => {
     });
     expect(script).toContain('load_codex_titles(".tcodex")');
     expect(script).not.toContain('load_claude_index(".tclaude")');
-    store.close();
+    await store.close();
   });
 
   it.each([
@@ -310,10 +311,10 @@ describe("remote sync", () => {
     ["claude-project", "claude-cli", "claude"],
   ] as const)("removes the legacy %s SSH key after indexing the source-level replacement", async (kind, source, legacyFamily) => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const rawId = `legacy-${legacyFamily}`;
     const legacyKey = `ssh:ssh-devbox:${legacyFamily}:${rawId}`;
-    store.upsertIndexedSession({
+    await store.upsertIndexedSession({
       sessionKey: legacyKey,
       rawId,
       source,
@@ -330,18 +331,18 @@ describe("remote sync", () => {
       environmentKind: environment.kind,
       environmentLabel: environment.label,
     }, []);
-    store.setCustomTitle(legacyKey, "Legacy custom title");
-    store.setFavorited(legacyKey, true);
-    store.setPinned(legacyKey, true);
-    store.setHidden(legacyKey, true);
-    store.setAiSummary(legacyKey, "Legacy AI summary", "legacy-model");
-    store.addTag(legacyKey, "legacy-tag");
+    await store.setCustomTitle(legacyKey, "Legacy custom title");
+    await store.setFavorited(legacyKey, true);
+    await store.setPinned(legacyKey, true);
+    await store.setHidden(legacyKey, true);
+    await store.setAiSummary(legacyKey, "Legacy AI summary", "legacy-model");
+    await store.addTag(legacyKey, "legacy-tag");
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-07-15T10:00:00Z"));
-      store.markOpened(legacyKey);
+      await store.markOpened(legacyKey);
       vi.setSystemTime(new Date("2026-07-15T11:00:00Z"));
-      store.markResumed(legacyKey);
+      await store.markResumed(legacyKey);
     } finally {
       vi.useRealTimers();
     }
@@ -360,7 +361,7 @@ describe("remote sync", () => {
         messageCount: 1,
       })}\n`,
     });
-    expect(store.getSession(`ssh:ssh-devbox:${source}:${rawId}`)).toMatchObject({
+    expect(await store.getSession(`ssh:ssh-devbox:${source}:${rawId}`)).toMatchObject({
       customTitle: "Legacy custom title",
       favorited: true,
       pinned: true,
@@ -370,8 +371,8 @@ describe("remote sync", () => {
       lastResumedAt: new Date("2026-07-15T11:00:00Z").getTime(),
       tags: ["legacy-tag"],
     });
-    expect(store.getSession(legacyKey)).toBeNull();
-    store.close();
+    expect(await store.getSession(legacyKey)).toBeNull();
+    await store.close();
   });
 
   it.each([
@@ -379,7 +380,7 @@ describe("remote sync", () => {
     [false, true],
   ])("OR-merges legacy %s and target %s boolean state while keeping target metadata", async (legacyState, targetState) => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const rawId = "existing-target";
     const legacyKey = `ssh:${environment.id}:codex:${rawId}`;
     const targetKey = `ssh:${environment.id}:codex-cli:${rawId}`;
@@ -400,20 +401,20 @@ describe("remote sync", () => {
       environmentKind: environment.kind,
       environmentLabel: environment.label,
     }, []);
-    seed(legacyKey, "Legacy");
-    store.setCustomTitle(legacyKey, "Legacy custom");
-    store.setFavorited(legacyKey, legacyState);
-    store.setPinned(legacyKey, legacyState);
-    store.setHidden(legacyKey, legacyState);
-    store.setAiSummary(legacyKey, "Legacy summary", "legacy-model");
-    store.addTag(legacyKey, "legacy-tag");
-    seed(targetKey, "Target");
-    store.setCustomTitle(targetKey, "Target custom");
-    store.setFavorited(targetKey, targetState);
-    store.setPinned(targetKey, targetState);
-    store.setHidden(targetKey, targetState);
-    store.setAiSummary(targetKey, "Target summary", "target-model");
-    store.addTag(targetKey, "target-tag");
+    await seed(legacyKey, "Legacy");
+    await store.setCustomTitle(legacyKey, "Legacy custom");
+    await store.setFavorited(legacyKey, legacyState);
+    await store.setPinned(legacyKey, legacyState);
+    await store.setHidden(legacyKey, legacyState);
+    await store.setAiSummary(legacyKey, "Legacy summary", "legacy-model");
+    await store.addTag(legacyKey, "legacy-tag");
+    await seed(targetKey, "Target");
+    await store.setCustomTitle(targetKey, "Target custom");
+    await store.setFavorited(targetKey, targetState);
+    await store.setPinned(targetKey, targetState);
+    await store.setHidden(targetKey, targetState);
+    await store.setAiSummary(targetKey, "Target summary", "target-model");
+    await store.addTag(targetKey, "target-tag");
 
     await syncRemoteEnvironment(store, environment, {
       runSsh: async () => `${JSON.stringify({
@@ -431,7 +432,7 @@ describe("remote sync", () => {
       })}\n`,
     });
 
-    expect(store.getSession(targetKey)).toMatchObject({
+    expect(await store.getSession(targetKey)).toMatchObject({
       customTitle: "Target custom",
       favorited: true,
       pinned: true,
@@ -439,13 +440,13 @@ describe("remote sync", () => {
       aiSummary: "Target summary",
       tags: ["legacy-tag", "target-tag"],
     });
-    expect(store.getSession(legacyKey)).toBeNull();
-    store.close();
+    expect(await store.getSession(legacyKey)).toBeNull();
+    await store.close();
   });
 
   it("continues collecting valid sources when optional directories are missing or contain damaged JSONL", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-damaged-optional-"));
     try {
       const codexDir = path.join(tempHome, ".codex", "sessions");
@@ -471,14 +472,14 @@ describe("remote sync", () => {
         expect.arrayContaining([expect.objectContaining({ rawId: "valid-base" })]),
       );
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it("limits the merged remote collector result to 2500 files across all enabled sources", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-limit-"));
     try {
       for (const [root, prefix, count] of [
@@ -509,14 +510,14 @@ describe("remote sync", () => {
       });
       expect(output.trim().split(/\r?\n/)).toHaveLength(2500);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it("indexes remote sessions returned by the ssh runner and updates sync status", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const output = encodeRemotePayloadForTest([validCodexPayload()]);
 
     const status = await syncRemoteEnvironment(store, environment, {
@@ -524,15 +525,15 @@ describe("remote sync", () => {
     });
 
     expect(status.indexed).toBe(1);
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.sessionKey)).toEqual([
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.sessionKey)).toEqual([
       "ssh:ssh-devbox:codex-cli:remote-codex",
     ]);
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({ syncState: "watching", lastError: null });
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({ syncState: "watching", lastError: null });
   });
 
   it("indexes lightweight remote session summaries without transferring file content", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const output = `${JSON.stringify({
       kind: "codex-session",
       path: "/home/me/.codex/sessions/rollout.jsonl",
@@ -551,7 +552,7 @@ describe("remote sync", () => {
       runSsh: async () => output,
     });
 
-    const session = store.getSession("ssh:ssh-devbox:codex-cli:remote-codex-summary");
+    const session = await store.getSession("ssh:ssh-devbox:codex-cli:remote-codex-summary");
     expect(status.indexed).toBe(1);
     expect(session).toMatchObject({
       originalTitle: "Remote Summary",
@@ -561,12 +562,12 @@ describe("remote sync", () => {
       projectPath: "/repo",
       fileSize: 2048,
     });
-    expect(store.getMessages("ssh:ssh-devbox:codex-cli:remote-codex-summary")).toEqual([]);
+    expect(await store.getMessages("ssh:ssh-devbox:codex-cli:remote-codex-summary")).toEqual([]);
   });
 
   it("stores token usage carried by lightweight remote summaries", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const output = `${JSON.stringify({
       kind: "codex-session",
       path: "/home/me/.codex/sessions/rollout.jsonl",
@@ -584,7 +585,7 @@ describe("remote sync", () => {
 
     await syncRemoteEnvironment(store, environment, { runSsh: async () => output });
 
-    expect(store.getSession("ssh:ssh-devbox:codex-cli:remote-codex-tokens")?.tokenUsage).toEqual({
+    expect((await store.getSession("ssh:ssh-devbox:codex-cli:remote-codex-tokens"))?.tokenUsage).toEqual({
       inputTokens: 100,
       outputTokens: 40,
       cachedInputTokens: 10,
@@ -595,7 +596,7 @@ describe("remote sync", () => {
 
   it("includes lightweight remote token events in ranged stats and dedupes local mirrors", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const now = new Date("2026-06-04T12:00:00Z").getTime();
     const todayEvent = {
       timestamp: new Date("2026-06-04T10:01:00Z").getTime(),
@@ -632,10 +633,10 @@ describe("remote sync", () => {
 
     await syncRemoteEnvironment(store, environment, { runSsh: async () => output });
 
-    expect(store.getStats({ period: "today" }, now).total.totalTokens).toBe(115);
-    expect(store.getStats({ period: "allTime" }, now).total.totalTokens).toBe(155);
+    expect((await store.getStats({ period: "today" }, now)).total.totalTokens).toBe(115);
+    expect((await store.getStats({ period: "allTime" }, now)).total.totalTokens).toBe(155);
 
-    store.upsertIndexedSession(
+    await store.upsertIndexedSession(
       {
         sessionKey: "codex:local-mirror",
         rawId: "local-mirror",
@@ -654,14 +655,14 @@ describe("remote sync", () => {
       [todayEvent],
     );
 
-    expect(store.getStats({ period: "today" }, now).total.totalTokens).toBe(115);
-    expect(store.getStats({ period: "allTime" }, now).total.totalTokens).toBe(155);
-    store.close();
+    expect((await store.getStats({ period: "today" }, now)).total.totalTokens).toBe(115);
+    expect((await store.getStats({ period: "allTime" }, now)).total.totalTokens).toBe(155);
+    await store.close();
   });
 
   it("includes lightweight remote message events in ranged stats and keeps old summaries compatible", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const now = new Date("2026-06-04T12:00:00Z").getTime();
     const summary = {
       kind: "codex-session",
@@ -684,24 +685,24 @@ describe("remote sync", () => {
       runSsh: async () => `${JSON.stringify({ ...summary, messageEvents })}\n`,
     });
 
-    expect(store.getStats({ period: "today" }, now).total).toMatchObject({ sessionCount: 1, messageCount: 1 });
-    expect(store.getStats({ period: "allTime" }, now).total.messageCount).toBe(2);
+    expect((await store.getStats({ period: "today" }, now)).total).toMatchObject({ sessionCount: 1, messageCount: 1 });
+    expect((await store.getStats({ period: "allTime" }, now)).total.messageCount).toBe(2);
 
     await syncRemoteEnvironment(store, environment, {
       runSsh: async () => `${JSON.stringify({ ...summary, mtimeMs: 101 })}\n`,
     });
-    expect(store.getStats({ period: "today" }, now).total.messageCount).toBe(1);
+    expect((await store.getStats({ period: "today" }, now)).total.messageCount).toBe(1);
 
     await syncRemoteEnvironment(store, environment, {
       runSsh: async () => `${JSON.stringify({ ...summary, mtimeMs: 102, messageCount: 0, messageEvents: [] })}\n`,
     });
-    expect(store.getStats({ period: "today" }, now).total.messageCount).toBe(0);
-    store.close();
+    expect((await store.getStats({ period: "today" }, now)).total.messageCount).toBe(0);
+    await store.close();
   });
 
   it("rejects malformed remote message events", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const output = `${JSON.stringify({
       kind: "codex-session",
       path: "/home/me/.codex/sessions/rollout.jsonl",
@@ -717,12 +718,12 @@ describe("remote sync", () => {
     })}\n`;
 
     await expect(syncRemoteEnvironment(store, environment, { runSsh: async () => output })).rejects.toThrow(/messageEvents/i);
-    store.close();
+    await store.close();
   });
 
   it("preserves remote token events when an older summary omits the field", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const now = new Date("2026-06-04T12:00:00Z").getTime();
     const summary = {
       kind: "codex-session",
@@ -754,13 +755,13 @@ describe("remote sync", () => {
       runSsh: async () => `${JSON.stringify(summary)}\n`,
     });
 
-    expect(store.getStats({ period: "today" }, now).total.totalTokens).toBe(115);
-    store.close();
+    expect((await store.getStats({ period: "today" }, now)).total.totalTokens).toBe(115);
+    await store.close();
   });
 
   it("rejects malformed remote token events", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const output = `${JSON.stringify({
       kind: "codex-session",
       path: "/home/me/.codex/sessions/rollout.jsonl",
@@ -786,12 +787,12 @@ describe("remote sync", () => {
     })}\n`;
 
     await expect(syncRemoteEnvironment(store, environment, { runSsh: async () => output })).rejects.toThrow(/tokenEvents/i);
-    store.close();
+    await store.close();
   });
 
   it("emits remote summary token usage from the collector script", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     let collectorCommand = "";
     await syncRemoteEnvironment(store, environment, {
       runSsh: async (_environment, remoteCommand) => {
@@ -806,7 +807,7 @@ describe("remote sync", () => {
 
   it("emits timestamped remote token events from the collector script", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-token-events-"));
     try {
       const sessionsDir = path.join(tempHome, ".codex", "sessions", "2026", "06", "04");
@@ -1048,14 +1049,14 @@ db.close()
         totalTokens: 1266,
       });
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it("fetches a remote session message page without transferring the full session payload", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const session = {
       sessionKey: "ssh:ssh-devbox:codex-cli:remote-codex-summary",
       rawId: "remote-codex-summary",
@@ -1108,7 +1109,7 @@ db.close()
 
   it("rejects invalid remote payload protocol output and records sync error", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
 
     await expect(
       syncRemoteEnvironment(store, environment, {
@@ -1116,8 +1117,8 @@ db.close()
       }),
     ).rejects.toThrow(/Invalid remote payload/i);
 
-    expect(store.searchSessions({ environmentId: "ssh-devbox" })).toEqual([]);
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.searchSessions({ environmentId: "ssh-devbox" })).toEqual([]);
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: expect.stringMatching(/Invalid remote payload/i),
     });
@@ -1125,7 +1126,7 @@ db.close()
 
   it("rejects malformed remote payload records instead of treating them as empty sessions", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const missingContent = JSON.stringify({ kind: "codex-session", path: "x", mtimeMs: 1, size: 1 });
 
     await expect(
@@ -1134,7 +1135,7 @@ db.close()
       }),
     ).rejects.toThrow(/remote payload/i);
 
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "error",
       lastError: expect.stringMatching(/remote payload/i),
     });
@@ -1142,7 +1143,7 @@ db.close()
 
   it("keeps existing indexed sessions when ssh fails", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     await syncRemoteEnvironment(store, environment, {
       runSsh: async () => encodeRemotePayloadForTest([validCodexPayload("seeded-codex")]),
     });
@@ -1154,22 +1155,22 @@ db.close()
         },
       }),
     ).rejects.toThrow("Permission denied");
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({ syncState: "error", lastError: "Permission denied" });
-    expect(store.searchSessions({ environmentId: "ssh-devbox" }).map((session) => session.sessionKey)).toEqual([
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({ syncState: "error", lastError: "Permission denied" });
+    expect((await store.searchSessions({ environmentId: "ssh-devbox" })).map((session) => session.sessionKey)).toEqual([
       "ssh:ssh-devbox:codex-cli:seeded-codex",
     ]);
   });
 
   it("treats an empty remote payload stream as a successful zero-session sync", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
 
     const status = await syncRemoteEnvironment(store, environment, {
       runSsh: async () => "",
     });
 
     expect(status).toEqual({ environmentId: "ssh-devbox", indexed: 0, error: null });
-    expect(store.getEnvironment("ssh-devbox")).toMatchObject({
+    expect(await store.getEnvironment("ssh-devbox")).toMatchObject({
       syncState: "watching",
       lastError: null,
       lastSyncedAt: expect.any(Number),
@@ -1178,7 +1179,7 @@ db.close()
 
   it("sends the remote collector as a single shell-safe python command", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     let capturedCommand = "";
 
     await syncRemoteEnvironment(store, environment, {
@@ -1196,7 +1197,7 @@ db.close()
 
   it("sends the remote collector as a manifest scanner without embedding session content", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     let capturedCommand = "";
 
     await syncRemoteEnvironment(store, environment, {
@@ -1216,7 +1217,7 @@ db.close()
 
   it("counts remote summary messages with the same parser used for on-demand paging", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
 
     let collectorCommand = "";
     await syncRemoteEnvironment(store, environment, {
@@ -1255,7 +1256,7 @@ db.close()
 
   it("keeps remote CodeBuddy summary counts and tail paging aligned with the local adapter", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-codebuddy-parser-"));
     const filePath = path.join(tempHome, ".codebuddy", "projects", "repo", "codebuddy-parser.jsonl");
     const userTimestamp = Date.UTC(2026, 6, 15, 10, 0, 0);
@@ -1278,7 +1279,7 @@ db.close()
           { encoding: "utf8", env: { ...process.env, HOME: tempHome } },
         ),
       });
-      const summary = store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-parser");
+      const summary = await store.getSession("ssh:ssh-devbox:codebuddy-cli:codebuddy-parser");
       expect(summary).toMatchObject({ messageCount: 3, firstQuestion: "remote question" });
 
       const session = summary as SessionSearchResult;
@@ -1296,14 +1297,14 @@ db.close()
         ["assistant", "remote answer"],
       ]);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it("fetches one remote session file on demand without exposing the path to the remote shell", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const session = {
       source: "codex-cli",
       filePath: "/home/me/private sessions/rollout.jsonl",
@@ -1330,7 +1331,7 @@ db.close()
     ["qoder", "qoder-project"],
   ] as const)("fetches %s files with an explicit source", async (source, kind) => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-file-"));
     const filePath = path.join(tempDir, `private ${source}.jsonl`);
     fs.writeFileSync(filePath, `${JSON.stringify({ type: "message" })}\n`, "utf8");
@@ -1351,7 +1352,7 @@ db.close()
       expect(result).toMatchObject({ source, kind, path: filePath });
       expect(capturedCommand).not.toContain(filePath);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -1395,7 +1396,7 @@ db.close()
     ],
   ] as const)("fetches the tail message page for %s", async (source, rows, expectedTimestamps) => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-page-"));
     const filePath = path.join(tempDir, `${source}.jsonl`);
     fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n"), "utf8");
@@ -1415,7 +1416,7 @@ db.close()
       ]);
       expect(messages.map((message) => message.timestamp)).toEqual(expectedTimestamps);
     } finally {
-      store.close();
+      await store.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -1453,9 +1454,9 @@ db.close()
     expect(message).not.toContain("contentBase64");
   });
 
-  it("builds noninteractive ssh args before the destination terminator and exposes a finite exec timeout", () => {
+  it("builds noninteractive ssh args before the destination terminator and exposes a finite exec timeout", async () => {
     const store = createInMemoryStore();
-    const environment = upsertSshEnvironment(store);
+    const environment = await upsertSshEnvironment(store);
     const args = buildRemoteSyncSshArgs(environment, "echo ok");
 
     expect(args.slice(0, 4)).toEqual(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);

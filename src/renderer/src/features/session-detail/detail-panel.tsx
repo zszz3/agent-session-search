@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { ArrowRightLeft, ChevronDown, ChevronUp, CloudUpload, Container, Copy, Download, Edit3, FolderOpen, Laptop, Play, Search, Server, Sparkles, Star, Tag, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { formatMessageTime } from "../../../../core/format-session";
-import type { SessionMessage, SessionSearchResult, SessionTraceEvent } from "../../../../core/types";
+import type {
+  SessionMessage,
+  SessionSearchResult,
+  SessionTraceEvent,
+  SessionTurnDetail,
+  SessionTurnSummary,
+} from "../../../../core/types";
 import { formatTokenCount } from "../../format-count";
 import { hasTokenUsage } from "../../session-ui";
 import { localize, type LanguageMode } from "../../language";
@@ -22,6 +28,7 @@ import {
   sourceUiFamily,
 } from "../../session-ui";
 import { readInitialToolEventsVisibility, storeToolEventsVisibility } from "../../tool-events-visibility";
+import { TurnAccordion } from "./turn-accordion";
 import type { RelatedSession } from "../../../../core/related-sessions";
 import { RelatedSessions } from "./related-sessions";
 
@@ -107,6 +114,10 @@ function conversationRoleEmptyLabel(filter: Exclude<ConversationRoleFilter, "all
 
 export function DetailPanel({
   session,
+  turns,
+  turnsLoading,
+  matchedTurnId,
+  onLoadTurn,
   messages,
   matchedContextMessages,
   matchedMessageIndex,
@@ -149,6 +160,10 @@ export function DetailPanel({
   onOpenRelatedSession,
 }: {
   session: SessionSearchResult;
+  turns: SessionTurnSummary[] | null;
+  turnsLoading: boolean;
+  matchedTurnId: string | null;
+  onLoadTurn: (turnId: string) => Promise<SessionTurnDetail | null>;
   messages: SessionMessage[];
   matchedContextMessages: SessionMessage[];
   matchedMessageIndex: number | null;
@@ -193,12 +208,15 @@ export function DetailPanel({
   const context = matchedContextMessages;
   const actionRunning = actionStatus?.kind === "running";
   const l = (en: string, zh: string) => localize(language, en, zh);
+  const traceCount = turns === null
+    ? traceEvents.length
+    : turns.reduce((total, turn) => total + turn.spanCount, 0);
   const detailMeta = [
     session.projectPath || l("No project", "无项目"),
     new Date(session.timestamp).toLocaleString(),
     l(`${session.messageCount} messages`, `${session.messageCount} 条消息`),
     ...(hasTokenUsage(session.tokenUsage) ? [l(`${formatTokenCount(session.tokenUsage.totalTokens)} tokens`, `${formatTokenCount(session.tokenUsage.totalTokens)} token`)] : []),
-    ...(traceEvents.length > 0 ? [l(`${traceEvents.length} trace events`, `${traceEvents.length} 条轨迹`)] : []),
+    ...(traceCount > 0 ? [l(`${traceCount} trace events`, `${traceCount} 条轨迹`)] : []),
   ];
   const bodyRef = useRef<HTMLDivElement>(null);
   const pendingInitialScrollRef = useRef<string | null>(session.sessionKey);
@@ -309,7 +327,16 @@ export function DetailPanel({
   }, [session.sessionKey]);
 
   useEffect(() => {
-    if (loading || messages.length === 0 || pendingInitialScrollRef.current !== session.sessionKey) return;
+    if (pendingInitialScrollRef.current !== session.sessionKey) return;
+    if (turns !== null) {
+      if (turnsLoading || turns.length === 0) return;
+      const frame = window.requestAnimationFrame(() => {
+        if (matchedTurnId === null) bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
+        pendingInitialScrollRef.current = null;
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (loading || messages.length === 0) return;
     const frame = window.requestAnimationFrame(() => {
       if (matchedMessageIndex !== null) {
         const target = bodyRef.current?.querySelector(`[data-message-index="${matchedMessageIndex}"]`) as HTMLElement | null;
@@ -324,10 +351,19 @@ export function DetailPanel({
       pendingInitialScrollRef.current = null;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [loading, messages.length, session.sessionKey, matchedMessageIndex]);
+  }, [
+    loading,
+    matchedMessageIndex,
+    matchedTurnId,
+    messages.length,
+    session.sessionKey,
+    turns,
+    turnsLoading,
+  ]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (turns !== null) return;
       const el = bodyRef.current;
       if (!el) return;
       const target = event.target as HTMLElement | null;
@@ -375,7 +411,7 @@ export function DetailPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [panelSearchOpen]);
+  }, [panelSearchOpen, turns]);
 
   return (
     <div className={`detail-backdrop ${backdropClassName}`.trim()} onClick={onClose}>
@@ -500,6 +536,37 @@ export function DetailPanel({
           ))}
         </div>
         <div className="detail-body" ref={bodyRef}>
+          {turns !== null ? (
+            <section className="conversation turn-conversation">
+              <div className="conversation-header">
+                <h3>{l("Turns", "对话轮次")}</h3>
+                <div className="conversation-filters">
+                  {!turnsLoading ? (
+                    <span className="turn-count">{l(`${turns.length} Turns`, `${turns.length} 轮`)}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`conversation-tools-toggle ${showTools ? "active" : ""}`}
+                    onClick={toggleTools}
+                    aria-pressed={showTools}
+                  >
+                    {l("Tools", "工具")}
+                  </button>
+                </div>
+              </div>
+              <TurnAccordion
+                sessionKey={session.sessionKey}
+                turns={turns}
+                loading={turnsLoading}
+                matchedTurnId={matchedTurnId}
+                showTools={showTools}
+                query={query}
+                language={language}
+                onLoadTurn={onLoadTurn}
+              />
+            </section>
+          ) : (
+            <>
           {context.length > 0 ? (
             <section className="matched">
               <h3>{l("Matched Context", "命中上下文")}</h3>
@@ -622,6 +689,8 @@ export function DetailPanel({
               )
             ))}
           </section>
+            </>
+          )}
           {onOpenRelatedSession ? (
             <RelatedSessions related={relatedSessions} language={language} onOpen={onOpenRelatedSession} />
           ) : null}

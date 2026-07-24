@@ -124,16 +124,6 @@
       "sha256": "905c3bc7309157158082f7cfb32781cd33bec2027dca2f7222fd156e4274bbcc"
     },
     {
-      "path": "main/agents/hermes-runner.test.ts",
-      "kind": "test",
-      "sha256": "941a9ca4f8f674c258adc37952e9b590b280077928c90bfcb88a4f72a96c34bc"
-    },
-    {
-      "path": "main/agents/hermes-runner.ts",
-      "kind": "source",
-      "sha256": "5a8df9f2170a7c11b78eb7806752d4a1658d2b3a26e196e3e8040a93eb21451c"
-    },
-    {
       "path": "main/agents/hermes/hermes-runner.test.ts",
       "kind": "test",
       "sha256": "f299a4e25e6c7b7b7ce6b7945e9f9d8960cf180746da497c1732b4a127c4715c"
@@ -1527,11 +1517,6 @@
       "path": "renderer/src/pages/workflow/workflow-controller.ts",
       "kind": "source",
       "sha256": "1923e50ff45ee84565a736953c678acfab35b7d3b8486a20ffa758bf5511882d"
-    },
-    {
-      "path": "renderer/src/pages/workflow/workflow-legacy-input-contract.test.ts",
-      "kind": "test",
-      "sha256": "722f29e135eef066f9ec85b5d9cfcf0a10692f8809a50900f11db51c4ae1aa43"
     },
     {
       "path": "renderer/src/pages/workflow/workflow-node-input-controller.test.ts",

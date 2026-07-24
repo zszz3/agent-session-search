@@ -87,8 +87,8 @@ function createHarness(options: { settings?: AppSettings; groups?: RemoteSkillGr
   const bindings: SkillSyncBinding[] = [];
   const usageSources: SkillUsageSource[] = [];
   const store: SkillStorePort = {
-    listProjects: vi.fn(() => []),
-    getSkillUsageSnapshot: vi.fn(() => ({
+    listProjects: vi.fn(async () => []),
+    getSkillUsageSnapshot: vi.fn(async () => ({
       path: "/tmp/usage.jsonl",
       exists: true,
       totalEvents: 3,
@@ -96,13 +96,16 @@ function createHarness(options: { settings?: AppSettings; groups?: RemoteSkillGr
       byName: { review: { skill: "review", count: 3, lastUsedAt: 100 } },
       byAgentName: { "codex:review": { skill: "review", count: 3, lastUsedAt: 100 } },
     })),
-    isSkillUsageSourceFresh: vi.fn(() => false),
-    upsertSkillUsageSource: vi.fn(),
-    pruneSkillUsageSources: vi.fn(),
-    listSkillSyncBindings: vi.fn(() => bindings),
-    getSkillSyncBindingForPortableIdentity: vi.fn((identity) => bindings.find((binding) => binding.portableIdentity === identity) ?? null),
-    upsertSkillSyncBinding: vi.fn((binding) => bindings.push(binding)),
-    deleteSkillSyncBindingsForRemoteIds: vi.fn(),
+    isSkillUsageSourceFresh: vi.fn(async () => false),
+    upsertSkillUsageSource: vi.fn(async () => undefined),
+    pruneSkillUsageSources: vi.fn(async () => undefined),
+    listSkillSyncBindings: vi.fn(async () => bindings),
+    getSkillSyncBindingForPortableIdentity: vi.fn(async (identity) =>
+      bindings.find((binding) => binding.portableIdentity === identity) ?? null),
+    upsertSkillSyncBinding: vi.fn(async (binding) => {
+      bindings.push(binding);
+    }),
+    deleteSkillSyncBindingsForRemoteIds: vi.fn(async () => undefined),
   };
   const version = remoteVersion();
   const fullRemote = remoteSkill();
@@ -204,9 +207,9 @@ function createHarness(options: { settings?: AppSettings; groups?: RemoteSkillGr
 }
 
 describe("SkillService local skills and usage", () => {
-  it("merges usage and hook state into the installed Skill snapshot", () => {
+  it("merges usage and hook state into the installed Skill snapshot", async () => {
     const harness = createHarness();
-    const snapshot = harness.service.listSkills();
+    const snapshot = await harness.service.listSkills();
     expect(snapshot.skills[0]).toMatchObject({ name: "review", usageCount: 3, lastUsedAt: 100 });
     expect(snapshot.usage).toEqual({ hookInstalled: true, logExists: true, totalEvents: 3 });
     expect(harness.managedLibrary.list).toHaveBeenCalledOnce();
@@ -214,12 +217,12 @@ describe("SkillService local skills and usage", () => {
     expect(harness.operations.usageForSkill).toHaveBeenCalledWith(expect.any(Object), "review");
   });
 
-  it("imports only explicitly selected local Skills and updates installation targets", () => {
+  it("imports only explicitly selected local Skills and updates installation targets", async () => {
     const harness = createHarness();
-    harness.service.listImportCandidates();
+    await harness.service.listImportCandidates();
     expect(harness.managedLibrary.listImportCandidates).toHaveBeenCalledWith([]);
 
-    expect(harness.service.importLocalSkills(["/tmp/a/SKILL.md", "/tmp/b/SKILL.md"])).toHaveLength(2);
+    expect(await harness.service.importLocalSkills(["/tmp/a/SKILL.md", "/tmp/b/SKILL.md"])).toHaveLength(2);
     expect(harness.managedLibrary.importLocalSkill).toHaveBeenNthCalledWith(1, "/tmp/a/SKILL.md", []);
     expect(harness.managedLibrary.importLocalSkill).toHaveBeenNthCalledWith(2, "/tmp/b/SKILL.md", []);
 
@@ -227,7 +230,7 @@ describe("SkillService local skills and usage", () => {
     expect(harness.managedLibrary.updateTargets).toHaveBeenCalledWith("review", ["codex", "trae"]);
   });
 
-  it("adds usage statistics to local Skills so the UI can rank them by use", () => {
+  it("adds usage statistics to local Skills so the UI can rank them by use", async () => {
     const harness = createHarness();
     const localSkill: InstalledSkill = {
       ...installedSkill(),
@@ -243,7 +246,7 @@ describe("SkillService local skills and usage", () => {
       scannedAt: 1,
     });
 
-    expect(harness.service.listImportCandidates().skills[0]).toMatchObject({
+    expect((await harness.service.listImportCandidates()).skills[0]).toMatchObject({
       name: "review",
       usageCount: 3,
       lastUsedAt: 100,
@@ -251,14 +254,14 @@ describe("SkillService local skills and usage", () => {
     expect(harness.operations.usageForSkill).toHaveBeenCalledWith(expect.any(Object), "review", "codex");
   });
 
-  it("caches local Skill discovery until an explicit refresh", () => {
+  it("caches local Skill discovery until an explicit refresh", async () => {
     const harness = createHarness();
 
-    harness.service.listImportCandidates();
-    harness.service.listImportCandidates();
+    await harness.service.listImportCandidates();
+    await harness.service.listImportCandidates();
     expect(harness.managedLibrary.listImportCandidates).toHaveBeenCalledOnce();
 
-    harness.service.listImportCandidates(true);
+    await harness.service.listImportCandidates(true);
     expect(harness.managedLibrary.listImportCandidates).toHaveBeenCalledTimes(2);
   });
 
@@ -287,15 +290,17 @@ describe("SkillService local skills and usage", () => {
     await expect(harness.service.getDiscoveredSkill(harness.discoveredEntry.id)).resolves.toBe(harness.discoveredDetail);
   });
 
-  it("refreshes only stale usage sources and prunes removed files", () => {
+  it("refreshes only stale usage sources and prunes removed files", async () => {
     const harness = createHarness();
     harness.usageSources.push(
       { agent: "codex", kind: "codex-session", path: "/tmp/a.jsonl", mtimeMs: 1, fileSize: 1 },
       { agent: "claude", kind: "claude-hook", path: "/tmp/b.jsonl", mtimeMs: 1, fileSize: 1 },
     );
-    vi.mocked(harness.store.isSkillUsageSourceFresh).mockImplementation((source) => source.path.endsWith("a.jsonl"));
+    vi.mocked(harness.store.isSkillUsageSourceFresh).mockImplementation(
+      async (source) => source.path.endsWith("a.jsonl"),
+    );
 
-    expect(harness.service.refreshUsage()).toEqual({
+    expect(await harness.service.refreshUsage()).toEqual({
       refreshed: 1,
       skipped: 1,
       total: 2,
@@ -400,20 +405,20 @@ describe("SkillService utilities and hooks", () => {
       scannedAt: 1,
     });
 
-    harness.service.copyPath(localSkill.path);
+    await harness.service.copyPath(localSkill.path);
     await harness.service.reveal(localSkill.directoryPath);
 
     expect(harness.copyText).toHaveBeenCalledWith(localSkill.path);
     expect(harness.revealPath).toHaveBeenCalledWith(localSkill.directoryPath);
-    expect(() => harness.service.copyPath("/tmp/not-a-skill/SKILL.md")).toThrow(/outside managed roots/i);
+    await expect(harness.service.copyPath("/tmp/not-a-skill/SKILL.md")).rejects.toThrow(/outside managed roots/i);
   });
 
   it("owns copy, reveal, delete, and hook operations", async () => {
     const harness = createHarness();
     harness.service.copySetupSql();
-    harness.service.copyPath(installedSkill().path);
+    await harness.service.copyPath(installedSkill().path);
     await harness.service.reveal(installedSkill().directoryPath);
-    expect(harness.service.delete(installedSkill().path)).toEqual({
+    expect(await harness.service.delete(installedSkill().path)).toEqual({
       deletedPath: installedSkill().directoryPath,
       skillName: "review",
     });

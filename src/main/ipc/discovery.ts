@@ -6,15 +6,19 @@ import { DISCOVERY_IPC } from "../../shared/ipc/discovery";
 import { combineIpcDisposers, registerIpcHandler, type IpcMainRegistrar } from "./register-ipc-handler";
 
 export interface DiscoveryIpcService {
-  listSavedSearches(): SavedSearch[];
-  createSavedSearch(name: string, options: SearchOptions): SavedSearch;
-  deleteSavedSearch(id: number): boolean;
-  touchSavedSearch(id: number): void;
-  listRecentSearches(limit?: number): SearchHistoryEntry[];
-  searchHistory(query: string, limit?: number): SearchHistoryEntry[];
-  clearSearchHistory(): void;
-  recordSearch(query: string, resultCount: number, options?: SearchOptions): void;
-  getRelatedSessions(sessionKey: string, limit?: number): RelatedSession[];
+  listSavedSearches(): Promise<SavedSearch[]>;
+  createSavedSearch(name: string, options: SearchOptions): Promise<SavedSearch>;
+  deleteSavedSearch(id: number): Promise<boolean>;
+  touchSavedSearch(id: number): Promise<void>;
+  listRecentSearches(limit?: number): Promise<SearchHistoryEntry[]>;
+  searchHistory(query: string, limit?: number): Promise<SearchHistoryEntry[]>;
+  clearSearchHistory(): Promise<void>;
+  recordSearch(
+    query: string,
+    resultCount: number,
+    options?: SearchOptions,
+  ): Promise<void>;
+  getRelatedSessions(sessionKey: string, limit?: number): Promise<RelatedSession[]>;
 }
 
 export function registerDiscoveryIpc(ipc: IpcMainRegistrar, service: DiscoveryIpcService): () => void {

@@ -11,17 +11,10 @@ interface RegisterTeamChatIpcOptions {
   ipc: TeamChatIpcMainLike;
   service: TeamChatService;
   send: (channel: string, payload: unknown) => void;
+  ensureReady?: () => Promise<void>;
 }
 
 const idSchema = z.string().trim().min(1).max(200);
-const connectionUrlSchema = z.string().trim().min(1).max(4_096).refine((value) => {
-  try {
-    const protocol = new URL(value).protocol;
-    return protocol === "postgres:" || protocol === "postgresql:";
-  } catch {
-    return false;
-  }
-}, "A postgres:// or postgresql:// connection URL is required.");
 const agentIdsSchema = z.array(idSchema).min(1).max(24).superRefine((ids, context) => {
   if (new Set(ids).size !== ids.length) {
     context.addIssue({ code: "custom", message: "Room Agents must be unique." });
@@ -47,22 +40,29 @@ const messageSendSchema = z.object({
   roomId: idSchema,
   content: z.string().trim().min(1).max(100_000),
 }).strict();
+const agentSessionResetSchema = z.object({
+  roomId: idSchema,
+  agentId: idSchema,
+}).strict();
 
-export function registerTeamChatIpc({ ipc, service, send }: RegisterTeamChatIpcOptions): () => void {
+export function registerTeamChatIpc({ ipc, service, send, ensureReady }: RegisterTeamChatIpcOptions): () => void {
   const channels: string[] = [];
-  const handle = (channel: string, handler: (value: unknown) => unknown): void => {
+  const handle = (
+    channel: string,
+    handler: (value: unknown) => unknown,
+    options: { requiresReady?: boolean } = {},
+  ): void => {
     channels.push(channel);
-    ipc.handle(channel, async (_event, value) => handler(value));
+    ipc.handle(channel, async (_event, value) => {
+      if (options.requiresReady !== false) await ensureReady?.();
+      return handler(value);
+    });
   };
 
-  handle(TEAM_CHAT_CHANNELS.connectionStatus, () => service.getConnectionStatus());
-  handle(TEAM_CHAT_CHANNELS.connectionConnect, (value) => {
-    const request = z.object({ connectionUrl: connectionUrlSchema.optional() }).strict()
-      .parse(value === undefined ? {} : value);
-    return service.connect(request.connectionUrl);
-  });
+  handle(TEAM_CHAT_CHANNELS.connectionStatus, () => service.getConnectionStatus(), { requiresReady: false });
+  handle(TEAM_CHAT_CHANNELS.connectionConnect, () => service.connect());
   handle(TEAM_CHAT_CHANNELS.connectionUseLocal, () => service.useLocalDatabase());
-  handle(TEAM_CHAT_CHANNELS.connectionDisconnect, () => service.disconnect());
+  handle(TEAM_CHAT_CHANNELS.connectionDisconnect, () => service.disconnect(), { requiresReady: false });
   handle(TEAM_CHAT_CHANNELS.roomsList, () => service.listRooms());
   handle(TEAM_CHAT_CHANNELS.roomsGet, (value) => service.getRoom(idSchema.parse(value)));
   handle(TEAM_CHAT_CHANNELS.roomsCreate, (value) => service.createRoom(roomCreateSchema.parse(value)));
@@ -71,6 +71,10 @@ export function registerTeamChatIpc({ ipc, service, send }: RegisterTeamChatIpcO
   handle(TEAM_CHAT_CHANNELS.messagesList, (value) => service.listMessages(messageListSchema.parse(value)));
   handle(TEAM_CHAT_CHANNELS.messagesSend, (value) => service.sendMessage(messageSendSchema.parse(value)));
   handle(TEAM_CHAT_CHANNELS.turnsStop, (value) => service.stopTurn(idSchema.parse(value)));
+  handle(TEAM_CHAT_CHANNELS.agentSessionReset, (value) => {
+    const request = agentSessionResetSchema.parse(value);
+    return service.resetAgentSession(request.roomId, request.agentId);
+  });
 
   const unsubscribe = service.subscribe((event) => send(TEAM_CHAT_CHANNELS.event, event));
   return () => {

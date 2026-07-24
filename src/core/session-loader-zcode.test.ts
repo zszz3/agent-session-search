@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { TRACE_DETAIL_PREVIEW_MAX_CHARS } from "./trace-detail";
 import { loadDefaultSessions, loadZcodeSessions } from "./session-loader";
-import { SessionStore } from "./session-store";
+import { createInMemoryStore } from "./postgres/test-session-store";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as {
@@ -132,7 +132,7 @@ describe("ZCode session loader", () => {
     expect(loadZcodeSessions(incompatibleRoot)).toEqual([]);
   });
 
-  it("loads ordered messages, bounded tool traces, parent metadata, and authoritative model usage", () => {
+  it("loads ordered messages, bounded tool traces, parent metadata, and authoritative model usage", async () => {
     const root = tempZcodeRoot("complete");
     const projectPath = path.join(root, "project");
     const db = new DatabaseSync(databasePath(root));
@@ -253,22 +253,23 @@ describe("ZCode session loader", () => {
 
     expect(main).toBeDefined();
     if (!main) throw new Error("Expected the synthetic ZCode session to load.");
-    const store = new SessionStore(":memory:");
+    const store = createInMemoryStore();
     try {
-      store.upsertIndexedSession(main.session, main.messages, main.tokenEvents, main.traceEvents);
-      expect(store.searchSessions({ query: "checkout", source: "zcode-cli" }).map((session) => session.sessionKey)).toEqual(["zcode:session-main"]);
-      expect(store.listProjects().map((project) => project.path)).toContain(projectPath);
-      expect(store.getMessages("zcode:session-main")).toEqual(main.messages);
-      expect(store.getTraceEvents("zcode:session-main")).toHaveLength(4);
+      await store.upsertIndexedSession(main.session, main.messages, main.tokenEvents, main.traceEvents);
+      expect((await store.searchSessions({ query: "checkout", source: "zcode-cli" }))
+        .map((session) => session.sessionKey)).toEqual(["zcode:session-main"]);
+      expect((await store.listProjects()).map((project) => project.path)).toContain(projectPath);
+      await expect(store.getMessages("zcode:session-main")).resolves.toEqual(main.messages);
+      await expect(store.getTraceEvents("zcode:session-main")).resolves.toHaveLength(4);
       const now = Date.parse("2026-07-21T12:00:00Z");
-      expect(store.getStats({ period: "today" }, now).bySource).toEqual([
+      expect((await store.getStats({ period: "today" }, now)).bySource).toEqual([
         expect.objectContaining({ source: "zcode-cli", totalTokens: 125 }),
       ]);
-      expect(store.getStats({ period: "allTime" }, now).bySource).toEqual([
+      expect((await store.getStats({ period: "allTime" }, now)).bySource).toEqual([
         expect.objectContaining({ source: "zcode-cli", totalTokens: 185 }),
       ]);
     } finally {
-      store.close();
+      await store.close();
     }
   });
 

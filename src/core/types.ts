@@ -145,6 +145,58 @@ export interface SessionTraceEvent {
   status?: "success" | "failure" | "unknown" | null;
 }
 
+export type SessionTurnStatus = "completed" | "failed" | "aborted";
+
+export interface SessionTurnSummary {
+  id: string;
+  turnIndex: number;
+  sourceMessageIndex: number | null;
+  synthetic: boolean;
+  status: SessionTurnStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  userPreview: string;
+  assistantPreview: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  errorCount: number;
+  toolNames: string[];
+  messageCount: number;
+  spanCount: number;
+}
+
+export interface SessionTurnMessage {
+  messageIndex: number;
+  sourceMessageIndex: number | null;
+  role: SessionMessage["role"];
+  content: string;
+  timestamp: string;
+}
+
+export interface SessionTraceSpan {
+  id: string;
+  parentSpanId: string | null;
+  spanIndex: number;
+  kind: "tool" | "event";
+  name: string;
+  status: "running" | "completed" | "failed" | "aborted" | "unknown";
+  startedAt: string | null;
+  endedAt: string | null;
+  callId: string | null;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  error: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface SessionTurnDetail extends SessionTurnSummary {
+  messages: SessionTurnMessage[];
+  spans: SessionTraceSpan[];
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -259,12 +311,25 @@ export interface SessionSearchResult extends IndexedSession {
   matchHits?: SessionMatchHit[];
   messageMatchCount?: number;
   metadataMatch?: "title" | "project" | "summary" | null;
+  bestTurn?: SessionTurnMatch | null;
+  turnMatchCount?: number;
 }
 
 export interface SessionMatchHit {
   messageIndex: number;
   role: SessionMessage["role"];
   timestamp: string;
+  snippet: string;
+  matchedTerms: string[];
+  turnId?: string;
+  turnIndex?: number;
+}
+
+export interface SessionTurnMatch {
+  turnId: string;
+  turnIndex: number;
+  sourceMessageIndex: number | null;
+  startedAt: number | null;
   snippet: string;
   matchedTerms: string[];
 }

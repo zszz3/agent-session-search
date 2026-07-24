@@ -81,10 +81,15 @@ export function buildTeamChatPrompt(input: {
   triggerMessage: TeamChatMessage;
   executedAgentIds: string[];
   remainingExecutions: number;
+  continuing?: boolean;
+  contextTruncated?: boolean;
 }): string {
   const byId = new Map(input.room.agents.map((agent) => [agent.agentId, agent.displayName]));
   const executed = input.executedAgentIds.map((id) => byId.get(id) ?? id);
-  const transcript = transcriptWithinBudget(input.messages)
+  const contextMessages = input.messages.filter((message) =>
+    message.id !== input.triggerMessage.id &&
+    (!input.continuing || message.senderAgentId !== input.target.agentId));
+  const transcript = transcriptWithinBudget(contextMessages)
     .map((message) => `[${message.createdAt}] ${message.senderName}: ${message.content}`)
     .join("\n");
   const memberNames = input.room.agents
@@ -103,8 +108,9 @@ export function buildTeamChatPrompt(input: {
     "Reply directly to the room. Do not invent messages from other members.",
     "If another room member must continue the work, mention that member by exact @name.",
     "",
-    "Recent room transcript:",
-    transcript || "(empty)",
+    input.continuing ? "Room updates since your previous turn:" : "Recent room transcript:",
+    ...(input.contextTruncated ? ["Earlier room updates were omitted because the context limit was reached."] : []),
+    transcript || (input.continuing ? "(no other room updates)" : "(empty)"),
     "",
     `Current triggering message from ${input.triggerMessage.senderName}:`,
     input.triggerMessage.content,

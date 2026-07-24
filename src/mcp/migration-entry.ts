@@ -2,7 +2,19 @@
 // (plus its src/core dependencies) into a single ESM file that the MCP bin
 // imports at runtime, so the bin never needs --experimental-strip-types and the
 // migration logic stays in typed src/core modules shared with the desktop app.
-export { SessionStore } from "../core/session-store";
+import { PostgresDatabase } from "../core/postgres/database";
+import { POSTGRES_MIGRATIONS } from "../core/postgres/schema";
+import { SessionStore } from "../core/session-store";
+
+export { SessionStore };
+
+export async function openMcpSessionStore(connectionUrl: string): Promise<SessionStore> {
+  const database = PostgresDatabase.connect(connectionUrl, {
+    migrations: POSTGRES_MIGRATIONS,
+  });
+  await database.initialize();
+  return new SessionStore(database);
+}
 export {
   createMcpTemporarySessionCleaner,
   loadMcpAppSettings,

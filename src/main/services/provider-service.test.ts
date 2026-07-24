@@ -79,8 +79,10 @@ function createHarness(settings: AppSettings = cloneSettings()) {
   const service = new ProviderService({
     getSettings: () => settings,
     keys: {
-      get: (target, providerId) => keys.get(`${target}:${providerId}`) ?? "",
-      set: (target, providerId, apiKey) => keys.set(`${target}:${providerId}`, apiKey),
+      get: async (target, providerId) => keys.get(`${target}:${providerId}`) ?? "",
+      set: async (target, providerId, apiKey) => {
+        keys.set(`${target}:${providerId}`, apiKey);
+      },
     },
     settings: {
       has: (path) => savedSettings.has(path),
@@ -165,7 +167,7 @@ describe("ProviderService settings and keys", () => {
     expect(hydrated.summaryApiConfig.customApiKey).toBe("summary-key");
   });
 
-  it("persists updated custom keys while keeping them out of the settings document", () => {
+  it("persists updated custom keys while keeping them out of the settings document", async () => {
     const settings = cloneSettings();
     settings.apiConfig = customCodexConfig({ customApiKey: "codex-key" });
     settings.claudeApiConfig = {
@@ -182,7 +184,7 @@ describe("ProviderService settings and keys", () => {
     };
     const harness = createHarness(settings);
 
-    harness.service.persistKeysFromUpdate({
+    await harness.service.persistKeysFromUpdate({
       apiConfig: settings.apiConfig,
       claudeApiConfig: settings.claudeApiConfig,
       summaryApiConfig: settings.summaryApiConfig,
@@ -200,7 +202,7 @@ describe("ProviderService settings and keys", () => {
     expect(settings.apiConfig.customApiKey).toBe("codex-key");
   });
 
-  it("migrates legacy settings keys once without overwriting saved secrets", () => {
+  it("migrates legacy settings keys once without overwriting saved secrets", async () => {
     const settings = cloneSettings();
     settings.apiConfig = customCodexConfig({ customApiKey: "legacy-codex" });
     settings.claudeApiConfig = {
@@ -212,7 +214,7 @@ describe("ProviderService settings and keys", () => {
     const harness = createHarness(settings);
     harness.keys.set("codex:deepseek", "already-saved");
 
-    harness.service.migrateLegacyKeys();
+    await harness.service.migrateLegacyKeys();
 
     expect(harness.keys.get("codex:deepseek")).toBe("already-saved");
     expect(harness.keys.get("claude:deepseek")).toBe("legacy-claude");

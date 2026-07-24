@@ -1,75 +1,66 @@
-import { createRequire } from "node:module";
-import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
-import { describe, expect, it } from "vitest";
-import { migrateSessionStore } from "./schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PostgresDatabase } from "../postgres/database";
+import { POSTGRES_MIGRATIONS } from "../postgres/schema";
+import { PGliteTestPool } from "../postgres/test-pglite";
 import { SearchHistoryStore } from "./search-history-store";
 
-const require = createRequire(import.meta.url);
-const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
-
-function createStore(): SearchHistoryStore {
-  const db = new DatabaseSync(":memory:");
-  migrateSessionStore(db);
-  return new SearchHistoryStore(db);
-}
-
 describe("SearchHistoryStore", () => {
-  it("records and lists recent searches", () => {
-    const store = createStore();
-    store.recordSearch("login bug", 3);
-    store.recordSearch("token refresh", 5);
-    const recent = store.listRecentSearches();
+  let database: PostgresDatabase;
+  let store: SearchHistoryStore;
+
+  beforeEach(async () => {
+    database = new PostgresDatabase(new PGliteTestPool(), {
+      migrationLock: false,
+      migrations: POSTGRES_MIGRATIONS,
+    });
+    await database.initialize();
+    store = new SearchHistoryStore(database);
+  });
+
+  afterEach(async () => {
+    await database.close();
+  });
+
+  it("records and lists recent searches", async () => {
+    await store.recordSearch("login bug", 3);
+    await store.recordSearch("token refresh", 5);
+    const recent = await store.listRecentSearches();
     expect(recent).toHaveLength(2);
-    expect(recent[0].query).toBe("token refresh");
-    expect(recent[0].resultCount).toBe(5);
+    expect(recent[0]).toMatchObject({ query: "token refresh", resultCount: 5 });
   });
 
-  it("ignores empty queries", () => {
-    const store = createStore();
-    store.recordSearch("   ", 0);
-    expect(store.listRecentSearches()).toHaveLength(0);
+  it("ignores empty queries and deduplicates identical queries", async () => {
+    await store.recordSearch("   ", 0);
+    await store.recordSearch("same query", 1);
+    await store.recordSearch("same query", 9);
+    await expect(store.listRecentSearches()).resolves.toEqual([
+      expect.objectContaining({ query: "same query", resultCount: 9 }),
+    ]);
   });
 
-  it("deduplicates identical queries, keeping the latest", () => {
-    const store = createStore();
-    store.recordSearch("same query", 1);
-    store.recordSearch("same query", 9);
-    const recent = store.listRecentSearches();
-    expect(recent).toHaveLength(1);
-    expect(recent[0].resultCount).toBe(9);
-  });
-
-  it("filters history by substring", () => {
-    const store = createStore();
-    store.recordSearch("fix login", 2);
-    store.recordSearch("refactor auth", 4);
-    store.recordSearch("login page css", 1);
-    const matches = store.searchHistory("login");
+  it("filters history and stores search options", async () => {
+    await store.recordSearch("fix login", 2);
+    await store.recordSearch("refactor auth", 4);
+    await store.recordSearch("login page css", 1, {
+      source: "qoder",
+      tag: "urgent",
+    });
+    const matches = await store.searchHistory("login");
     expect(matches).toHaveLength(2);
     expect(matches.every((entry) => entry.query.includes("login"))).toBe(true);
+    expect(matches[0].options).toMatchObject({ source: "qoder", tag: "urgent" });
   });
 
-  it("clears all history", () => {
-    const store = createStore();
-    store.recordSearch("a", 1);
-    store.recordSearch("b", 2);
-    store.clearHistory();
-    expect(store.listRecentSearches()).toHaveLength(0);
-  });
-
-  it("deletes a single entry", () => {
-    const store = createStore();
-    store.recordSearch("keep", 1);
-    store.recordSearch("remove", 2);
-    const entry = store.listRecentSearches().find((item) => item.query === "remove");
-    expect(store.deleteEntry(entry!.id)).toBe(true);
-    expect(store.listRecentSearches().map((item) => item.query)).toEqual(["keep"]);
-  });
-
-  it("stores options alongside the query", () => {
-    const store = createStore();
-    store.recordSearch("scoped", 3, { source: "qoder", tag: "urgent" });
-    const [entry] = store.listRecentSearches();
-    expect(entry.options).toMatchObject({ source: "qoder", tag: "urgent" });
+  it("deletes individual entries and clears all history", async () => {
+    await store.recordSearch("keep", 1);
+    await store.recordSearch("remove", 2);
+    const entry = (await store.listRecentSearches())
+      .find((item) => item.query === "remove");
+    await expect(store.deleteEntry(entry!.id)).resolves.toBe(true);
+    await expect(store.listRecentSearches()).resolves.toEqual([
+      expect.objectContaining({ query: "keep" }),
+    ]);
+    await store.clearHistory();
+    await expect(store.listRecentSearches()).resolves.toHaveLength(0);
   });
 });
