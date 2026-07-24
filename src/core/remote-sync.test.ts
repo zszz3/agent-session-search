@@ -105,6 +105,91 @@ describe("remote sync", () => {
     }
   });
 
+  it("preserves Subagent relationships from remote summary records", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    try {
+      await syncRemoteEnvironment(store, environment, {
+        runSsh: async () => `${JSON.stringify({
+          kind: "codex-session",
+          source: "codex-cli",
+          path: "/home/me/.codex/sessions/child.jsonl",
+          mtimeMs: 1,
+          size: 1,
+          rawId: "child",
+          projectPath: "/repo",
+          timestamp: 1,
+          originalTitle: "Child",
+          firstQuestion: "subtask",
+          messageCount: 1,
+          isSubagent: true,
+          parentSessionId: "parent",
+        })}\n`,
+      });
+
+      expect(store.getSession("ssh:ssh-devbox:codex-cli:child")).toMatchObject({
+        isSubagent: true,
+        parentSessionId: "parent",
+      });
+      expect(store.searchSessions({ environmentId: environment.id, excludeSubagents: true })).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("detects Codex and Claude Subagents in the remote collector", async () => {
+    const store = createInMemoryStore();
+    const environment = upsertSshEnvironment(store);
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-remote-subagents-"));
+    const writeJsonl = (filePath: string, rows: unknown[]) => {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n"), "utf8");
+    };
+    try {
+      writeJsonl(path.join(tempHome, ".codex", "sessions", "2026", "07", "24", "child.jsonl"), [
+        {
+          type: "session_meta",
+          timestamp: "2026-07-24T10:00:00Z",
+          payload: {
+            id: "codex-child",
+            cwd: "/repo",
+            source: { subagent: { thread_spawn: { parent_thread_id: "codex-parent", depth: 1 } } },
+          },
+        },
+      ]);
+      writeJsonl(path.join(tempHome, ".claude", "projects", "repo", "claude-parent", "subagents", "claude-child.jsonl"), [
+        {
+          type: "user",
+          timestamp: "2026-07-24T10:00:00Z",
+          cwd: "/repo",
+          sessionId: "claude-parent",
+          agentId: "claude-child",
+          message: { role: "user", content: "subtask" },
+        },
+      ]);
+
+      await syncRemoteEnvironment(store, environment, {
+        runSsh: async (_environment, remoteCommand) => execFileSync(
+          "python3",
+          ["-c", decodeCollectorScript(remoteCommand)],
+          { encoding: "utf8", env: { ...process.env, HOME: tempHome } },
+        ),
+      });
+
+      expect(store.getSession("ssh:ssh-devbox:codex-cli:codex-child")).toMatchObject({
+        isSubagent: true,
+        parentSessionId: "codex-parent",
+      });
+      expect(store.getSession("ssh:ssh-devbox:claude-cli:claude-child")).toMatchObject({
+        isSubagent: true,
+        parentSessionId: "claude-parent",
+      });
+    } finally {
+      store.close();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("collects summaries from all five CLI sources and keeps same raw IDs isolated by source", async () => {
     const store = createInMemoryStore();
     const environment = upsertSshEnvironment(store);

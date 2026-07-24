@@ -83,10 +83,10 @@ test("streams package bytes and reports monotonic download progress while stagin
     statusPath: path.join(directory, "status.json"),
     execFileImpl: async (_command, _args, options) => {
       const installed = path.join(options.env.AGENT_RECALL_STAGE_ROOT, "node_modules", "agent-recall");
-      await mkdir(path.join(installed, "dist", "main"), { recursive: true });
+      await mkdir(path.join(installed, "out", "main"), { recursive: true });
       await mkdir(path.join(installed, "bin"), { recursive: true });
       await writeFile(path.join(installed, "package.json"), JSON.stringify({ name: "agent-recall", version: value.version }), "utf8");
-      await writeFile(path.join(installed, "dist", "main", "index.js"), "", "utf8");
+      await writeFile(path.join(installed, "out", "main", "index.js"), "", "utf8");
       await writeFile(path.join(installed, "bin", "agent-recall.cjs"), "", "utf8");
       return { stdout: "", stderr: "" };
     },

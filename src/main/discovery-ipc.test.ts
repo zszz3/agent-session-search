@@ -41,12 +41,16 @@ function createService(): DiscoveryIpcService {
     searchHistory: vi.fn(() => []),
     clearSearchHistory: vi.fn(),
     recordSearch: vi.fn(),
-    getRelatedSessions: vi.fn(() => []),
     getSessionFamily: vi.fn(() => EMPTY_FAMILY),
   };
 }
 
 describe("Discovery IPC", () => {
+  it("does not expose heuristic related-session discovery", () => {
+    expect("getRelatedSessions" in DISCOVERY_IPC).toBe(false);
+    expect("getRelatedSessions" in createDiscoveryApi({ invoke: vi.fn() })).toBe(false);
+  });
+
   it("delegates a parsed session family request", async () => {
     const { ipc, handlers } = createMainRegistrar();
     const service = createService();

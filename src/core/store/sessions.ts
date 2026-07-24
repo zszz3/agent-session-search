@@ -337,8 +337,7 @@ export class SessionsStore {
       }
 
       this.refreshFtsForSession(session.sessionKey);
-      const branchTag = branchTagName(session.gitBranch);
-      if (branchTag) this.addTagToSession(session.sessionKey, branchTag);
+      this.replaceBranchTag(session.sessionKey, session.gitBranch);
     });
   }
 
@@ -429,9 +428,10 @@ export class SessionsStore {
           INSERT INTO sessions (
             session_key, raw_id, source, environment_id, storage_environment_id, project_path, file_path, original_title, first_question,
             timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
-            input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at
+            input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at,
+            is_subagent, parent_session_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
@@ -452,7 +452,9 @@ export class SessionsStore {
             cached_input_tokens = excluded.cached_input_tokens,
             reasoning_output_tokens = excluded.reasoning_output_tokens,
             total_tokens = excluded.total_tokens,
-            indexed_at = excluded.indexed_at
+            indexed_at = excluded.indexed_at,
+            is_subagent = excluded.is_subagent,
+            parent_session_id = excluded.parent_session_id
         `,
         )
         .run(
@@ -477,6 +479,8 @@ export class SessionsStore {
           tokenUsage.reasoningOutputTokens,
           tokenUsage.totalTokens,
           indexedAt,
+          session.isSubagent ? 1 : 0,
+          session.parentSessionId ?? null,
         );
 
       if (normalizedTokenEvents !== undefined) {
@@ -515,8 +519,7 @@ export class SessionsStore {
       }
 
       this.refreshFtsForSession(session.sessionKey);
-      const branchTag = branchTagName(session.gitBranch);
-      if (branchTag) this.addTagToSession(session.sessionKey, branchTag);
+      this.replaceBranchTag(session.sessionKey, session.gitBranch);
     });
   }
 
@@ -1314,6 +1317,25 @@ export class SessionsStore {
       `,
       )
       .run(tagName);
+  }
+
+  private replaceBranchTag(sessionKey: string, branch: string | null | undefined): void {
+    this.db
+      .prepare(
+        `
+        DELETE FROM session_tags
+        WHERE session_key = ?
+          AND tag_id IN (
+            SELECT id
+            FROM tags
+            WHERE substr(name, 1, 7) = 'branch:'
+          )
+      `,
+      )
+      .run(sessionKey);
+    const branchTag = branchTagName(branch);
+    if (branchTag) this.addTagToSession(sessionKey, branchTag);
+    this.deleteUnusedTags();
   }
 
   private deleteUnusedTags(): void {

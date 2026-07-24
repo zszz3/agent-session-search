@@ -554,7 +554,7 @@ async function stageUpdate(manifest, options = {}) {
     }
     await Promise.all([
       fsp.access(path.join(stagedPackagePath, "bin", "agent-recall.cjs")),
-      fsp.access(path.join(stagedPackagePath, "dist", "main", "index.js")),
+      fsp.access(path.join(stagedPackagePath, "out", "main", "index.js")),
     ]);
     await (options.ensureElectronImpl || ensureInstalledElectron)({
       npmCommand,

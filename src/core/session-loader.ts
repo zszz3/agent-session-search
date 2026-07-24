@@ -106,12 +106,36 @@ export function parseCodexSessionMetaLine(parsed: unknown): {
       id: line.id,
       projectPath: line.git?.cwd || "",
       ts: new Date(line.timestamp).getTime(),
+      gitBranch: line.git?.branch,
       isSubagent: false,
       parentSessionId: null,
     };
   }
 
   return null;
+}
+
+function findCodexSessionMeta(rows: unknown[]): NonNullable<ReturnType<typeof parseCodexSessionMetaLine>> | null {
+  let result: NonNullable<ReturnType<typeof parseCodexSessionMetaLine>> | null = null;
+  for (const row of rows) {
+    const parsed = parseCodexSessionMetaLine(row);
+    if (!parsed) continue;
+    if (!result) {
+      result = parsed;
+      continue;
+    }
+    result = {
+      ...result,
+      projectPath: result.projectPath || parsed.projectPath,
+      ts: result.ts || parsed.ts,
+      title: result.title || parsed.title,
+      gitBranch: result.gitBranch || parsed.gitBranch,
+      originator: result.originator || parsed.originator,
+      isSubagent: result.isSubagent || parsed.isSubagent,
+      parentSessionId: result.parentSessionId || parsed.parentSessionId,
+    };
+  }
+  return result;
 }
 
 function safeStat(filePath: string): VirtualSessionFileStat {
@@ -815,7 +839,7 @@ export function loadCodexSessionRows(
 ): LoadedSession | null {
   if (rows.length === 0) return null;
 
-  const meta = parseCodexSessionMetaLine(rows[0] as CodexConversationLine);
+  const meta = findCodexSessionMeta(rows);
   if (!meta) return null;
 
   const messages = extractMessages(rows, "codex");
@@ -889,7 +913,7 @@ export function* loadCodexSessionsIterator(
     const stat = safeStat(filePath);
     if (shouldSkipFile(options, filePath, stat, indexStat.mtimeMs)) continue;
     const rows = readJsonl(filePath);
-    const meta = rows.length > 0 ? parseCodexSessionMetaLine(rows[0] as CodexConversationLine) : null;
+    const meta = findCodexSessionMeta(rows);
     if (!meta) continue;
     const indexedTitle = titleMap.get(meta.id);
     const loaded = loadCodexSessionRows(filePath, rows, {

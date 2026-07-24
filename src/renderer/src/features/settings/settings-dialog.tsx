@@ -525,24 +525,6 @@ export function SettingsDialog({
                 </header>
                 <label className="settings-field settings-toggle">
                   <div className="settings-field-text">
-                    <span className="settings-field-title">{l("Hide subagent sessions", "隐藏 Subagent 会话")}</span>
-                    <span className="settings-field-sub">
-                      {l(
-                        "Exclude subagents from session lists, project counts, and statistics.",
-                        "从会话列表、项目数量和统计中排除 Subagent。",
-                      )}
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={Boolean(settings?.hideSubagentSessions)}
-                    disabled={!settings || saving}
-                    onChange={(event) => onSettingsChange({ hideSubagentSessions: event.currentTarget.checked })}
-                  />
-                </label>
-                <label className="settings-field settings-toggle">
-                  <div className="settings-field-text">
                     <span className="settings-field-title">Include CodeWiz</span>
                     <span className="settings-field-sub">{l("Indexes CodeWiz sessions from ~/.local/share/codewiz.", "索引 ~/.local/share/codewiz 中的 CodeWiz 会话。")}</span>
                   </div>

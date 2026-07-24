@@ -45,6 +45,8 @@ export interface RemoteSessionSummaryPayload {
   firstQuestion: string;
   messageCount: number;
   gitBranch?: string | null;
+  isSubagent?: boolean;
+  parentSessionId?: string | null;
   tokenUsage?: TokenUsage;
   tokenEvents?: TokenUsageEvent[];
   messageEvents?: SessionMessageEvent[];
@@ -444,6 +446,8 @@ function remoteSummaryToIndexedSession(environment: SessionEnvironment, summary:
     prUrl: null,
     prNumber: null,
     gitBranch: summary.gitBranch,
+    isSubagent: summary.isSubagent === true,
+    parentSessionId: summary.parentSessionId ?? null,
     tokenUsage: summary.tokenUsage,
     environmentId: environment.id,
     environmentKind: environment.kind,
@@ -867,6 +871,8 @@ function parseRemoteSummaryRecord(
     firstQuestion,
     messageCount,
     gitBranch: stringField(parsed, "gitBranch") || null,
+    isSubagent: parsed.isSubagent === true,
+    parentSessionId: stringField(parsed, "parentSessionId") || null,
     tokenUsage: tokenUsageField(parsed, "tokenUsage"),
     tokenEvents: tokenEventsField(parsed, "tokenEvents", lineNumber),
     messageEvents: messageEventsField(parsed, "messageEvents", lineNumber),
@@ -1038,6 +1044,8 @@ def emit_codex_summary(path, stat, titles, source):
   message_count = 0
   message_events = []
   git_branch = ""
+  is_subagent = False
+  parent_session_id = None
   token_state = new_codex_token_state()
   try:
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -1054,7 +1062,28 @@ def emit_codex_summary(path, stat, titles, source):
             raw_id = payload.get("id") if isinstance(payload.get("id"), str) else raw_id
             project_path = payload.get("cwd") if isinstance(payload.get("cwd"), str) else project_path
             git = payload.get("git")
-            if isinstance(git, dict) and isinstance(git.get("branch"), str):
+            if not git_branch and isinstance(git, dict) and isinstance(git.get("branch"), str):
+              git_branch = git.get("branch")
+            structured_source = payload.get("source")
+            if isinstance(structured_source, dict):
+              subagent = structured_source.get("subagent")
+              thread_spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+              if isinstance(thread_spawn, dict) and isinstance(thread_spawn.get("parent_thread_id"), str):
+                is_subagent = True
+                parent_session_id = thread_spawn.get("parent_thread_id")
+            if payload.get("thread_source") == "subagent" and isinstance(payload.get("parent_thread_id"), str):
+              is_subagent = True
+              parent_session_id = payload.get("parent_thread_id")
+          parsed_timestamp = _iso_timestamp_ms(row.get("timestamp"))
+          if parsed_timestamp is not None:
+            timestamp = parsed_timestamp
+          continue
+        if not row.get("type") and isinstance(row.get("id"), str) and isinstance(row.get("timestamp"), str):
+          raw_id = row.get("id")
+          git = row.get("git")
+          if isinstance(git, dict):
+            project_path = git.get("cwd") if isinstance(git.get("cwd"), str) else project_path
+            if not git_branch and isinstance(git.get("branch"), str):
               git_branch = git.get("branch")
           parsed_timestamp = _iso_timestamp_ms(row.get("timestamp"))
           if parsed_timestamp is not None:
@@ -1084,12 +1113,18 @@ def emit_codex_summary(path, stat, titles, source):
     "messageCount": message_count,
     "messageEvents": message_events,
     "gitBranch": git_branch,
+    "isSubagent": is_subagent,
+    "parentSessionId": parent_session_id,
     "tokenUsage": finalize_codex_tokens(token_state),
     "tokenEvents": finalize_codex_events(token_state),
   })
 
 def emit_claude_summary(path, stat, index, source):
   raw_id = path.stem
+  path_parts = path.parts
+  subagents_index = path_parts.index("subagents") if "subagents" in path_parts else -1
+  is_subagent = subagents_index > 0
+  parent_session_id = path_parts[subagents_index - 1] if is_subagent else None
   meta = index.get(raw_id, {})
   project_path = meta.get("cwd", "")
   timestamp = int(meta.get("startedAt") or stat.st_mtime * 1000)
@@ -1109,6 +1144,9 @@ def emit_claude_summary(path, stat, index, source):
           continue
         if not project_path and isinstance(row.get("cwd"), str):
           project_path = row.get("cwd")
+        if is_subagent:
+          raw_id = row.get("agentId") if isinstance(row.get("agentId"), str) else raw_id
+          parent_session_id = row.get("sessionId") if isinstance(row.get("sessionId"), str) else parent_session_id
         if not git_branch and isinstance(row.get("gitBranch"), str):
           git_branch = row.get("gitBranch")
         accumulate_claude_tokens(token_state, row)
@@ -1134,6 +1172,8 @@ def emit_claude_summary(path, stat, index, source):
     "messageCount": message_count,
     "messageEvents": message_events,
     "gitBranch": git_branch,
+    "isSubagent": is_subagent,
+    "parentSessionId": parent_session_id,
     "tokenUsage": finalize_claude_tokens(token_state),
     "tokenEvents": finalize_claude_events(token_state),
   })

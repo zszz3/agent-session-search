@@ -332,7 +332,7 @@ const remoteSessionService = new RemoteSessionService({
 });
 
 function visibleSearchOptions(options: SearchOptions = {}): SearchOptions {
-  return { ...options, excludeSubagents: getSettings().hideSubagentSessions };
+  return { ...options, excludeSubagents: true };
 }
 
 function createRulesSyncService(): RulesIpcService {
@@ -449,17 +449,16 @@ function createDiscoveryService(): DiscoveryIpcService {
     searchHistory: (query, limit) => store.searchHistory(query, limit),
     clearSearchHistory: () => store.clearSearchHistory(),
     recordSearch: (query, resultCount, options) => store.recordSearch(query, resultCount, options),
-    getRelatedSessions: (sessionKey, limit) => store.getRelatedSessions(sessionKey, limit),
     getSessionFamily: (sessionKey) => store.getSessionFamily(sessionKey),
   };
 }
 
 function visibleStatsOptions(options: SessionStatsOptions = {}): SessionStatsOptions {
-  return { ...options, excludeSubagents: getSettings().hideSubagentSessions };
+  return { ...options, excludeSubagents: true };
 }
 
 function visibleProjectOptions(): { excludeSubagents: boolean } {
-  return { excludeSubagents: getSettings().hideSubagentSessions };
+  return { excludeSubagents: true };
 }
 
 function pruneDisabledOptionalSources(settings: AppSettings): void {
@@ -1553,7 +1552,7 @@ function registerIpc(): void {
           };
         }
         case "list_tags": {
-          return { result: store.listTags(), sessionKeys: [] };
+          return { result: store.listTags(visibleProjectOptions()), sessionKeys: [] };
         }
         case "get_session": {
           const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : "";
@@ -1605,10 +1604,10 @@ function registerIpc(): void {
   ipcMain.handle("stats:get", (_event, options?: SessionStatsOptions) => store.getStats(visibleStatsOptions(options)));
   ipcMain.handle("stats:trend", (_event, options?: SessionStatsOptions) => store.getStatsTrend(visibleStatsOptions(options)));
   ipcMain.handle("tags:list", (_event, options?: TagListOptions) =>
-    store.listTags({ ...visibleProjectOptions(), ...options }),
+    store.listTags({ ...options, ...visibleProjectOptions() }),
   );
   ipcMain.handle("projects:list", (_event, options?: ProjectQueryOptions) =>
-    store.listProjects({ ...visibleProjectOptions(), ...options }),
+    store.listProjects({ ...options, ...visibleProjectOptions() }),
   );
   ipcMain.handle("tags:by-project", () => store.listTagsByProject(visibleProjectOptions()));
   ipcMain.handle("environments:list", () => store.listEnvironments());

@@ -438,7 +438,12 @@ export interface CodexConversationLine {
   timestamp?: string;
   id?: string;
   instructions?: string | null;
-  git?: { cwd?: string };
+  git?: {
+    cwd?: string;
+    branch?: string;
+    commit_hash?: string;
+    repository_url?: string;
+  };
   role?: "user" | "assistant" | string;
   content?: Array<{ type?: string; text?: string }>;
   payload?: {

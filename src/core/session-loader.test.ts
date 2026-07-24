@@ -9,6 +9,7 @@ import {
   loadCodeBuddyCliSessionRows,
   loadCodeBuddyCliSessions,
   loadCodexSessionFile,
+  loadCodexSessionRows,
   loadCodexSessionsIterator,
   loadCodexSessions,
   loadDefaultSessions,
@@ -563,9 +564,31 @@ describe("Codex session loading", () => {
         id: "old-id",
         timestamp: "2025-01-01T00:00:00Z",
         instructions: "...",
-        git: { cwd: "/old" },
+        git: { cwd: "/old", branch: "legacy/branch" },
       }),
-    ).toMatchObject({ id: "old-id", projectPath: "/old" });
+    ).toMatchObject({ id: "old-id", projectPath: "/old", gitBranch: "legacy/branch" });
+  });
+
+  it("finds Codex metadata and branch information after an earlier rollout row", () => {
+    const loaded = loadCodexSessionRows("/tmp/later-meta.jsonl", [
+      { type: "event_msg", timestamp: "2026-06-01T09:59:59Z", payload: { type: "startup" } },
+      {
+        type: "session_meta",
+        timestamp: "2026-06-01T10:00:00Z",
+        payload: { id: "later-meta", cwd: "/repo", git: { branch: "feat/later-meta" } },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-06-01T10:01:00Z",
+        payload: { type: "message", role: "user", content: [{ type: "input_text", text: "later metadata" }] },
+      },
+    ]);
+
+    expect(loaded?.session).toMatchObject({
+      rawId: "later-meta",
+      projectPath: "/repo",
+      gitBranch: "feat/later-meta",
+    });
   });
 
   it("prefers an explicit Codex title over the embedded metadata title", () => {
