@@ -6,7 +6,7 @@ import { workflowMcpLaunchConfig } from "./workflow-mcp-launch";
 
 describe("workflowMcpLaunchConfig", () => {
   test("builds a development stdio server scoped to one workflow", () => {
-    const serverScriptPath = path.join(process.cwd(), "src", "automation", "engine", "mcp", "server.ts");
+    const serverScriptPath = path.join(process.cwd(), "src", "mcp", "workflow-entry.ts");
     const config = workflowMcpLaunchConfig({
       discoveryPath: "C:/app/mcp-bridge.json",
       workflowId: "wf-1",
@@ -50,7 +50,7 @@ describe("workflowMcpLaunchConfig", () => {
     }, {
       cwd: process.cwd(),
       mainBundlePath: path.join(process.cwd(), "missing", "index.js"),
-      serverScriptPath: path.join(process.cwd(), "src", "automation", "engine", "mcp", "server.ts"),
+      serverScriptPath: path.join(process.cwd(), "src", "mcp", "workflow-entry.ts"),
     });
 
     expect(config?.env).toMatchObject({

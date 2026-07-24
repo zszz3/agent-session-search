@@ -93,6 +93,21 @@ describe("normalizeCodexNotification", () => {
     ]);
   });
 
+  test("preserves nested Codex error details", () => {
+    const state = createCodexStreamState();
+
+    expect(normalizeCodexNotification("error", {
+      error: {
+        message: "We're currently experiencing high demand, which may cause temporary errors.",
+        codexErrorInfo: "internalServerError",
+      },
+      willRetry: false,
+    }, state)).toEqual([{
+      type: "error",
+      error: "We're currently experiencing high demand, which may cause temporary errors.",
+    }]);
+  });
+
   test("emits OpenAI usage from turn completion", () => {
     const state = createCodexStreamState();
 

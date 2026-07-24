@@ -118,7 +118,7 @@ describe("MCP server tools", () => {
 
   test("serves workflow tools from the long-lived agent stdio server", async () => {
     const tsxCli = path.resolve("node_modules", "tsx", "dist", "cli.mjs");
-    const serverPath = path.resolve("src", "automation", "engine", "mcp", "server.ts");
+    const serverPath = path.resolve("src", "mcp", "workflow-entry.ts");
     const child = spawn(process.execPath, [tsxCli, serverPath], {
       cwd: process.cwd(),
       env: { ...process.env, AGENT_RECALL_WORKFLOW_MCP_BRIDGE: path.join(os.tmpdir(), "missing-mcp-bridge.json"), AGENT_RECALL_WORKFLOW_MCP_TOKEN: "" },

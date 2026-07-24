@@ -59,7 +59,7 @@ export function workflowMcpLaunchConfig(
     path.join(cwd, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
   ].find(existsSync);
   const serverScript = options.serverScriptPath
-    ?? path.join(cwd, "src", "automation", "engine", "mcp", "server.ts");
+    ?? path.join(cwd, "src", "mcp", "workflow-entry.ts");
   if (!tsxCli || !existsSync(serverScript)) return undefined;
   return {
     command: process.execPath,

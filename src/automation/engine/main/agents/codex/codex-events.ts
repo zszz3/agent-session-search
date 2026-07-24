@@ -19,6 +19,13 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function errorMessage(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const record = value as Record<string, unknown>;
+  return asString(record.message) || asString(record.error) || asString(record.detail);
+}
+
 function truncate(value: string, maxLength = 1600): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength).trimEnd()}\n...`;
@@ -228,7 +235,7 @@ export function normalizeCodexNotification(
     const usageEvents: AgentEvent[] = usage ? [{ type: "usage", usage }] : [];
     const status = asString(turn?.status) || "completed";
     if (status === "failed") {
-      const error = asString(turn?.error) || "Codex turn failed";
+      const error = errorMessage(turn?.error) || "Codex turn failed";
       state.lastError = error;
       return [...usageEvents, { type: "error", error }];
     }
@@ -246,7 +253,7 @@ export function normalizeCodexNotification(
   }
 
   if (method === "error") {
-    const message = asString(params.message) || "Codex error";
+    const message = asString(params.message) || errorMessage(params.error) || "Codex error";
     state.lastError = message;
     return [{ type: "error", error: message }];
   }

@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { RUNTIME_IDS } from "../shared/runtime-catalog";
 import { workflowMcpScopeFromEnvironment, workflowMcpToolsForScope } from "../shared/workflow-mcp-policy";
 
@@ -496,8 +495,4 @@ export function startStdioMcpServer(): void {
       void handleJsonRpc(JSON.parse(line) as JsonRpcRequest);
     }
   });
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startStdioMcpServer();
 }
