@@ -3,6 +3,7 @@ import { workflowMcpLaunchConfig, type WorkflowMcpBinding } from "../workflow/wo
 export interface CodexWorkflowMcpConfig {
   args: string[];
   env: Record<string, string>;
+  requiredMcpTools?: Record<string, string[]>;
 }
 
 export function codexWorkflowMcpConfig(binding: WorkflowMcpBinding): CodexWorkflowMcpConfig {
@@ -16,6 +17,9 @@ export function codexWorkflowMcpConfig(binding: WorkflowMcpBinding): CodexWorkfl
       "-c", `mcp_servers.agent_recall.env_vars=[${envNames.map((name) => JSON.stringify(name)).join(", ")}]`,
     ],
     env: config.env,
+    requiredMcpTools: {
+      agent_recall: [binding.runId && binding.nodeId ? "workflow_node_complete" : "workflow_create"],
+    },
   };
 }
 

@@ -7,6 +7,7 @@ describe("codexWorkflowMcpArgs", () => {
     expect(config.args.join("\n")).toContain("mcp_servers.agent_recall.command");
     expect(config.args.join("\n")).toContain("AGENT_RECALL_WORKFLOW_MCP_BRIDGE");
     expect(config.env.AGENT_RECALL_WORKFLOW_ID).toBe("wf-1");
+    expect(config.requiredMcpTools).toEqual({ agent_recall: ["workflow_create"] });
   });
 
   test("does not inject workflow tools without a planning id", () => {
@@ -33,5 +34,6 @@ describe("codexWorkflowMcpArgs", () => {
       AGENT_RECALL_WORKFLOW_NODE_ID: "node-1",
       AGENT_RECALL_WORKFLOW_MCP_TOKEN: "managed-token",
     });
+    expect(config.requiredMcpTools).toEqual({ agent_recall: ["workflow_node_complete"] });
   });
 });

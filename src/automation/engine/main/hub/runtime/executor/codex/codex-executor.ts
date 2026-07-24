@@ -52,6 +52,7 @@ export class CodexAgentExecutor implements AgentExecutor {
         ...workflowMcp.args,
       ],
       env: { ...codexEnvironmentForChannel(channel), ...mcp.env, ...workflowMcp.env },
+      requiredMcpTools: workflowMcp.requiredMcpTools,
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
         respondToCodexRuntimeServerRequest(client, id, method, params, this.options.requestApproval ? {

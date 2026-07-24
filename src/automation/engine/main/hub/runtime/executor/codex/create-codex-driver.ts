@@ -62,6 +62,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
               ...mcp.args,
             ],
             env: { ...codexEnvironmentForChannel(channel), ...mcp.env, ...workflowMcp.env },
+            requiredMcpTools: workflowMcp.requiredMcpTools,
             onEvent,
             onRequest: (id, method, params) => {
               respondToCodexRuntimeServerRequest(client, id, method, params, options.requestApproval ? {

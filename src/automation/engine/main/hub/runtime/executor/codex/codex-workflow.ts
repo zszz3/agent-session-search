@@ -77,6 +77,7 @@ export async function runCodexWorkflow(
         ...mcp.args,
       ],
       env: { ...codexEnvironmentForChannel(channel), ...mcp.env, ...workflowMcp.env },
+      requiredMcpTools: workflowMcp.requiredMcpTools,
       onEvent: (event) => {
         timeout?.refresh();
         if (event.type === "delta") {
