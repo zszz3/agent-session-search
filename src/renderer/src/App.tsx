@@ -345,7 +345,6 @@ export function App(): ReactElement {
   const [statsTrend, setStatsTrend] = useState<SessionStatsTrend>(EMPTY_STATS_TREND);
   const [statsTrendLoadedFor, setStatsTrendLoadedFor] = useState<SessionStatsPeriod | null>(null);
   const [statsPeriod, setStatsPeriod] = useState<SessionStatsPeriod>("today");
-  const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsTrendLoading, setStatsTrendLoading] = useState(false);
   const [statsFeedback, setStatsFeedback] = useState<StatsFeedback>(null);
   const [quotas, setQuotas] = useState<UsageQuotaSnapshot>(EMPTY_QUOTAS);
@@ -520,26 +519,6 @@ export function App(): ReactElement {
     setStatsTrendLoadedFor(null);
     ++statsTrendLoadSeqRef.current;
   }, [statsPeriod]);
-
-  const refreshStats = useCallback(async () => {
-    setStatsRefreshing(true);
-    setStatsFeedback({ kind: "running", message: t("Refreshing usage...", "正在刷新用量...") });
-    try {
-      await Promise.all([
-        loadStats(),
-        statsPeriod === "allTime" ? Promise.resolve() : fetchStatsTrend(),
-      ]);
-      const successMessage = t("Usage refreshed.", "用量已刷新。");
-      setStatsFeedback({ kind: "success", message: successMessage });
-      window.setTimeout(() => {
-        setStatsFeedback((current) => (current?.kind === "success" && current.message === successMessage ? null : current));
-      }, 1600);
-    } catch (error) {
-      setStatsFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setStatsRefreshing(false);
-    }
-  }, [fetchStatsTrend, loadStats, statsPeriod, t]);
 
   const loadQuotas = useCallback(async (mode: "initial" | "manual" | "background" = "initial") => {
     const background = mode === "background";
@@ -1606,25 +1585,37 @@ export function App(): ReactElement {
 
   async function refreshNow(): Promise<void> {
     setContextMenu(null);
-    setRefreshFeedback({ kind: "running", message: t("Refreshing index...", "正在更新索引...") });
+    setRefreshFeedback({ kind: "running", message: t("Refreshing index and usage...", "正在更新索引和用量...") });
+    setStatsFeedback({ kind: "running", message: t("Refreshing usage...", "正在刷新用量...") });
     try {
       const status = await window.sessionSearch.refreshIndex();
       setIndexStatus(status);
-      await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
+      await Promise.all([
+        load(),
+        loadSidebarMetadata(),
+        loadStats(),
+        statsPeriod === "allTime" ? Promise.resolve() : fetchStatsTrend(),
+      ]);
       if (status.error) {
         setRefreshFeedback({ kind: "error", message: status.error });
+        setStatsFeedback({ kind: "error", message: status.error });
         return;
       }
       const successMessage = t(
-        `Index refreshed: ${status.indexed} updated, ${status.skipped} skipped, ${status.total} total.`,
-        `索引已更新：更新 ${status.indexed} 个，跳过 ${status.skipped} 个，共 ${status.total} 个。`,
+        `Index and usage refreshed: ${status.indexed} updated, ${status.skipped} skipped, ${status.total} total.`,
+        `索引和用量已更新：更新 ${status.indexed} 个，跳过 ${status.skipped} 个，共 ${status.total} 个。`,
       );
+      const statsSuccessMessage = t("Usage refreshed.", "用量已刷新。");
       setRefreshFeedback({ kind: "success", message: successMessage });
+      setStatsFeedback({ kind: "success", message: statsSuccessMessage });
       window.setTimeout(() => {
         setRefreshFeedback((current) => (current?.kind === "success" && current.message === successMessage ? null : current));
+        setStatsFeedback((current) => (current?.kind === "success" && current.message === statsSuccessMessage ? null : current));
       }, 2200);
     } catch (error) {
-      setRefreshFeedback({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      setRefreshFeedback({ kind: "error", message });
+      setStatsFeedback({ kind: "error", message });
     }
   }
 
@@ -1918,15 +1909,6 @@ export function App(): ReactElement {
                   </button>
                 ))}
               </div>
-              <button
-                className="stats-refresh"
-                onClick={() => void refreshStats()}
-                disabled={statsRefreshing}
-                title={t("Refresh usage stats", "刷新用量统计")}
-                aria-label={t("Refresh usage stats", "刷新用量统计")}
-              >
-                <RefreshCw size={13} />
-              </button>
             </div>
           </div>
           {statsFeedback ? <div className={`stats-feedback ${statsFeedback.kind}`}>{statsFeedback.message}</div> : null}
