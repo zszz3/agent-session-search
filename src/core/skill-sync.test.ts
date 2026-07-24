@@ -96,6 +96,18 @@ describe("skill sync", () => {
     expect(sql).toContain(`add constraint ${AGENT_RECALL_SKILLS_TABLE}_agent_check`);
   });
 
+  it("keeps Skills constraint migrations outside the create table statement", () => {
+    const sql = buildSkillSyncSetupSql();
+    const createStart = sql.indexOf(`create table if not exists public.${AGENT_RECALL_SKILLS_TABLE} (`);
+    const createEnd = sql.indexOf("\n);", createStart);
+    const firstConstraintMigration = sql.indexOf(`alter table public.${AGENT_RECALL_SKILLS_TABLE} drop constraint`);
+
+    expect(createStart).toBeGreaterThanOrEqual(0);
+    expect(createEnd).toBeGreaterThan(createStart);
+    expect(firstConstraintMigration).toBeGreaterThan(createEnd);
+    expect(sql.slice(createStart, createEnd)).not.toContain(`alter table public.${AGENT_RECALL_SKILLS_TABLE}`);
+  });
+
   it("uses portable scope and relative path so same-name Skills do not collide", () => {
     const expected = createHash("sha256").update("codex-user/review-code").digest("hex");
 
