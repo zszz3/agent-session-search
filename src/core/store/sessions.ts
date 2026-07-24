@@ -1221,6 +1221,9 @@ export class SessionsStore {
       if (sortBy === "smart" && query) {
         return this.smartScore(b, query) - this.smartScore(a, query);
       }
+      if (sortBy === "created") {
+        return this.sortValue(a, sortBy) - this.sortValue(b, sortBy);
+      }
       return this.score(b, query) - this.score(a, query) || this.sortValue(b, sortBy) - this.sortValue(a, sortBy);
     });
     const totalCount = query ? sorted.length : this.countCandidateRows(options);
@@ -1606,7 +1609,7 @@ export class SessionsStore {
           SELECT sessions.*, ${sessionActivitySql("sessions")} AS last_activity_at
           FROM sessions
           WHERE ${where.join(" AND ")}
-          ORDER BY favorited DESC, ${sessionSortSql(options.sortBy)} DESC
+          ORDER BY ${sessionSortSql(options.sortBy)}
           LIMIT ?
         `,
         )
@@ -1945,8 +1948,21 @@ export class SessionsStore {
   }
 
   private sortValue(result: SessionSearchResult, sortBy: SessionSortBy = "activity"): number {
-    if (sortBy === "created") return result.timestamp || 0;
+    if (sortBy === "created") {
+      // Oldest first; sessions missing a creation timestamp sink to the end
+      // instead of bubbling up as epoch 1970.
+      return result.timestamp && result.timestamp > 0 ? result.timestamp : Number.MAX_SAFE_INTEGER;
+    }
     return result.lastActivityAt || result.fileMtimeMs || result.timestamp || 0;
+  }
+
+  /**
+   * Oldest-first ordering: sessions with a real creation timestamp come first
+   * in ascending order; sessions missing one (timestamp = 0) sink to the end
+   * instead of bubbling to the top as epoch 1970.
+   */
+  private createdSortValue(result: SessionSearchResult): number {
+    return result.timestamp && result.timestamp > 0 ? result.timestamp : Number.MAX_SAFE_INTEGER;
   }
 }
 
@@ -2147,8 +2163,8 @@ function normalizeExplicitAnd(query: string): string {
 }
 
 function sessionSortSql(sortBy: SessionSortBy = "activity"): string {
-  if (sortBy === "created") return "COALESCE(timestamp, 0)";
-  return sessionActivitySql("sessions");
+  if (sortBy === "created") return "timestamp ASC";
+  return `favorited DESC, ${sessionActivitySql("sessions")} DESC`;
 }
 
 function sessionActivitySql(sessionTable: string): string {

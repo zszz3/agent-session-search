@@ -1964,6 +1964,7 @@ export function App(): ReactElement {
         }
         sessions={displayedResults}
         groupMode={groupMode}
+        sortBy={sortBy}
         selectedKey={selected?.sessionKey ?? null}
         liveStateFor={(session) => getLiveSessionState(session, liveSessionKeys, liveDetectionFailed)}
         onOpenMatch={handleRowOpenMatch}

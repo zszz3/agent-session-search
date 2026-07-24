@@ -2619,8 +2619,8 @@ describe("SessionStore", () => {
       "codex:created",
     ]);
     expect(store.searchSessions({ query: "", sortBy: "created" }).map((session) => session.sessionKey)).toEqual([
-      "codex:created",
       "codex:recent",
+      "codex:created",
     ]);
   });
 
@@ -2756,7 +2756,7 @@ describe("SessionStore", () => {
 
     const page = store.searchSessionPage({ query: "", sortBy: "created", limit: 2 });
 
-    expect(page.sessions.map((session) => session.sessionKey)).toEqual(["codex:three", "codex:two"]);
+    expect(page.sessions.map((session) => session.sessionKey)).toEqual(["codex:one", "codex:two"]);
     expect(page.totalCount).toBe(3);
     expect(page.hasMore).toBe(true);
   });

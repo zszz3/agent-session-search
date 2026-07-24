@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { SessionMatchHit, SessionSearchResult } from "../../../../core/types";
+import type { SessionMatchHit, SessionSearchResult, SessionSortBy } from "../../../../core/types";
 import { localize, type LanguageMode } from "../../language";
 import type { LiveSessionState } from "../../live-filter";
 import { SOURCE_LABEL } from "../../session-ui";
@@ -11,6 +11,7 @@ import { groupSessions, TIME_BUCKETS, type GroupMode } from "./group-logic";
 export function GroupedResults({
   sessions,
   groupMode,
+  sortBy,
   selectedKey,
   liveStateFor,
   language,
@@ -23,6 +24,7 @@ export function GroupedResults({
 }: {
   sessions: SessionSearchResult[];
   groupMode: GroupMode;
+  sortBy: SessionSortBy;
   selectedKey: string | null;
   liveStateFor: (session: SessionSearchResult) => LiveSessionState;
   language: LanguageMode;
@@ -53,6 +55,7 @@ export function GroupedResults({
           <SessionRow
             key={session.sessionKey}
             session={session}
+            sortBy={sortBy}
             selected={session.sessionKey === selectedKey}
             liveState={liveStateFor(session)}
             language={language}
@@ -85,6 +88,7 @@ export function GroupedResults({
                   <SessionRow
                     key={session.sessionKey}
                     session={session}
+                    sortBy={sortBy}
                     selected={session.sessionKey === selectedKey}
                     liveState={liveStateFor(session)}
                     language={language}

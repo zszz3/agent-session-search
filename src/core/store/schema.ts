@@ -229,6 +229,8 @@ export function migrateSessionStore(db: SessionStoreDatabase): void {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_hidden_favorited_pinned
       ON sessions(hidden, favorited, pinned);
+    CREATE INDEX IF NOT EXISTS idx_sessions_timestamp
+      ON sessions(timestamp);
     CREATE INDEX IF NOT EXISTS idx_sessions_source
       ON sessions(source);
     CREATE INDEX IF NOT EXISTS idx_sessions_project_path
