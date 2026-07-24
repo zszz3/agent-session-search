@@ -302,6 +302,182 @@ describe("live session detection", () => {
     expect(lsofCalls).toBe(0);
   });
 
+  it("detects openclaw and cursor-agent resume commands", () => {
+    expect(
+      detectLiveSessionsFromProcessLines([
+        "301 /opt/homebrew/bin/openclaw --resume openclaw-1",
+        "302 /opt/homebrew/bin/openclaw --resume=openclaw-2",
+        "303 /opt/homebrew/bin/cursor-agent --resume cursor-1",
+        "304 /opt/homebrew/bin/cursor-agent --resume=cursor-2",
+      ]),
+    ).toEqual([
+      { family: "openclaw", rawId: "openclaw-1", pid: 301 },
+      { family: "openclaw", rawId: "openclaw-2", pid: 302 },
+      { family: "cursor", rawId: "cursor-1", pid: 303 },
+      { family: "cursor", rawId: "cursor-2", pid: 304 },
+    ]);
+  });
+
+  it("maps plain openclaw, cursor, and codebuddy processes through their open files", async () => {
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      includeTrae: false,
+      includeQoder: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") {
+          return [
+            "401 /opt/homebrew/bin/openclaw",
+            "402 /opt/homebrew/bin/cursor-agent",
+            "403 node /opt/homebrew/bin/codebuddy --add-dir /work -y",
+          ].join("\n");
+        }
+        if (command === "lsof" && args.join(" ") === "-p 401") {
+          return "openclaw 401 user 10r REG 1,4 0 1 /tmp/.openclaw/agents/main/sessions/openclaw-live-1.jsonl\n";
+        }
+        if (command === "lsof" && args.join(" ") === "-p 402") {
+          return "cursor-agent 402 user 10r REG 1,4 0 1 /tmp/.cursor/projects/Users-me-repo/agent-transcripts/cursor-live-1/cursor-live-1.jsonl\n";
+        }
+        if (command === "lsof" && args.join(" ") === "-p 403") {
+          return "codebuddy 403 user 24w REG 1,4 0 1 /Users/me/.codebuddy/projects/Users-me-work/1122eaf5-be65-4fe7-81a4-d3b751a788c5/tool-results/Bash_1.txt\n";
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([
+      { family: "openclaw", rawId: "openclaw-live-1", pid: 401 },
+      { family: "cursor", rawId: "cursor-live-1", pid: 402 },
+      { family: "codebuddy", rawId: "1122eaf5-be65-4fe7-81a4-d3b751a788c5", pid: 403 },
+    ]);
+  });
+
+  it("detects a running hermes session from its state database", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-hermes-live-"));
+    const dbPath = path.join(root, ".hermes", "state.db");
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, started_at TEXT)");
+    db.prepare("INSERT INTO sessions (id, started_at) VALUES (?, ?)").run("hermes-live-1", "2026-07-10T00:00:00Z");
+    db.close();
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCursor: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "501 /opt/homebrew/bin/hermes";
+        if (command === "lsof" && args.join(" ") === "-p 501") {
+          return `hermes 501 user 10r REG 1,4 0 1 ${dbPath}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "hermes", rawId: "hermes-live-1", pid: 501 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("detects a running opencode session from its database", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-opencode-live-"));
+    const dbPath = path.join(root, ".local", "share", "opencode", "opencode.db");
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE session (id TEXT PRIMARY KEY, time_created TEXT, time_updated TEXT)");
+    db.prepare("INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)").run(
+      "opencode-live-1",
+      "2026-07-10T00:00:00Z",
+      "2026-07-10T01:00:00Z",
+    );
+    db.close();
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCursor: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "601 /opt/homebrew/bin/opencode";
+        if (command === "lsof" && args.join(" ") === "-p 601") {
+          return `opencode 601 user 10r REG 1,4 0 1 ${dbPath}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "opencode", rawId: "opencode-live-1", pid: 601 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("detects a running zcode session from its database", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-zcode-live-"));
+    const dbPath = path.join(root, ".zcode", "cli", "db", "db.sqlite");
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE session (id TEXT PRIMARY KEY, time_created TEXT, time_updated TEXT)");
+    db.prepare("INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)").run(
+      "zcode-live-1",
+      "2026-07-10T00:00:00Z",
+      "2026-07-10T01:00:00Z",
+    );
+    db.close();
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCursor: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "701 /opt/homebrew/bin/zcode";
+        if (command === "lsof" && args.join(" ") === "-p 701") {
+          return `zcode 701 user 10r REG 1,4 0 1 ${dbPath}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "zcode", rawId: "zcode-live-1", pid: 701 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("skips extra source detection when disabled", async () => {
+    let lsofCalls = 0;
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCursor: false,
+      includeHermes: false,
+      includeOpenCode: false,
+      includeZcode: false,
+      includeCodeBuddy: false,
+      includeCodeWiz: false,
+      runner: async (command) => {
+        if (command === "/bin/ps") {
+          return [
+            "801 /opt/homebrew/bin/openclaw",
+            "802 /opt/homebrew/bin/cursor-agent",
+            "803 /opt/homebrew/bin/hermes",
+            "804 /opt/homebrew/bin/opencode",
+            "805 /opt/homebrew/bin/zcode",
+          ].join("\n");
+        }
+        if (command === "lsof") lsofCalls++;
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([]);
+    expect(lsofCalls).toBe(0);
+  });
+
   it("reuses concurrent live session snapshot loads for the same options", async () => {
     let calls = 0;
     let resolveLoad: (value: Awaited<ReturnType<typeof loadLiveSessionSnapshot>>) => void = () => {
