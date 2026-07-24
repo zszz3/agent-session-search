@@ -17,7 +17,8 @@ describe("SessionStore search performance", () => {
 
     expect(candidatesBlock).toContain("query: string");
     expect(candidatesBlock).toContain("LIMIT ?");
-    expect(candidatesBlock).toContain("ORDER BY favorited DESC");
+    expect(candidatesBlock).toContain("ORDER BY ${sessionSortSql(options.sortBy)}");
+    expect(storeSource).toContain("favorited DESC");
     expect(storeSource).toContain("if (result.favorited) score += 25");
     expect(storeSource).toContain("result.favorited ? 1.2 : 1.0");
     expect(storeSource).not.toContain("result.pinned");

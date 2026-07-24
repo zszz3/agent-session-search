@@ -1,6 +1,6 @@
 import type { ComponentProps, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
-import type { SearchOptions, SessionMatchHit, SessionSearchResult } from "../../../core/types";
+import type { SearchOptions, SessionMatchHit, SessionSearchResult, SessionSortBy } from "../../../core/types";
 import type { SavedSearch } from "../../../core/store/saved-searches";
 import { localize, type LanguageMode } from "../language";
 import type { LiveSessionState } from "../live-filter";
@@ -29,6 +29,7 @@ export type ContentAreaProps = {
   resultsHeader: ReactNode;
   sessions: ComponentProps<typeof GroupedResults>["sessions"];
   groupMode: GroupMode;
+  sortBy: SessionSortBy;
   selectedKey: string | null;
   liveStateFor: (session: SessionSearchResult) => LiveSessionState;
   onOpenMatch: (session: SessionSearchResult, hit: SessionMatchHit) => void;
@@ -61,6 +62,7 @@ export function ContentArea(props: ContentAreaProps): ReactElement {
     resultsHeader,
     sessions,
     groupMode,
+    sortBy,
     selectedKey,
     liveStateFor,
     onOpenMatch,
@@ -107,6 +109,7 @@ export function ContentArea(props: ContentAreaProps): ReactElement {
         <GroupedResults
           sessions={sessions}
           groupMode={groupMode}
+          sortBy={sortBy}
           selectedKey={selectedKey}
           liveStateFor={liveStateFor}
           language={language}

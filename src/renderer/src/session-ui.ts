@@ -4,6 +4,7 @@ import type {
   ProjectSummary,
   SearchOptions,
   SessionSearchResult,
+  SessionSortBy,
   SessionSource,
   SessionSourceStats,
   SessionStatsPeriod,
@@ -154,7 +155,9 @@ export function sourceMigrationAgent(source: SessionSource): MigrationAgent | nu
 
 export function sessionSortTimestamp(
   session: Pick<SessionSearchResult, "timestamp" | "fileMtimeMs" | "lastActivityAt">,
+  sortBy?: SessionSortBy,
 ): number {
+  if (sortBy === "created") return session.timestamp || 0;
   return session.lastActivityAt || session.fileMtimeMs || session.timestamp || 0;
 }
 
