@@ -1452,11 +1452,28 @@ function qoderContentFromRow(row: Record<string, unknown>): string {
   if (!isRecord(message)) return "";
   const content = message.content;
   if (!Array.isArray(content)) return "";
-  return content
+  const raw = content
     .filter((item): item is Record<string, unknown> => isRecord(item) && stringField(item, "type") === "text")
     .map((item) => stringField(item, "text"))
     .filter(Boolean)
     .join("\n");
+  return stripQoderWrapperTags(raw);
+}
+
+/**
+ * Strips Qoder-specific wrapper tags so that downstream title generation
+ * and search see the actual user query instead of XML envelopes.
+ *
+ * - `<system-reminder>…</system-reminder>` — metadata, removed entirely
+ * - `<attached_files>…</attached_files>` — file list, removed entirely
+ * - `<user_query>…</user_query>` — the actual user input, inner text kept
+ */
+function stripQoderWrapperTags(text: string): string {
+  const withoutSystemReminder = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
+  const withoutAttachedFiles = withoutSystemReminder.replace(/<attached_files>[\s\S]*?<\/attached_files>/gi, "");
+  const userQueryMatch = withoutAttachedFiles.match(/<user_query>([\s\S]*?)<\/user_query>/i);
+  if (userQueryMatch) return userQueryMatch[1].trim();
+  return withoutAttachedFiles.trim();
 }
 
 function loadQoderConversationFile(filePath: string, slug: string, stat: VirtualSessionFileStat): LoadedSession | null {

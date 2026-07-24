@@ -311,6 +311,64 @@ describe("extra session sources", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("strips Qoder wrapper tags and uses user_query as title", () => {
+    const root = tmpDir("qoder-wrapped");
+    const filePath = path.join(root, "cache", "projects", "demo-app-1a2b3c4d", "conversation-history", "task-wrap", "task-wrap.jsonl");
+    writeJsonl(filePath, [
+      {
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "<system-reminder>\n[IMPORTANT] You must always respond in 中文.\n</system-reminder>\n\n<user_query>\n我的目标在：D:\\oss-contrib\\giki\\IMPROVEMENT-LOOP.md\n</user_query>",
+            },
+          ],
+        },
+      },
+      { role: "assistant", message: { content: [{ type: "text", text: "明白，开始执行。" }] } },
+    ]);
+
+    const loaded = loadQoderSessions(root);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session.originalTitle).toBe("我的目标在：D:\\oss-contrib\\giki\\IMPROVEMENT-LOOP.md");
+    expect(loaded[0].session.firstQuestion).toBe("我的目标在：D:\\oss-contrib\\giki\\IMPROVEMENT-LOOP.md");
+    expect(loaded[0].messages[0].content).toBe("我的目标在：D:\\oss-contrib\\giki\\IMPROVEMENT-LOOP.md");
+    // system-reminder content should not appear in searchable message text
+    expect(loaded[0].messages[0].content).not.toContain("system-reminder");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("strips attached_files wrapper from Qoder messages without user_query", () => {
+    const root = tmpDir("qoder-attached");
+    const filePath = path.join(root, "cache", "projects", "proj-aabbccdd", "conversation-history", "task-att", "task-att.jsonl");
+    writeJsonl(filePath, [
+      {
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "<attached_files>\n#file:d:\\project\\architecture.zip\n#file:d:\\project\\ux-report.md\n</attached_files>\n\n直接帮我重构这个模块",
+            },
+          ],
+        },
+      },
+      { role: "assistant", message: { content: [{ type: "text", text: "好的。" }] } },
+    ]);
+
+    const loaded = loadQoderSessions(root);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].session.originalTitle).toBe("直接帮我重构这个模块");
+    expect(loaded[0].messages[0].content).toBe("直接帮我重构这个模块");
+    expect(loaded[0].messages[0].content).not.toContain("attached_files");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("loads Hermes sessions from state.db without writing to the source database", () => {
     const root = tmpDir("hermes");
     const dbPath = path.join(root, "state.db");
