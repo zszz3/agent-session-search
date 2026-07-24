@@ -27,7 +27,11 @@
 
 - MRs target `main`. Direct feature pushes to `main` are not part of the development workflow.
 - Every MR merged into `main` automatically publishes a GitHub Release after all release checks pass.
-- A release containing any `新增功能` entry bumps the minor version; a release containing only `Bug 修复` entries bumps the patch version.
+- Follow semantic versioning as `x.y.z`, and be conservative about version bumps.
+- Prefer bumping `z` for routine releases, including Bug fixes and small user-facing functionality additions, removals, or changes.
+- Bump `y` only when the release contains a reasonable new capability increase or a concentrated batch of major Bug fixes.
+- Bump `x` only for very large releases or very large changes. Any change that increases `x` must be confirmed with the user before proceeding.
+- In the current release-note workflow, `新增功能` entries bump `y`, while releases containing only `Bug 修复` entries bump `z`; reserve `新增功能` for changes that intentionally warrant a `y` bump.
 - Do not manually create an application tag or GitHub Release unless recovering a failed automated release.
 
 ## Safe test and packaging workflow
