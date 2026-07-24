@@ -183,6 +183,7 @@ function codexModelsPayload(models: AgentModelOption[]): unknown {
         input_modalities: ["text"],
         prefer_websockets: false,
         experimental_supported_tools: [],
+        supports_search_tool: true,
         base_instructions: "",
       })),
   };

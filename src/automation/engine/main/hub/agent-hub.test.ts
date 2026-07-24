@@ -491,6 +491,23 @@ rl.on("line", (line) => {
     write({ jsonrpc: "2.0", id: message.id, result: {} });
     return;
   }
+  if (message.method === "mcpServerStatus/list") {
+    write({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        data: [{
+          name: "agent_recall",
+          tools: { workflow_create: {}, workflow_node_complete: {} },
+          resources: [],
+          resourceTemplates: [],
+          authStatus: "unsupported"
+        }],
+        nextCursor: null
+      }
+    });
+    return;
+  }
   if (message.method === "thread/start") {
     threadIndex += 1;
     write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-" + threadIndex } } });
