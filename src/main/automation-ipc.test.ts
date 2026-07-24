@@ -3,7 +3,7 @@ import { AUTOMATION_CHANNELS } from "../shared/ipc/automation";
 import type { NativeAutomationService } from "./services/automation-service";
 import { registerAutomationIpc } from "./ipc/automation";
 
-function setup() {
+function setup(pickDirectory?: (defaultPath?: string) => Promise<string | undefined>) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const ipc = {
     handle: vi.fn((channel: string, handler: (...args: any[]) => unknown) => handlers.set(channel, handler)),
@@ -50,7 +50,7 @@ function setup() {
     mcpAgents: vi.fn(() => ({})),
     evaluations: vi.fn(() => evaluations),
   } as unknown as NativeAutomationService;
-  registerAutomationIpc({ ipc: ipc as never, service, send: vi.fn() });
+  registerAutomationIpc({ ipc: ipc as never, service, send: vi.fn(), pickDirectory });
   const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({}, ...args);
   return { handlers, invoke, hub, registry, evaluations, service };
 }
@@ -60,6 +60,14 @@ describe("registerAutomationIpc", () => {
     const { handlers } = setup();
     expect([...handlers.keys()].length).toBeGreaterThan(30);
     expect([...handlers.keys()].every((channel) => channel.startsWith("automation:"))).toBe(true);
+  });
+
+  it("opens the directory picker without a default when Chat passes an empty work directory", async () => {
+    const pickDirectory = vi.fn(async () => "/repo");
+    const { invoke } = setup(pickDirectory);
+
+    await expect(invoke(AUTOMATION_CHANNELS.directoryPick, "")).resolves.toBe("/repo");
+    expect(pickDirectory).toHaveBeenCalledWith(undefined);
   });
 
   it("validates and delegates runtime channel saves", async () => {

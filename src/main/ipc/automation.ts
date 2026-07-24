@@ -243,7 +243,7 @@ export function registerAutomationIpc({
   });
   ready(AUTOMATION_CHANNELS.directoryPick, async (value: unknown) => {
     if (!pickDirectory) throw new Error("Directory picker is unavailable.");
-    const defaultPath = value === undefined ? undefined : pathSchema.parse(value);
+    const defaultPath = value === undefined || value === "" ? undefined : pathSchema.parse(value);
     return pickDirectory(defaultPath);
   });
 
