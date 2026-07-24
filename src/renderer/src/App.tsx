@@ -1,5 +1,5 @@
 import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement, RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   AppWindow,
@@ -2744,8 +2744,13 @@ function UsageTokenMetric({
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number; arrowLeft: number } | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const interactive = period !== "allTime";
+
+  const closePopover = useCallback(() => {
+    setOpen(false);
+  }, []);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -2756,8 +2761,8 @@ function UsageTokenMetric({
 
   const scheduleClose = useCallback(() => {
     cancelClose();
-    closeTimerRef.current = window.setTimeout(() => setOpen(false), 120);
-  }, [cancelClose]);
+    closeTimerRef.current = window.setTimeout(closePopover, 120);
+  }, [cancelClose, closePopover]);
 
   const openPopover = useCallback(() => {
     if (!interactive) return;
@@ -2780,14 +2785,29 @@ function UsageTokenMetric({
 
   useEffect(() => {
     if (!open) return;
-    const close = (): void => setOpen(false);
+    const close = (): void => closePopover();
+    const closeIfPointerLeaves = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (anchorRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      closePopover();
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closePopover();
+    };
+    window.addEventListener("pointermove", closeIfPointerLeaves, true);
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", closeOnEscape);
     return () => {
+      window.removeEventListener("pointermove", closeIfPointerLeaves, true);
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [open]);
+  }, [closePopover, open]);
 
   return (
     <div
@@ -2797,7 +2817,7 @@ function UsageTokenMetric({
       onMouseEnter={openPopover}
       onMouseLeave={scheduleClose}
       onFocus={openPopover}
-      onBlur={() => setOpen(false)}
+      onBlur={closePopover}
     >
       <span className="stats-metric-value">
         <strong>{formatTokenCount(totalTokens)}</strong>
@@ -2807,13 +2827,14 @@ function UsageTokenMetric({
       {interactive && open && position
         ? createPortal(
             <UsageTokenTrendPopover
+              popoverRef={popoverRef}
               trend={trend}
               loading={trendLoading}
               period={period}
               language={language}
               position={position}
               onMouseEnter={cancelClose}
-              onMouseLeave={() => setOpen(false)}
+              onMouseLeave={closePopover}
             />,
             document.body,
           )
@@ -2823,6 +2844,7 @@ function UsageTokenMetric({
 }
 
 function UsageTokenTrendPopover({
+  popoverRef,
   trend,
   loading,
   period,
@@ -2831,6 +2853,7 @@ function UsageTokenTrendPopover({
   onMouseEnter,
   onMouseLeave,
 }: {
+  popoverRef: RefObject<HTMLDivElement | null>;
   trend: SessionStatsTrend;
   loading: boolean;
   period: SessionStatsPeriod;
@@ -2905,8 +2928,11 @@ function UsageTokenTrendPopover({
   );
   const clearHover = useCallback(() => setHoveredIndex(null), []);
 
+  useEffect(() => clearHover, [clearHover]);
+
   return (
     <div
+      ref={popoverRef}
       className="stats-token-popover"
       role="tooltip"
       style={{
