@@ -149,7 +149,10 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
     const [codexSessionFilesByPid, claudeSessionFilesByPid] =
       platform === "win32"
         ? [new Map<number, string>(), new Map<number, string>()]
-        : await Promise.all([loadPlainCodexSessionFiles(lines, runner), loadPlainClaudeSessionFiles(lines, runner, options.homeDir ?? os.homedir())]);
+        : await Promise.all([
+            loadPlainCodexSessionFiles(lines, runner, options.homeDir ?? os.homedir()),
+            loadPlainClaudeSessionFiles(lines, runner, options.homeDir ?? os.homedir()),
+          ]);
     const traeSessionIdsByPid =
       platform === "win32" || options.includeTrae === false ? new Map<number, string>() : await loadTraeSessionIds(lines, runner);
     const qoderSessionIdsByPid =
@@ -157,9 +160,13 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
     const openclawSessionFilesByPid =
       platform === "win32" || options.includeOpenClaw === false ? new Map<number, string>() : await loadOpenClawSessionFiles(lines, runner);
     const cursorSessionFilesByPid =
-      platform === "win32" || options.includeCursor === false ? new Map<number, string>() : await loadCursorSessionFiles(lines, runner);
+      platform === "win32" || options.includeCursor === false
+        ? new Map<number, string>()
+        : await loadCursorSessionFiles(lines, runner, options.homeDir ?? os.homedir());
     const codebuddySessionFilesByPid =
-      platform === "win32" || options.includeCodeBuddy === false ? new Map<number, string>() : await loadCodeBuddySessionFiles(lines, runner);
+      platform === "win32" || options.includeCodeBuddy === false
+        ? new Map<number, string>()
+        : await loadCodeBuddySessionFiles(lines, runner, options.homeDir ?? os.homedir());
     const dbSessionIdsByPid =
       platform === "win32" ||
       (options.includeHermes === false &&
@@ -197,8 +204,66 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
   }
 }
 
-async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
-  return loadPlainSessionFiles(lines, runner, isPlainCodexCommand, extractCodexSessionFile);
+async function loadPlainCodexSessionFiles(lines: string[], runner: ProcessListRunner, homeDir = os.homedir()): Promise<Map<number, string>> {
+  return loadPlainSessionFilesWithCwdFallback(
+    lines,
+    runner,
+    isPlainCodexCommand,
+    extractCodexSessionFile,
+    homeDir,
+    (home, cwd) => findMostRecentCodexSessionByCwd(home, cwd),
+  );
+}
+
+/**
+ * Codex sessions live under ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl
+ * and the first line of each file is session_meta with a `cwd` field. Walk recent
+ * session files and return the most recently modified one whose cwd matches.
+ */
+function findMostRecentCodexSessionByCwd(homeDir: string, cwd: string): string | null {
+  const sessionsRoot = path.join(homeDir, ".codex", "sessions");
+  let best: { filePath: string; mtimeMs: number } | null = null;
+  const consider = (filePath: string, mtimeMs: number): void => {
+    if (best !== null && mtimeMs <= (best as { mtimeMs: number }).mtimeMs) return;
+    try {
+      const fd = fs.openSync(filePath, "r");
+      try {
+        const buf = Buffer.alloc(4096);
+        const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+        const firstLine = buf.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
+        if (!firstLine) return;
+        const meta = JSON.parse(firstLine) as { payload?: { cwd?: string } };
+        if (meta?.payload?.cwd !== cwd) return;
+        best = { filePath, mtimeMs };
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      // Not a parseable session file; skip.
+    }
+  };
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      const stat = fs.statSync(full, { throwIfNoEntry: false });
+      if (!stat) continue;
+      consider(full, stat.mtimeMs);
+    }
+  };
+  walk(sessionsRoot, 0);
+  return best === null ? null : (best as { filePath: string }).filePath;
 }
 
 async function loadPlainClaudeSessionFiles(lines: string[], runner: ProcessListRunner, homeDir = os.homedir()): Promise<Map<number, string>> {
@@ -757,12 +822,122 @@ async function loadOpenClawSessionFiles(lines: string[], runner: ProcessListRunn
   return loadPlainSessionFiles(lines, runner, isPlainOpenClawCommand, extractOpenClawSessionFile);
 }
 
-async function loadCursorSessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
-  return loadPlainSessionFiles(lines, runner, isPlainCursorCommand, extractCursorSessionFile);
+async function loadCursorSessionFiles(lines: string[], runner: ProcessListRunner, homeDir = os.homedir()): Promise<Map<number, string>> {
+  return loadPlainSessionFilesWithCwdFallback(
+    lines,
+    runner,
+    isPlainCursorCommand,
+    extractCursorSessionFile,
+    homeDir,
+    (home, cwd) => {
+      // cursor: ~/.cursor/projects/<slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl
+      const slug = encodeCursorWorkspaceSlug(cwd);
+      const transcriptsDir = path.join(home, ".cursor", "projects", slug, "agent-transcripts");
+      const sessionId = findMostRecentSessionDirWithJsonl(transcriptsDir);
+      if (!sessionId) return null;
+      return path.join(transcriptsDir, sessionId, `${sessionId}.jsonl`);
+    },
+  );
 }
 
-async function loadCodeBuddySessionFiles(lines: string[], runner: ProcessListRunner): Promise<Map<number, string>> {
-  return loadPlainSessionFiles(lines, runner, isPlainCodeBuddyCommand, extractCodeBuddySessionFile);
+async function loadCodeBuddySessionFiles(lines: string[], runner: ProcessListRunner, homeDir = os.homedir()): Promise<Map<number, string>> {
+  return loadPlainSessionFilesWithCwdFallback(
+    lines,
+    runner,
+    isPlainCodeBuddyCommand,
+    extractCodeBuddySessionFile,
+    homeDir,
+    (home, cwd) => {
+      const sessionId = findMostRecentCodeBuddySessionId(home, cwd);
+      if (!sessionId) return null;
+      return path.join(home, ".codebuddy", "projects", encodeProjectDirSlug(cwd), sessionId, "tool-results", "fallback.txt");
+    },
+  );
+}
+
+/**
+ * Generic loader: try lsof to find an open session file; if lsof cannot see other
+ * processes' regular files (e.g. restricted environments like Electron main), fall
+ * back to using the process cwd and inferring the session from the project dir.
+ */
+async function loadPlainSessionFilesWithCwdFallback(
+  lines: string[],
+  runner: ProcessListRunner,
+  isPlainCommand: (tokens: string[]) => boolean,
+  extractSessionFile: (lsofOutput: string) => string | null,
+  homeDir: string,
+  buildFallbackPath: (homeDir: string, cwd: string) => string | null,
+): Promise<Map<number, string>> {
+  const entries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
+  const plainPids = entries.filter((entry) => isPlainCommand(splitCommandLine(entry.command))).map((entry) => entry.pid);
+  const sessionFiles = new Map<number, string>();
+  const pendingCwds: Array<{ pid: number; cwd: string }> = [];
+
+  await Promise.all(
+    plainPids.map(async (pid) => {
+      try {
+        const lsofOutput = await runner("lsof", ["-p", String(pid)]);
+        const sessionFile = extractSessionFile(lsofOutput);
+        if (sessionFile) {
+          sessionFiles.set(pid, sessionFile);
+          return;
+        }
+        const cwd = extractProcessCwd(lsofOutput);
+        if (cwd) pendingCwds.push({ pid, cwd });
+      } catch {
+        // Process may exit between ps and lsof; ignore.
+      }
+    }),
+  );
+
+  for (const { pid, cwd } of pendingCwds) {
+    const fallback = buildFallbackPath(homeDir, cwd);
+    if (fallback) sessionFiles.set(pid, fallback);
+  }
+
+  return sessionFiles;
+}
+
+function encodeProjectDirSlug(cwd: string): string {
+  return cwd.replace(/^\/+/, "").replace(/\//g, "-");
+}
+
+function findMostRecentCodeBuddySessionId(homeDir: string, cwd: string): string | null {
+  const projectDir = path.join(homeDir, ".codebuddy", "projects", encodeProjectDirSlug(cwd));
+  try {
+    let best: { sessionId: string; mtimeMs: number } | null = null;
+    for (const entry of fs.readdirSync(projectDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.name)) continue;
+      const toolResultsDir = path.join(projectDir, entry.name, "tool-results");
+      const stat = fs.statSync(toolResultsDir, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (!best || stat.mtimeMs > best.mtimeMs) best = { sessionId: entry.name, mtimeMs: stat.mtimeMs };
+    }
+    return best?.sessionId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the name of the most recently modified subdirectory under `dir` that
+ * itself contains a `<dirname>.jsonl` file (e.g. cursor's agent-transcripts layout).
+ */
+function findMostRecentSessionDirWithJsonl(dir: string): string | null {
+  try {
+    let best: { name: string; mtimeMs: number } | null = null;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const jsonlPath = path.join(dir, entry.name, `${entry.name}.jsonl`);
+      const stat = fs.statSync(jsonlPath, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (!best || stat.mtimeMs > best.mtimeMs) best = { name: entry.name, mtimeMs: stat.mtimeMs };
+    }
+    return best?.name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadDbSessionIds(

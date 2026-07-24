@@ -351,6 +351,105 @@ describe("live session detection", () => {
     ]);
   });
 
+  it("infers a codebuddy session from cwd when lsof hides the tool-results file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codebuddy-live-"));
+    const home = path.join(root, "home");
+    const cwd = path.join(root, "work app");
+    const projectDir = path.join(home, ".codebuddy", "projects", cwd.replace(/^\/+/, "").replace(/\//g, "-"));
+    const sessionId = "1122eaf5-be65-4fe7-81a4-d3b751a788c5";
+    const toolResultsDir = path.join(projectDir, sessionId, "tool-results");
+    fs.mkdirSync(toolResultsDir, { recursive: true });
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      homeDir: home,
+      includeTrae: false,
+      includeQoder: false,
+      includeCodeWiz: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "403 node /opt/homebrew/bin/codebuddy --add-dir /work -y";
+        if (command === "lsof" && args.join(" ") === "-p 403") {
+          // Simulates Electron main / restricted environments where lsof cannot see
+          // another process's open regular files, only its cwd.
+          return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\ncodebuddy 403 user cwd DIR 1,4 0 1 ${cwd}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "codebuddy", rawId: sessionId, pid: 403 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("infers a codex session from cwd when lsof hides the session file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-codex-live-"));
+    const home = path.join(root, "home");
+    const cwd = path.join(root, "work app");
+    const sessionsDir = path.join(home, ".codex", "sessions", "2026", "07", "24");
+    const sessionId = "019e82e1-b60d-7b12-95c3-d33e1d05f0a9";
+    const sessionFile = path.join(sessionsDir, `rollout-2026-07-24T12-00-00-${sessionId}.jsonl`);
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      sessionFile,
+      JSON.stringify({ type: "session_meta", payload: { id: sessionId, cwd } }) + "\n",
+    );
+    fs.utimesSync(sessionFile, new Date("2026-07-24T12:00:00Z"), new Date("2026-07-24T12:00:00Z"));
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      homeDir: home,
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCursor: false,
+      includeCodeBuddy: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "404 /opt/homebrew/bin/codex";
+        if (command === "lsof" && args.join(" ") === "-p 404") {
+          return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\ncodex 404 user cwd DIR 1,4 0 1 ${cwd}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "codex", rawId: sessionId, pid: 404 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("infers a cursor session from cwd when lsof hides the session file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-cursor-live-"));
+    const home = path.join(root, "home");
+    const cwd = path.join(root, "work app");
+    const slug = cwd.replace(/^\/+/, "").replace(/\//g, "-").replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    const sessionId = "cursor-live-1";
+    const sessionFile = path.join(home, ".cursor", "projects", slug, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "{}\n");
+    fs.utimesSync(sessionFile, new Date("2026-07-24T12:00:00Z"), new Date("2026-07-24T12:00:00Z"));
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "darwin",
+      homeDir: home,
+      includeTrae: false,
+      includeQoder: false,
+      includeOpenClaw: false,
+      includeCodeBuddy: false,
+      runner: async (command, args) => {
+        if (command === "/bin/ps") return "405 /opt/homebrew/bin/cursor-agent";
+        if (command === "lsof" && args.join(" ") === "-p 405") {
+          return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\ncursor-agent 405 user cwd DIR 1,4 0 1 ${cwd}\n`;
+        }
+        return "";
+      },
+    });
+
+    expect(snapshot.sessions).toEqual([{ family: "cursor", rawId: sessionId, pid: 405 }]);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("detects a running hermes session from its state database", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-hermes-live-"));
     const dbPath = path.join(root, ".hermes", "state.db");
